@@ -4,6 +4,13 @@
 
 #include "mcmc_kernels.hpp"
 #include <cuda_runtime.h>
+#include <thrust/device_vector.h>
+#include <thrust/sort.h>
+#include <thrust/scan.h>
+#include <thrust/adjacent_difference.h>
+#include <thrust/scatter.h>
+#include <thrust/sequence.h>
+#include <thrust/execution_policy.h>
 
 namespace lfs::training::mcmc {
 
@@ -211,6 +218,473 @@ namespace lfs::training::mcmc {
             noise,
             means,
             current_lr,
+            N);
+    }
+
+    // Fused gather kernel - collects all parameters at once
+    __global__ void gather_gaussian_params_kernel(
+        const int64_t* __restrict__ indices,
+        const float* __restrict__ src_means,
+        const float* __restrict__ src_sh0,
+        const float* __restrict__ src_shN,
+        const float* __restrict__ src_scales,
+        const float* __restrict__ src_rotations,
+        const float* __restrict__ src_opacities,
+        float* __restrict__ dst_means,
+        float* __restrict__ dst_sh0,
+        float* __restrict__ dst_shN,
+        float* __restrict__ dst_scales,
+        float* __restrict__ dst_rotations,
+        float* __restrict__ dst_opacities,
+        size_t n_samples,
+        size_t sh_rest,
+        int opacity_dim,
+        size_t N) {  // Add N parameter for bounds checking
+
+        size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+        if (idx >= n_samples)
+            return;
+
+        int64_t src_idx = indices[idx];
+
+        // Bounds check - CRITICAL for safety
+        if (src_idx < 0 || src_idx >= static_cast<int64_t>(N)) {
+            // Invalid index - skip this gather (leave output uninitialized or zero it)
+            return;
+        }
+
+        // Gather means [3]
+        for (int i = 0; i < 3; ++i) {
+            dst_means[idx * 3 + i] = src_means[src_idx * 3 + i];
+        }
+
+        // Gather sh0 [N, 1, 3] -> output [n_samples, 1, 3]
+        // Memory layout: each Gaussian has 1*3 = 3 floats
+        for (int i = 0; i < 3; ++i) {
+            dst_sh0[idx * 3 + i] = src_sh0[src_idx * 3 + i];
+        }
+
+        // Gather shN [sh_rest, 3]
+        for (size_t i = 0; i < sh_rest * 3; ++i) {
+            dst_shN[idx * sh_rest * 3 + i] = src_shN[src_idx * sh_rest * 3 + i];
+        }
+
+        // Gather scales [3]
+        for (int i = 0; i < 3; ++i) {
+            dst_scales[idx * 3 + i] = src_scales[src_idx * 3 + i];
+        }
+
+        // Gather rotations [4]
+        for (int i = 0; i < 4; ++i) {
+            dst_rotations[idx * 4 + i] = src_rotations[src_idx * 4 + i];
+        }
+
+        // Gather opacities [1] or []
+        if (opacity_dim == 1) {
+            dst_opacities[idx] = src_opacities[src_idx];
+        } else {
+            dst_opacities[idx] = src_opacities[src_idx];
+        }
+    }
+
+    void launch_gather_gaussian_params(
+        const int64_t* indices,
+        const float* src_means,
+        const float* src_sh0,
+        const float* src_shN,
+        const float* src_scales,
+        const float* src_rotations,
+        const float* src_opacities,
+        float* dst_means,
+        float* dst_sh0,
+        float* dst_shN,
+        float* dst_scales,
+        float* dst_rotations,
+        float* dst_opacities,
+        size_t n_samples,
+        size_t sh_rest,
+        int opacity_dim,
+        size_t N,  // Add N parameter
+        void* stream) {
+
+        if (n_samples == 0) {
+            return;
+        }
+
+        dim3 threads(256);
+        dim3 grid((n_samples + threads.x - 1) / threads.x);
+
+        cudaStream_t cuda_stream = stream ? static_cast<cudaStream_t>(stream) : nullptr;
+
+        gather_gaussian_params_kernel<<<grid, threads, 0, cuda_stream>>>(
+            indices,
+            src_means,
+            src_sh0,
+            src_shN,
+            src_scales,
+            src_rotations,
+            src_opacities,
+            dst_means,
+            dst_sh0,
+            dst_shN,
+            dst_scales,
+            dst_rotations,
+            dst_opacities,
+            n_samples,
+            sh_rest,
+            opacity_dim,
+            N);
+    }
+
+    // Fused copy kernel - copies all parameters from src_indices to dst_indices
+    __global__ void copy_gaussian_params_kernel(
+        const int64_t* __restrict__ src_indices,
+        const int64_t* __restrict__ dst_indices,
+        float* __restrict__ means,
+        float* __restrict__ sh0,
+        float* __restrict__ shN,
+        float* __restrict__ scales,
+        float* __restrict__ rotations,
+        float* __restrict__ opacities,
+        size_t n_copy,
+        size_t sh_rest,
+        int opacity_dim,
+        size_t N) {  // Add N parameter for bounds checking
+
+        size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+        if (idx >= n_copy)
+            return;
+
+        int64_t src_idx = src_indices[idx];
+        int64_t dst_idx = dst_indices[idx];
+
+        // Bounds check - CRITICAL for safety
+        if (src_idx < 0 || src_idx >= static_cast<int64_t>(N) ||
+            dst_idx < 0 || dst_idx >= static_cast<int64_t>(N)) {
+            // Invalid index - skip this copy
+            return;
+        }
+
+        // Copy means [3]
+        for (int i = 0; i < 3; ++i) {
+            means[dst_idx * 3 + i] = means[src_idx * 3 + i];
+        }
+
+        // Copy sh0 [1, 3] -> [3]
+        for (int i = 0; i < 3; ++i) {
+            sh0[dst_idx * 3 + i] = sh0[src_idx * 3 + i];
+        }
+
+        // Copy shN [sh_rest, 3]
+        for (size_t i = 0; i < sh_rest * 3; ++i) {
+            shN[dst_idx * sh_rest * 3 + i] = shN[src_idx * sh_rest * 3 + i];
+        }
+
+        // Copy scales [3]
+        for (int i = 0; i < 3; ++i) {
+            scales[dst_idx * 3 + i] = scales[src_idx * 3 + i];
+        }
+
+        // Copy rotations [4]
+        for (int i = 0; i < 4; ++i) {
+            rotations[dst_idx * 4 + i] = rotations[src_idx * 4 + i];
+        }
+
+        // Copy opacities [1] or []
+        if (opacity_dim == 1) {
+            opacities[dst_idx] = opacities[src_idx];
+        } else {
+            opacities[dst_idx] = opacities[src_idx];
+        }
+    }
+
+    void launch_copy_gaussian_params(
+        const int64_t* src_indices,
+        const int64_t* dst_indices,
+        float* means,
+        float* sh0,
+        float* shN,
+        float* scales,
+        float* rotations,
+        float* opacities,
+        size_t n_copy,
+        size_t sh_rest,
+        int opacity_dim,
+        size_t N,  // Add N parameter
+        void* stream) {
+
+        if (n_copy == 0) {
+            return;
+        }
+
+        dim3 threads(256);
+        dim3 grid((n_copy + threads.x - 1) / threads.x);
+
+        cudaStream_t cuda_stream = stream ? static_cast<cudaStream_t>(stream) : nullptr;
+
+        copy_gaussian_params_kernel<<<grid, threads, 0, cuda_stream>>>(
+            src_indices,
+            dst_indices,
+            means,
+            sh0,
+            shN,
+            scales,
+            rotations,
+            opacities,
+            n_copy,
+            sh_rest,
+            opacity_dim,
+            N);
+    }
+
+    // Histogram kernel using atomics - counts occurrences of each index
+    __global__ void histogram_kernel(
+        const int64_t* __restrict__ indices,
+        int32_t* __restrict__ counts,
+        size_t n_samples,
+        size_t N) {
+
+        size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+        if (idx >= n_samples)
+            return;
+
+        int64_t index = indices[idx];
+
+        // Bounds check
+        if (index < 0 || index >= static_cast<int64_t>(N))
+            return;
+
+        // Atomic increment
+        atomicAdd(&counts[index], 1);
+    }
+
+    void launch_histogram(
+        const int64_t* indices,
+        int32_t* counts,
+        size_t n_samples,
+        size_t N,
+        void* stream) {
+
+        if (n_samples == 0)
+            return;
+
+        dim3 threads(256);
+        dim3 grid((n_samples + threads.x - 1) / threads.x);
+        cudaStream_t cuda_stream = stream ? static_cast<cudaStream_t>(stream) : nullptr;
+
+        histogram_kernel<<<grid, threads, 0, cuda_stream>>>(
+            indices, counts, n_samples, N);
+    }
+
+    // Smarter histogram: Use hash map-style approach with sorting
+    // This works well when n_samples << N (which is our case)
+    __global__ void histogram_gather_sorted_kernel(
+        const int64_t* __restrict__ indices,
+        int32_t* __restrict__ output_counts,
+        size_t n_samples,
+        size_t N) {
+
+        size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+        if (idx >= n_samples)
+            return;
+
+        int64_t my_index = indices[idx];
+
+        // Bounds check
+        if (my_index < 0 || my_index >= static_cast<int64_t>(N)) {
+            output_counts[idx] = 0;
+            return;
+        }
+
+        // Count occurrences: scan forward until we find a different index
+        // This works ONLY if indices are sorted or if we accept O(n) per thread
+        // Since indices are NOT sorted, we do linear scan (unavoidable without large temp storage)
+
+        // Optimization: Use warp-level primitives to speed up counting
+        int32_t count = 0;
+
+        // Each thread scans the array looking for matches
+        // This is O(n) per thread, total O(n*n_samples)
+        // BUT: We can optimize using warp primitives
+
+        const int WARP_SIZE = 32;
+        int warp_id = threadIdx.x / WARP_SIZE;
+        int lane_id = threadIdx.x % WARP_SIZE;
+
+        // Each warp cooperatively counts for one index
+        for (size_t i = lane_id; i < n_samples; i += WARP_SIZE) {
+            if (indices[i] == my_index) {
+                count++;
+            }
+        }
+
+        // Warp-level reduction to sum counts
+        for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+            count += __shfl_down_sync(0xffffffff, count, offset);
+        }
+
+        // First lane writes the result
+        if (lane_id == 0) {
+            output_counts[idx] = count;
+        }
+    }
+
+    void launch_histogram_sort(
+        const int64_t* indices,
+        int32_t* output_counts,
+        size_t n_samples,
+        void* stream) {
+
+        if (n_samples == 0)
+            return;
+
+        cudaStream_t cuda_stream = stream ? static_cast<cudaStream_t>(stream) : nullptr;
+
+        // Algorithm: Sort indices, then use adjacent_difference to find run boundaries,
+        // then use inclusive_scan to count run lengths, then scatter back to original positions
+
+        // Step 1: Create position array and copy indices
+        thrust::device_vector<int32_t> orig_positions(n_samples);
+        thrust::sequence(thrust::cuda::par.on(cuda_stream), orig_positions.begin(), orig_positions.end());
+
+        thrust::device_vector<int64_t> sorted_indices(indices, indices + n_samples);
+
+        // Step 2: Sort indices while tracking original positions
+        thrust::sort_by_key(thrust::cuda::par.on(cuda_stream),
+                           sorted_indices.begin(), sorted_indices.end(),
+                           orig_positions.begin());
+
+        // Step 3: Mark segment boundaries (1 where index changes, 0 otherwise)
+        thrust::device_vector<int32_t> head_flags(n_samples);
+        thrust::adjacent_difference(thrust::cuda::par.on(cuda_stream),
+                                   sorted_indices.begin(), sorted_indices.end(),
+                                   head_flags.begin(),
+                                   thrust::not_equal_to<int64_t>());
+        // First element is always a segment head
+        if (n_samples > 0) {
+            thrust::fill_n(thrust::cuda::par.on(cuda_stream), head_flags.begin(), 1, 1);
+        }
+
+        // Step 4: Compute run lengths with exclusive_scan_by_key
+        // This gives each element its position within its segment
+        thrust::device_vector<int32_t> run_positions(n_samples);
+        thrust::device_vector<int32_t> ones(n_samples, 1);
+
+        thrust::exclusive_scan_by_key(thrust::cuda::par.on(cuda_stream),
+                                     sorted_indices.begin(), sorted_indices.end(),
+                                     ones.begin(),
+                                     run_positions.begin());
+
+        // Step 5: Find the tail of each segment and compute run length
+        // Use a kernel to compute the count for each element
+        thrust::device_vector<int32_t> run_counts(n_samples);
+
+        thrust::transform(thrust::cuda::par.on(cuda_stream),
+                         thrust::make_counting_iterator<int>(0),
+                         thrust::make_counting_iterator<int>(n_samples),
+                         run_counts.begin(),
+                         [sorted_indices_ptr = thrust::raw_pointer_cast(sorted_indices.data()),
+                          run_positions_ptr = thrust::raw_pointer_cast(run_positions.data()),
+                          n_samples] __device__ (int idx) {
+                              int64_t my_index = sorted_indices_ptr[idx];
+                              int my_pos = run_positions_ptr[idx];
+
+                              // Find the last occurrence of this index
+                              int count = 1;
+                              if (idx + 1 < n_samples && sorted_indices_ptr[idx + 1] == my_index) {
+                                  // Not the last in segment, find it
+                                  for (int i = idx + 1; i < n_samples && sorted_indices_ptr[i] == my_index; ++i) {
+                                      count = run_positions_ptr[i] + 1;
+                                  }
+                              } else {
+                                  // Last in segment
+                                  count = my_pos + 1;
+                              }
+                              return count;
+                          });
+
+        // Step 6: Scatter counts back to original positions
+        thrust::scatter(thrust::cuda::par.on(cuda_stream),
+                       run_counts.begin(), run_counts.end(),
+                       orig_positions.begin(),
+                       output_counts);
+    }
+
+    // Fused gather kernel for 2 tensors - replaces 2x index_select
+    // OPTIMIZED: Unroll loops for common cases
+    __global__ void gather_2tensors_kernel(
+        const int64_t* __restrict__ indices,
+        const float* __restrict__ src_a,
+        const float* __restrict__ src_b,
+        float* __restrict__ dst_a,
+        float* __restrict__ dst_b,
+        size_t n_samples,
+        size_t dim_a,
+        size_t dim_b,
+        size_t N) {
+
+        size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+        if (idx >= n_samples)
+            return;
+
+        int64_t src_idx = indices[idx];
+
+        // Bounds check - CRITICAL for safety
+        if (src_idx < 0 || src_idx >= static_cast<int64_t>(N)) {
+            // Zero the output for invalid indices
+            for (size_t i = 0; i < dim_a; ++i) dst_a[idx * dim_a + i] = 0.0f;
+            for (size_t i = 0; i < dim_b; ++i) dst_b[idx * dim_b + i] = 0.0f;
+            return;
+        }
+
+        // Fast path for common case: dim_a=1, dim_b=3
+        if (dim_a == 1 && dim_b == 3) {
+            dst_a[idx] = src_a[src_idx];
+            dst_b[idx * 3 + 0] = src_b[src_idx * 3 + 0];
+            dst_b[idx * 3 + 1] = src_b[src_idx * 3 + 1];
+            dst_b[idx * 3 + 2] = src_b[src_idx * 3 + 2];
+            return;
+        }
+
+        // General case: Gather first tensor (dim_a elements)
+        for (size_t i = 0; i < dim_a; ++i) {
+            dst_a[idx * dim_a + i] = src_a[src_idx * dim_a + i];
+        }
+
+        // Gather second tensor (dim_b elements)
+        for (size_t i = 0; i < dim_b; ++i) {
+            dst_b[idx * dim_b + i] = src_b[src_idx * dim_b + i];
+        }
+    }
+
+    void launch_gather_2tensors(
+        const int64_t* indices,
+        const float* src_a,
+        const float* src_b,
+        float* dst_a,
+        float* dst_b,
+        size_t n_samples,
+        size_t dim_a,
+        size_t dim_b,
+        size_t N,
+        void* stream) {
+
+        if (n_samples == 0)
+            return;
+
+        dim3 threads(256);
+        dim3 grid((n_samples + threads.x - 1) / threads.x);
+        cudaStream_t cuda_stream = stream ? static_cast<cudaStream_t>(stream) : nullptr;
+
+        gather_2tensors_kernel<<<grid, threads, 0, cuda_stream>>>(
+            indices,
+            src_a,
+            src_b,
+            dst_a,
+            dst_b,
+            n_samples,
+            dim_a,
+            dim_b,
             N);
     }
 

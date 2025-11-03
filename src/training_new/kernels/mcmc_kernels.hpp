@@ -60,4 +60,155 @@ namespace lfs::training::mcmc {
         size_t N,
         void* stream = nullptr);
 
+    /**
+     * Fused gather kernel - Collect multiple parameters at specified indices
+     *
+     * Gathers parameters for multiple Gaussians in a single kernel launch.
+     * Replaces multiple separate index_select operations.
+     *
+     * @param indices [n_samples] - Indices to gather from (int64)
+     * @param src_means [N, 3] - Source mean positions
+     * @param src_sh0 [N, 1, 3] - Source SH0 coefficients
+     * @param src_shN [N, sh_rest, 3] - Source SH rest coefficients
+     * @param src_scales [N, 3] - Source scales
+     * @param src_rotations [N, 4] - Source rotations
+     * @param src_opacities [N, 1] or [N] - Source opacities
+     * @param dst_means [n_samples, 3] - Output means
+     * @param dst_sh0 [n_samples, 1, 3] - Output SH0
+     * @param dst_shN [n_samples, sh_rest, 3] - Output SH rest
+     * @param dst_scales [n_samples, 3] - Output scales
+     * @param dst_rotations [n_samples, 4] - Output rotations
+     * @param dst_opacities [n_samples, 1] or [n_samples] - Output opacities
+     * @param n_samples - Number of samples to gather
+     * @param sh_rest - Number of SH rest coefficients
+     * @param opacity_dim - Opacity dimension (1 for [N,1], 0 for [N])
+     * @param stream - CUDA stream
+     */
+    void launch_gather_gaussian_params(
+        const int64_t* indices,
+        const float* src_means,
+        const float* src_sh0,
+        const float* src_shN,
+        const float* src_scales,
+        const float* src_rotations,
+        const float* src_opacities,
+        float* dst_means,
+        float* dst_sh0,
+        float* dst_shN,
+        float* dst_scales,
+        float* dst_rotations,
+        float* dst_opacities,
+        size_t n_samples,
+        size_t sh_rest,
+        int opacity_dim,
+        size_t N,  // Add N parameter for bounds checking
+        void* stream = nullptr);
+
+    /**
+     * Fused scatter kernel - Copy multiple parameters from src to dst indices
+     *
+     * Copies parameters from sampled indices to dead indices in a single kernel.
+     * Replaces 12 separate kernel launches (6 index_select + 6 index_put_).
+     *
+     * @param src_indices [n_copy] - Source indices to read from (int64)
+     * @param dst_indices [n_copy] - Destination indices to write to (int64)
+     * @param means [N, 3] - Mean positions (modified in-place)
+     * @param sh0 [N, 1, 3] - SH0 coefficients (modified in-place)
+     * @param shN [N, sh_rest, 3] - SH rest coefficients (modified in-place)
+     * @param scales [N, 3] - Scales (modified in-place)
+     * @param rotations [N, 4] - Rotations (modified in-place)
+     * @param opacities [N, 1] or [N] - Opacities (modified in-place)
+     * @param n_copy - Number of copies to perform
+     * @param sh_rest - Number of SH rest coefficients
+     * @param opacity_dim - Opacity dimension (1 for [N,1], 0 for [N])
+     * @param stream - CUDA stream
+     */
+    void launch_copy_gaussian_params(
+        const int64_t* src_indices,
+        const int64_t* dst_indices,
+        float* means,
+        float* sh0,
+        float* shN,
+        float* scales,
+        float* rotations,
+        float* opacities,
+        size_t n_copy,
+        size_t sh_rest,
+        int opacity_dim,
+        size_t N,  // Add N parameter for bounds checking
+        void* stream = nullptr);
+
+    /**
+     * Histogram kernel - Count occurrences of indices
+     *
+     * Computes a histogram of index occurrences using atomic operations.
+     * Used in relocate_count_occurrences and add_new_count_occurrences to replace
+     * the index_add_ operation which is slow for scattered indices.
+     *
+     * @param indices [n_samples] - Input indices (int64)
+     * @param counts [N] - Output counts (int32), should be zero-initialized
+     * @param n_samples - Number of indices
+     * @param N - Maximum index value + 1 (for bounds checking)
+     * @param stream - CUDA stream
+     */
+    void launch_histogram(
+        const int64_t* indices,
+        int32_t* counts,
+        size_t n_samples,
+        size_t N,
+        void* stream = nullptr);
+
+    /**
+     * Fast histogram using sort + run-length encoding
+     *
+     * Much faster than allocating N-sized array when n_samples << N.
+     * Uses O(n) memory instead of O(N).
+     *
+     * Algorithm:
+     * 1. Create (index, position) pairs
+     * 2. Sort by index
+     * 3. Count runs of identical indices
+     * 4. Scatter counts back to original positions
+     *
+     * @param indices [n_samples] - Input indices (int64)
+     * @param output_counts [n_samples] - Output: count for each input index
+     * @param n_samples - Number of samples
+     * @param stream - CUDA stream
+     */
+    void launch_histogram_sort(
+        const int64_t* indices,
+        int32_t* output_counts,
+        size_t n_samples,
+        void* stream = nullptr);
+
+    /**
+     * Fused gather kernel for 2 tensors - Replaces two index_select calls
+     *
+     * Gathers values from two source tensors at specified indices in a single kernel.
+     * Used in relocate_get_sampled_params to replace separate index_select calls
+     * for opacities and scales.
+     *
+     * @param indices [n_samples] - Indices to gather from (int64)
+     * @param src_a [N, dim_a] - First source tensor
+     * @param src_b [N, dim_b] - Second source tensor
+     * @param dst_a [n_samples, dim_a] - First output tensor
+     * @param dst_b [n_samples, dim_b] - Second output tensor
+     * @param n_samples - Number of samples to gather
+     * @param dim_a - Dimension of first tensor
+     * @param dim_b - Dimension of second tensor
+     * @param N - Source tensor size (for bounds checking)
+     * @param stream - CUDA stream
+     */
+    void launch_gather_2tensors(
+        const int64_t* indices,
+        const float* src_a,
+        const float* src_b,
+        float* dst_a,
+        float* dst_b,
+        size_t n_samples,
+        size_t dim_a,
+        size_t dim_b,
+        size_t N,
+        void* stream = nullptr);
+
 } // namespace lfs::training::mcmc

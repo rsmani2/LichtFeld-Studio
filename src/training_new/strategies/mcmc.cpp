@@ -34,100 +34,171 @@ namespace lfs::training {
     }
 
     int MCMC::relocate_gs() {
+        LOG_TIMER("MCMC::relocate_gs");
         using namespace lfs::core;
 
         // Get opacities (handle both [N] and [N, 1] shapes)
-        Tensor opacities = _splat_data.get_opacity();
-        if (opacities.ndim() == 2 && opacities.shape()[1] == 1) {
-            opacities = opacities.squeeze(-1);
+        Tensor opacities;
+        {
+            LOG_TIMER("relocate_get_opacities");
+            opacities = _splat_data.get_opacity();
+            if (opacities.ndim() == 2 && opacities.shape()[1] == 1) {
+                opacities = opacities.squeeze(-1);
+            }
         }
 
         // Find dead Gaussians: opacity <= min_opacity OR rotation magnitude near zero
-        Tensor rotation_raw = _splat_data.rotation_raw();
-        Tensor rot_mag_sq = (rotation_raw * rotation_raw).sum(-1);
-        Tensor dead_mask = (opacities <= _params->min_opacity).logical_or(rot_mag_sq < 1e-8f);
-
-        Tensor dead_indices = dead_mask.nonzero().squeeze(-1);
-        int n_dead = dead_indices.numel();
+        Tensor dead_mask, dead_indices;
+        int n_dead;
+        {
+            LOG_TIMER("relocate_find_dead");
+            Tensor rotation_raw = _splat_data.rotation_raw();
+            Tensor rot_mag_sq = (rotation_raw * rotation_raw).sum(-1);
+            dead_mask = (opacities <= _params->min_opacity).logical_or(rot_mag_sq < 1e-8f);
+            dead_indices = dead_mask.nonzero().squeeze(-1);
+            n_dead = dead_indices.numel();
+        }
 
         if (n_dead == 0)
             return 0;
 
-        Tensor alive_mask = dead_mask.logical_not();
-        Tensor alive_indices = alive_mask.nonzero().squeeze(-1);
+        Tensor alive_indices;
+        {
+            LOG_TIMER("relocate_find_alive");
+            Tensor alive_mask = dead_mask.logical_not();
+            alive_indices = alive_mask.nonzero().squeeze(-1);
+        }
 
         if (alive_indices.numel() == 0)
             return 0;
 
         // Sample from alive Gaussians based on opacity
-        Tensor probs = opacities.index_select(0, alive_indices);
-        Tensor sampled_idxs_local = multinomial_sample(probs, n_dead, true);
-        Tensor sampled_idxs = alive_indices.index_select(0, sampled_idxs_local);
-
-        // Get parameters for sampled Gaussians
-        Tensor sampled_opacities = opacities.index_select(0, sampled_idxs);
-        Tensor sampled_scales = _splat_data.get_scaling().index_select(0, sampled_idxs);
-
-        // Count occurrences of each sampled index (how many times each was sampled)
-        Tensor ratios = Tensor::ones_like(opacities, DataType::Int32);
-        ratios = ratios.index_add_(0, sampled_idxs, Tensor::ones({sampled_idxs.numel()}, Device::CUDA, DataType::Int32));
-        ratios = ratios.index_select(0, sampled_idxs).contiguous();
-
-        // Clamp ratios to [1, n_max]
-        const int n_max = static_cast<int>(_binoms.shape()[0]);
-        ratios = ratios.clamp(1, n_max);
-
-        // Allocate output tensors
-        Tensor new_opacities = Tensor::empty(sampled_opacities.shape(), Device::CUDA);
-        Tensor new_scales = Tensor::empty(sampled_scales.shape(), Device::CUDA);
-
-        // Call CUDA relocation kernel
-        mcmc::launch_relocation_kernel(
-            sampled_opacities.ptr<float>(),
-            sampled_scales.ptr<float>(),
-            ratios.ptr<int32_t>(),
-            _binoms.ptr<float>(),
-            n_max,
-            new_opacities.ptr<float>(),
-            new_scales.ptr<float>(),
-            sampled_opacities.numel()
-        );
-
-        // Clamp new opacities
-        new_opacities = new_opacities.clamp(_params->min_opacity, 1.0f - 1e-7f);
-
-        // Update parameters for sampled indices (inverse sigmoid for opacity)
-        // logit(x) = log(x / (1-x))
-        Tensor new_opacity_raw = (new_opacities / (Tensor::ones_like(new_opacities) - new_opacities)).log();
-
-        // Handle opacity shape
-        if (_splat_data.opacity_raw().ndim() == 2) {
-            new_opacity_raw = new_opacity_raw.unsqueeze(-1);
+        Tensor sampled_idxs;
+        {
+            LOG_TIMER("relocate_multinomial_sample");
+            Tensor probs = opacities.index_select(0, alive_indices);
+            Tensor sampled_idxs_local = multinomial_sample(probs, n_dead, true);
+            sampled_idxs = alive_indices.index_select(0, sampled_idxs_local);
         }
 
-        _splat_data.opacity_raw().index_put_(sampled_idxs, new_opacity_raw);
-        _splat_data.scaling_raw().index_put_(sampled_idxs, new_scales.log());
+        // Get parameters for sampled Gaussians
+        Tensor sampled_opacities, sampled_scales;
+        {
+            LOG_TIMER("relocate_get_sampled_params");
+            // Use fused gather kernel - CRITICAL: ensure tensors are contiguous!
+            const size_t n_samples = sampled_idxs.numel();
+            const size_t N = opacities.numel();
 
-        // Copy from sampled to dead indices
-        _splat_data.means().index_put_(dead_indices, _splat_data.means().index_select(0, sampled_idxs));
-        _splat_data.sh0().index_put_(dead_indices, _splat_data.sh0().index_select(0, sampled_idxs));
-        _splat_data.shN().index_put_(dead_indices, _splat_data.shN().index_select(0, sampled_idxs));
-        _splat_data.scaling_raw().index_put_(dead_indices, _splat_data.scaling_raw().index_select(0, sampled_idxs));
-        _splat_data.rotation_raw().index_put_(dead_indices, _splat_data.rotation_raw().index_select(0, sampled_idxs));
-        _splat_data.opacity_raw().index_put_(dead_indices, _splat_data.opacity_raw().index_select(0, sampled_idxs));
+            // Get source tensors and ensure they're contiguous
+            Tensor opacities_contig = opacities.contiguous();
+            Tensor scales = _splat_data.get_scaling().contiguous();
+
+            // Allocate outputs
+            sampled_opacities = Tensor::empty({n_samples}, Device::CUDA, DataType::Float32);
+            sampled_scales = Tensor::empty({n_samples, 3}, Device::CUDA, DataType::Float32);
+
+            // Launch fused kernel
+            mcmc::launch_gather_2tensors(
+                sampled_idxs.ptr<int64_t>(),
+                opacities_contig.ptr<float>(),
+                scales.ptr<float>(),
+                sampled_opacities.ptr<float>(),
+                sampled_scales.ptr<float>(),
+                n_samples,
+                1,  // dim_a: opacities are [N]
+                3,  // dim_b: scales are [N, 3]
+                N
+            );
+        }
+
+        // Count occurrences of each sampled index (how many times each was sampled)
+        Tensor ratios;
+        {
+            LOG_TIMER("relocate_count_occurrences");
+            ratios = Tensor::ones_like(opacities, DataType::Int32);
+            ratios = ratios.index_add_(0, sampled_idxs, Tensor::ones({sampled_idxs.numel()}, Device::CUDA, DataType::Int32));
+            ratios = ratios.index_select(0, sampled_idxs).contiguous();
+
+            // Clamp ratios to [1, n_max]
+            const int n_max = static_cast<int>(_binoms.shape()[0]);
+            ratios = ratios.clamp(1, n_max);
+        }
+
+        // Allocate output tensors and call CUDA kernel
+        Tensor new_opacities, new_scales;
+        {
+            LOG_TIMER("relocate_cuda_kernel");
+            const int n_max = static_cast<int>(_binoms.shape()[0]);
+            new_opacities = Tensor::empty(sampled_opacities.shape(), Device::CUDA);
+            new_scales = Tensor::empty(sampled_scales.shape(), Device::CUDA);
+
+            mcmc::launch_relocation_kernel(
+                sampled_opacities.ptr<float>(),
+                sampled_scales.ptr<float>(),
+                ratios.ptr<int32_t>(),
+                _binoms.ptr<float>(),
+                n_max,
+                new_opacities.ptr<float>(),
+                new_scales.ptr<float>(),
+                sampled_opacities.numel()
+            );
+        }
+
+        // Clamp new opacities and compute raw values
+        Tensor new_opacity_raw;
+        {
+            LOG_TIMER("relocate_compute_raw_values");
+            new_opacities = new_opacities.clamp(_params->min_opacity, 1.0f - 1e-7f);
+            new_opacity_raw = (new_opacities / (Tensor::ones_like(new_opacities) - new_opacities)).log();
+
+            if (_splat_data.opacity_raw().ndim() == 2) {
+                new_opacity_raw = new_opacity_raw.unsqueeze(-1);
+            }
+        }
+
+        // Update parameters
+        {
+            LOG_TIMER("relocate_update_params");
+            // First update sampled indices with new opacity/scaling
+            _splat_data.opacity_raw().index_put_(sampled_idxs, new_opacity_raw);
+            _splat_data.scaling_raw().index_put_(sampled_idxs, new_scales.log());
+
+            // Use fused copy kernel with bounds checking
+            const int opacity_dim = (_splat_data.opacity_raw().ndim() == 2) ? 1 : 0;
+            const size_t N = _splat_data.means().shape()[0];  // Total number of Gaussians
+            mcmc::launch_copy_gaussian_params(
+                sampled_idxs.ptr<int64_t>(),
+                dead_indices.ptr<int64_t>(),
+                _splat_data.means().ptr<float>(),
+                _splat_data.sh0().ptr<float>(),
+                _splat_data.shN().ptr<float>(),
+                _splat_data.scaling_raw().ptr<float>(),
+                _splat_data.rotation_raw().ptr<float>(),
+                _splat_data.opacity_raw().ptr<float>(),
+                dead_indices.numel(),
+                _splat_data.shN().shape()[1],
+                opacity_dim,
+                N  // Pass N for bounds checking
+            );
+            cudaDeviceSynchronize();
+        }
 
         // Update optimizer states for all parameters
-        update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Means);
-        update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Sh0);
-        update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::ShN);
-        update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Scaling);
-        update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Rotation);
-        update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Opacity);
+        {
+            LOG_TIMER("relocate_update_optimizer");
+            update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Means);
+            update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Sh0);
+            update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::ShN);
+            update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Scaling);
+            update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Rotation);
+            update_optimizer_for_relocate(sampled_idxs, dead_indices, ParamType::Opacity);
+        }
 
         return n_dead;
     }
 
     int MCMC::add_new_gs() {
+        LOG_TIMER("MCMC::add_new_gs");
         using namespace lfs::core;
 
         if (!_optimizer) {
@@ -143,105 +214,145 @@ namespace lfs::training {
             return 0;
 
         // Get opacities (handle both [N] and [N, 1] shapes)
-        Tensor opacities = _splat_data.get_opacity();
-        if (opacities.ndim() == 2 && opacities.shape()[1] == 1) {
-            opacities = opacities.squeeze(-1);
+        Tensor opacities;
+        {
+            LOG_TIMER("add_new_get_opacities");
+            opacities = _splat_data.get_opacity();
+            if (opacities.ndim() == 2 && opacities.shape()[1] == 1) {
+                opacities = opacities.squeeze(-1);
+            }
         }
 
-        auto probs = opacities.flatten();
-        auto sampled_idxs = multinomial_sample(probs, n_new, true);
+        Tensor sampled_idxs;
+        {
+            LOG_TIMER("add_new_multinomial_sample");
+            auto probs = opacities.flatten();
+            sampled_idxs = multinomial_sample(probs, n_new, true);
+        }
 
         // Get parameters for sampled Gaussians
-        auto sampled_opacities = opacities.index_select(0, sampled_idxs);
-        auto sampled_scales = _splat_data.get_scaling().index_select(0, sampled_idxs);
+        Tensor sampled_opacities, sampled_scales;
+        {
+            LOG_TIMER("add_new_get_sampled_params");
+            sampled_opacities = opacities.index_select(0, sampled_idxs);
+            sampled_scales = _splat_data.get_scaling().index_select(0, sampled_idxs);
+        }
 
         // Count occurrences (ratio starts at 0, add 1 for each occurrence, then add 1 more)
-        Tensor ratios = Tensor::zeros({opacities.numel()}, Device::CUDA, DataType::Float32);
-        ratios = ratios.index_add_(0, sampled_idxs, Tensor::ones({sampled_idxs.numel()}, Device::CUDA));
-        ratios = ratios.index_select(0, sampled_idxs) + Tensor::ones_like(ratios.index_select(0, sampled_idxs));
+        Tensor ratios;
+        {
+            LOG_TIMER("add_new_count_occurrences");
+            ratios = Tensor::zeros({opacities.numel()}, Device::CUDA, DataType::Float32);
+            ratios = ratios.index_add_(0, sampled_idxs, Tensor::ones({sampled_idxs.numel()}, Device::CUDA));
+            ratios = ratios.index_select(0, sampled_idxs) + Tensor::ones_like(ratios.index_select(0, sampled_idxs));
 
-        // Clamp and convert to int32
-        const int n_max = static_cast<int>(_binoms.shape()[0]);
-        ratios = ratios.clamp(1.0f, static_cast<float>(n_max));
-        ratios = ratios.to(DataType::Int32).contiguous();
+            // Clamp and convert to int32
+            const int n_max = static_cast<int>(_binoms.shape()[0]);
+            ratios = ratios.clamp(1.0f, static_cast<float>(n_max));
+            ratios = ratios.to(DataType::Int32).contiguous();
+        }
 
-        // Allocate output tensors
-        Tensor new_opacities = Tensor::empty(sampled_opacities.shape(), Device::CUDA);
-        Tensor new_scales = Tensor::empty(sampled_scales.shape(), Device::CUDA);
+        // Allocate output tensors and call CUDA kernel
+        Tensor new_opacities, new_scales;
+        {
+            LOG_TIMER("add_new_relocation_kernel");
+            const int n_max = static_cast<int>(_binoms.shape()[0]);
+            new_opacities = Tensor::empty(sampled_opacities.shape(), Device::CUDA);
+            new_scales = Tensor::empty(sampled_scales.shape(), Device::CUDA);
 
-        // Call CUDA relocation kernel
-        mcmc::launch_relocation_kernel(
-            sampled_opacities.ptr<float>(),
-            sampled_scales.ptr<float>(),
-            ratios.ptr<int32_t>(),
-            _binoms.ptr<float>(),
-            n_max,
-            new_opacities.ptr<float>(),
-            new_scales.ptr<float>(),
-            sampled_opacities.numel()
-        );
+            mcmc::launch_relocation_kernel(
+                sampled_opacities.ptr<float>(),
+                sampled_scales.ptr<float>(),
+                ratios.ptr<int32_t>(),
+                _binoms.ptr<float>(),
+                n_max,
+                new_opacities.ptr<float>(),
+                new_scales.ptr<float>(),
+                sampled_opacities.numel()
+            );
+        }
 
-        // Clamp new opacities
-        new_opacities = new_opacities.clamp(_params->min_opacity, 1.0f - 1e-7f);
+        // Clamp new opacities and prepare raw values
+        Tensor new_opacity_raw, new_scaling_raw;
+        {
+            LOG_TIMER("add_new_compute_raw_values");
+            new_opacities = new_opacities.clamp(_params->min_opacity, 1.0f - 1e-7f);
+            new_opacity_raw = (new_opacities / (Tensor::ones_like(new_opacities) - new_opacities)).log();
+            new_scaling_raw = new_scales.log();
 
-        // Prepare new opacity and scaling values (after relocation)
-        Tensor new_opacity_raw = (new_opacities / (Tensor::ones_like(new_opacities) - new_opacities)).log();
-        Tensor new_scaling_raw = new_scales.log();
-
-        if (_splat_data.opacity_raw().ndim() == 2) {
-            new_opacity_raw = new_opacity_raw.unsqueeze(-1);
+            if (_splat_data.opacity_raw().ndim() == 2) {
+                new_opacity_raw = new_opacity_raw.unsqueeze(-1);
+            }
         }
 
         // Prepare new Gaussians to concatenate
-        // For means, sh0, shN, rotation: copy from sampled indices
-        auto new_means = _splat_data.means().index_select(0, sampled_idxs);
-        auto new_sh0 = _splat_data.sh0().index_select(0, sampled_idxs);
-        auto new_shN = _splat_data.shN().index_select(0, sampled_idxs);
-        auto new_rotation = _splat_data.rotation_raw().index_select(0, sampled_idxs);
-        // For opacity and scaling: use the relocated (modified) values directly
-        auto new_opacity = new_opacity_raw;
-        auto new_scaling = new_scaling_raw;
+        Tensor new_means, new_sh0, new_shN, new_rotation;
+        {
+            LOG_TIMER("add_new_gather_params");
+            // Use index_select to gather only the parameters we need
+            // (scales and opacities are computed via relocation kernel, not gathered)
+            new_means = _splat_data.means().index_select(0, sampled_idxs);
+            new_sh0 = _splat_data.sh0().index_select(0, sampled_idxs);
+            new_shN = _splat_data.shN().index_select(0, sampled_idxs);
+            new_rotation = _splat_data.rotation_raw().index_select(0, sampled_idxs);
+        }
 
         // Concatenate all parameters using optimizer's add_new_params
-        // Note: add_new_params REPLACES the parameter tensors with concatenated versions
-        _optimizer->add_new_params(ParamType::Means, new_means);
-        _optimizer->add_new_params(ParamType::Sh0, new_sh0);
-        _optimizer->add_new_params(ParamType::ShN, new_shN);
-        _optimizer->add_new_params(ParamType::Scaling, new_scaling);
-        _optimizer->add_new_params(ParamType::Rotation, new_rotation);
-        _optimizer->add_new_params(ParamType::Opacity, new_opacity);
+        {
+            LOG_TIMER("add_new_concatenate_params");
+            // Note: add_new_params REPLACES the parameter tensors with concatenated versions
+            _optimizer->add_new_params(ParamType::Means, new_means);
+            _optimizer->add_new_params(ParamType::Sh0, new_sh0);
+            _optimizer->add_new_params(ParamType::ShN, new_shN);
+            _optimizer->add_new_params(ParamType::Scaling, new_scaling_raw);
+            _optimizer->add_new_params(ParamType::Rotation, new_rotation);
+            _optimizer->add_new_params(ParamType::Opacity, new_opacity_raw);
+        }
 
         // CRITICAL: Now update the original sampled Gaussians with relocated opacity/scaling
-        // This must be done AFTER add_new_params because add_new_params replaces the tensors
-        // Update at the original indices (0 to current_n-1), not the concatenated indices
-        _splat_data.opacity_raw().index_put_(sampled_idxs, new_opacity_raw);
-        _splat_data.scaling_raw().index_put_(sampled_idxs, new_scaling_raw);
+        {
+            LOG_TIMER("add_new_update_original");
+            // This must be done AFTER add_new_params because add_new_params replaces the tensors
+            // Update at the original indices (0 to current_n-1), not the concatenated indices
+            _splat_data.opacity_raw().index_put_(sampled_idxs, new_opacity_raw);
+            _splat_data.scaling_raw().index_put_(sampled_idxs, new_scaling_raw);
+        }
 
         return n_new;
     }
 
     void MCMC::inject_noise() {
+        LOG_TIMER("MCMC::inject_noise");
         using namespace lfs::core;
 
         // Get current learning rate from optimizer (after scheduler has updated it)
         const float current_lr = _optimizer->get_lr() * _noise_lr;
 
         // Generate noise
-        Tensor noise = Tensor::randn_like(_splat_data.means());
+        Tensor noise;
+        {
+            LOG_TIMER("inject_noise_generate");
+            noise = Tensor::randn_like(_splat_data.means());
+        }
 
         // Call CUDA add_noise kernel
-        mcmc::launch_add_noise_kernel(
-            _splat_data.opacity_raw().ptr<float>(),
-            _splat_data.scaling_raw().ptr<float>(),
-            _splat_data.rotation_raw().ptr<float>(),
-            noise.ptr<float>(),
-            _splat_data.means().ptr<float>(),
-            current_lr,
-            _splat_data.size()
-        );
+        {
+            LOG_TIMER("inject_noise_cuda_kernel");
+            mcmc::launch_add_noise_kernel(
+                _splat_data.opacity_raw().ptr<float>(),
+                _splat_data.scaling_raw().ptr<float>(),
+                _splat_data.rotation_raw().ptr<float>(),
+                noise.ptr<float>(),
+                _splat_data.means().ptr<float>(),
+                current_lr,
+                _splat_data.size()
+            );
+        }
     }
 
     void MCMC::post_backward(int iter, RenderOutput& render_output) {
+        LOG_TIMER("MCMC::post_backward");
+
         // Increment SH degree every sh_degree_interval iterations
         if (iter % _params->sh_degree_interval == 0) {
             _splat_data.increment_sh_degree();
@@ -268,10 +379,20 @@ namespace lfs::training {
     }
 
     void MCMC::step(int iter) {
+        LOG_TIMER("MCMC::step");
         if (iter < _params->iterations) {
-            _optimizer->step(iter);
-            _optimizer->zero_grad(iter);
-            _scheduler->step();
+            {
+                LOG_TIMER("step_optimizer_step");
+                _optimizer->step(iter);
+            }
+            {
+                LOG_TIMER("step_zero_grad");
+                _optimizer->zero_grad(iter);
+            }
+            {
+                LOG_TIMER("step_scheduler");
+                _scheduler->step();
+            }
         }
     }
 

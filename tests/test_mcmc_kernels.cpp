@@ -493,3 +493,153 @@ TEST(MCMCKernelsTest, BenchmarkMCMCWorkflow) {
     std::cout << "\n";
     SUCCEED();
 }
+
+// Test fused gather kernel
+TEST(MCMCKernelsTest, GatherGaussianParams) {
+    const size_t N = 1000;
+    const size_t n_samples = 100;
+    const size_t sh_rest = 15;  // (sh_degree=3: (3+1)^2 - 1 = 15)
+
+    // Create source data with realistic shapes
+    auto src_means = Tensor::randn({N, 3}, Device::CUDA);
+    auto src_sh0 = Tensor::randn({N, 1, 3}, Device::CUDA);  // [N, 1, 3]
+    auto src_shN = Tensor::randn({N, sh_rest, 3}, Device::CUDA);
+    auto src_scales = Tensor::randn({N, 3}, Device::CUDA);
+    auto src_rotations = Tensor::randn({N, 4}, Device::CUDA);
+    auto src_opacities = Tensor::randn({N, 1}, Device::CUDA);  // [N, 1] (2D)
+
+    // Create random indices to sample
+    auto indices_torch = torch::randint(0, static_cast<int64_t>(N), {static_cast<int64_t>(n_samples)}, torch::kInt64).cuda();
+    auto indices = Tensor::from_blob(
+        indices_torch.data_ptr<int64_t>(),
+        {n_samples},
+        Device::CUDA,
+        DataType::Int64
+    );
+
+    // Allocate output tensors
+    auto dst_means = Tensor::empty({n_samples, 3}, Device::CUDA);
+    auto dst_sh0 = Tensor::empty({n_samples, 1, 3}, Device::CUDA);
+    auto dst_shN = Tensor::empty({n_samples, sh_rest, 3}, Device::CUDA);
+    auto dst_scales = Tensor::empty({n_samples, 3}, Device::CUDA);
+    auto dst_rotations = Tensor::empty({n_samples, 4}, Device::CUDA);
+    auto dst_opacities = Tensor::empty({n_samples, 1}, Device::CUDA);
+
+    // Call fused gather kernel
+    const int opacity_dim = 1;  // 2D opacity [N, 1]
+    launch_gather_gaussian_params(
+        indices.ptr<int64_t>(),
+        src_means.ptr<float>(),
+        src_sh0.ptr<float>(),
+        src_shN.ptr<float>(),
+        src_scales.ptr<float>(),
+        src_rotations.ptr<float>(),
+        src_opacities.ptr<float>(),
+        dst_means.ptr<float>(),
+        dst_sh0.ptr<float>(),
+        dst_shN.ptr<float>(),
+        dst_scales.ptr<float>(),
+        dst_rotations.ptr<float>(),
+        dst_opacities.ptr<float>(),
+        n_samples,
+        sh_rest,
+        opacity_dim,
+        N  // Add N for bounds checking
+    );
+
+    cudaDeviceSynchronize();
+
+    // Compare with reference using index_select
+    auto ref_means = src_means.index_select(0, indices);
+    auto ref_sh0 = src_sh0.index_select(0, indices);
+    auto ref_shN = src_shN.index_select(0, indices);
+    auto ref_scales = src_scales.index_select(0, indices);
+    auto ref_rotations = src_rotations.index_select(0, indices);
+    auto ref_opacities = src_opacities.index_select(0, indices);
+
+    // Check all gathered parameters match
+    EXPECT_TRUE(dst_means.all_close(ref_means, 1e-5f, 1e-5f)) << "means mismatch";
+    EXPECT_TRUE(dst_sh0.all_close(ref_sh0, 1e-5f, 1e-5f)) << "sh0 mismatch";
+    EXPECT_TRUE(dst_shN.all_close(ref_shN, 1e-5f, 1e-5f)) << "shN mismatch";
+    EXPECT_TRUE(dst_scales.all_close(ref_scales, 1e-5f, 1e-5f)) << "scales mismatch";
+    EXPECT_TRUE(dst_rotations.all_close(ref_rotations, 1e-5f, 1e-5f)) << "rotations mismatch";
+    EXPECT_TRUE(dst_opacities.all_close(ref_opacities, 1e-5f, 1e-5f)) << "opacities mismatch";
+}
+
+// Test fused copy kernel
+TEST(MCMCKernelsTest, CopyGaussianParams) {
+    const size_t N = 1000;
+    const size_t n_copy = 50;
+    const size_t sh_rest = 15;
+
+    // Create parameter tensors
+    auto means = Tensor::randn({N, 3}, Device::CUDA);
+    auto sh0 = Tensor::randn({N, 1, 3}, Device::CUDA);
+    auto shN = Tensor::randn({N, sh_rest, 3}, Device::CUDA);
+    auto scales = Tensor::randn({N, 3}, Device::CUDA);
+    auto rotations = Tensor::randn({N, 4}, Device::CUDA);
+    auto opacities = Tensor::randn({N, 1}, Device::CUDA);
+
+    // Clone for reference
+    auto means_ref = means.clone();
+    auto sh0_ref = sh0.clone();
+    auto shN_ref = shN.clone();
+    auto scales_ref = scales.clone();
+    auto rotations_ref = rotations.clone();
+    auto opacities_ref = opacities.clone();
+
+    // Create non-overlapping source and destination indices
+    // In actual MCMC usage (relocate_gs), sampled_idxs and dead_indices are disjoint
+    // src: indices [0, n_copy)
+    // dst: indices [N/2, N/2 + n_copy)
+    auto src_indices_torch = torch::arange(0, static_cast<int64_t>(n_copy), torch::kInt64).cuda();
+    auto dst_indices_torch = torch::arange(static_cast<int64_t>(N/2), static_cast<int64_t>(N/2 + n_copy), torch::kInt64).cuda();
+
+    auto src_indices = Tensor::from_blob(
+        src_indices_torch.data_ptr<int64_t>(),
+        {n_copy},
+        Device::CUDA,
+        DataType::Int64
+    );
+    auto dst_indices = Tensor::from_blob(
+        dst_indices_torch.data_ptr<int64_t>(),
+        {n_copy},
+        Device::CUDA,
+        DataType::Int64
+    );
+
+    // Call fused copy kernel
+    const int opacity_dim = 1;
+    launch_copy_gaussian_params(
+        src_indices.ptr<int64_t>(),
+        dst_indices.ptr<int64_t>(),
+        means.ptr<float>(),
+        sh0.ptr<float>(),
+        shN.ptr<float>(),
+        scales.ptr<float>(),
+        rotations.ptr<float>(),
+        opacities.ptr<float>(),
+        n_copy,
+        sh_rest,
+        opacity_dim,
+        N  // Add N for bounds checking
+    );
+
+    cudaDeviceSynchronize();
+
+    // Compare with reference using index_select + index_put_
+    means_ref.index_put_(dst_indices, means_ref.index_select(0, src_indices));
+    sh0_ref.index_put_(dst_indices, sh0_ref.index_select(0, src_indices));
+    shN_ref.index_put_(dst_indices, shN_ref.index_select(0, src_indices));
+    scales_ref.index_put_(dst_indices, scales_ref.index_select(0, src_indices));
+    rotations_ref.index_put_(dst_indices, rotations_ref.index_select(0, src_indices));
+    opacities_ref.index_put_(dst_indices, opacities_ref.index_select(0, src_indices));
+
+    // Check all copied parameters match
+    EXPECT_TRUE(means.all_close(means_ref, 1e-5f, 1e-5f)) << "means mismatch";
+    EXPECT_TRUE(sh0.all_close(sh0_ref, 1e-5f, 1e-5f)) << "sh0 mismatch";
+    EXPECT_TRUE(shN.all_close(shN_ref, 1e-5f, 1e-5f)) << "shN mismatch";
+    EXPECT_TRUE(scales.all_close(scales_ref, 1e-5f, 1e-5f)) << "scales mismatch";
+    EXPECT_TRUE(rotations.all_close(rotations_ref, 1e-5f, 1e-5f)) << "rotations mismatch";
+    EXPECT_TRUE(opacities.all_close(opacities_ref, 1e-5f, 1e-5f)) << "opacities mismatch";
+}
