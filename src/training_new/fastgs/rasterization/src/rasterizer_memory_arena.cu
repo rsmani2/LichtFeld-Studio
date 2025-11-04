@@ -143,11 +143,13 @@ uint64_t RasterizerMemoryArena::begin_frame() {
             it->second->offset.store(0, std::memory_order_release);
 
             // Log memory status periodically (but not too often)
+            /*
             bool should_log = (frame_id == 1) || (frame_id % config_.log_interval == 0);
 
             if (should_log) {
                 log_memory_status(frame_id, true);
             }
+            */
         }
     }
 

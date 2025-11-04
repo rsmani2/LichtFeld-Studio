@@ -100,12 +100,13 @@ std::tuple<int, int, int, int, int> fast_lfs::rasterization::forward(
         far_);
     CHECK_CUDA(config::debug, "preprocess")
 
-    // Get counts from device
-    int n_visible_primitives;
-    cudaMemcpy(&n_visible_primitives, per_primitive_buffers.n_visible_primitives, sizeof(uint), cudaMemcpyDeviceToHost);
-    int n_instances;
-    cudaMemcpy(&n_instances, per_primitive_buffers.n_instances, sizeof(uint), cudaMemcpyDeviceToHost);
+    // Use async memcpy to overlap transfer with GPU work
+    int n_visible_primitives = 0;
+    int n_instances = 0;
+    cudaMemcpyAsync(&n_visible_primitives, per_primitive_buffers.n_visible_primitives, sizeof(uint), cudaMemcpyDeviceToHost, 0);
+    cudaMemcpyAsync(&n_instances, per_primitive_buffers.n_instances, sizeof(uint), cudaMemcpyDeviceToHost, 0);
 
+    // GPU kernels can overlap with the async transfer
     // Sort by depth
     cub::DeviceRadixSort::SortPairs(
         per_primitive_buffers.cub_workspace,
@@ -131,6 +132,11 @@ std::tuple<int, int, int, int, int> fast_lfs::rasterization::forward(
         per_primitive_buffers.offset,
         n_visible_primitives);
     CHECK_CUDA(config::debug, "cub::DeviceScan::ExclusiveSum (Primitive Offsets)")
+
+    // Sync before CPU needs the value for allocation
+    if constexpr (!config::debug) {
+        cudaStreamSynchronize(0);
+    }
 
     // Allocate per-instance buffers through arena
     char* per_instance_buffers_blob = per_instance_buffers_func(required<PerInstanceBuffers>(n_instances));

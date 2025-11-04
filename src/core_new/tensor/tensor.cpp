@@ -679,6 +679,7 @@ namespace lfs::core {
             }
 
             // Log details for TINY uploads to understand the bottleneck
+            /*
             if (upload_bytes < 64) {
                 std::string shape_str = "[";
                 for (size_t i = 0; i < shape_.rank(); ++i) {
@@ -721,6 +722,7 @@ namespace lfs::core {
                          current_count, h2d_bytes.load() / 1024.0 / 1024.0,
                          h2d_tiny.load(), h2d_small.load(), h2d_medium.load(), h2d_large.load());
             }
+            */
 
             cudaStream_t transfer_stream = stream ? stream : 0;
             CHECK_CUDA(cudaMemcpyAsync(t.data_, src, bytes(), cudaMemcpyHostToDevice, transfer_stream));
