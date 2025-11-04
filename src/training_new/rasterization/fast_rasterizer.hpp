@@ -24,6 +24,9 @@ namespace lfs::training {
         lfs::core::Tensor w2c;
         lfs::core::Tensor cam_position;
 
+        const float* w2c_ptr = nullptr;
+        const float* cam_position_ptr = nullptr;
+
         // Forward context (contains buffer pointers, frame_id, etc.)
         fast_lfs::rasterization::ForwardContext forward_ctx;
 

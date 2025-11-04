@@ -32,6 +32,11 @@ namespace lfs::training {
         auto w2c = viewpoint_camera.world_view_transform();
         auto cam_position = viewpoint_camera.cam_position();
 
+        // Cache contiguous pointers to avoid repeated .contiguous() calls
+        // Camera data is tiny (12-64 bytes) and already on GPU - cache the pointer!
+        const float* w2c_ptr = w2c.contiguous().ptr<float>();
+        const float* cam_position_ptr = cam_position.contiguous().ptr<float>();
+
         const int n_primitives = static_cast<int>(means.shape()[0]);
         const int total_bases_sh_rest = static_cast<int>(shN.shape()[1]);
 
@@ -47,8 +52,8 @@ namespace lfs::training {
             raw_opacities.ptr<float>(),
             sh0.ptr<float>(),
             shN.ptr<float>(),
-            w2c.contiguous().ptr<float>(),
-            cam_position.contiguous().ptr<float>(),
+            w2c_ptr,
+            cam_position_ptr,
             image.ptr<float>(),
             alpha.ptr<float>(),
             n_primitives,
@@ -86,6 +91,10 @@ namespace lfs::training {
         ctx.shN = shN;
         ctx.w2c = w2c;
         ctx.cam_position = cam_position;
+
+        // Cache GPU pointers to avoid repeated contiguous() calls in backward
+        ctx.w2c_ptr = w2c_ptr;
+        ctx.cam_position_ptr = cam_position_ptr;
 
         // Store forward context (contains buffer pointers, frame_id, etc.)
         ctx.forward_ctx = forward_ctx;
@@ -153,8 +162,8 @@ namespace lfs::training {
             ctx.raw_scales.ptr<float>(),
             ctx.raw_rotations.ptr<float>(),
             ctx.shN.ptr<float>(),
-            ctx.w2c.contiguous().ptr<float>(),
-            ctx.cam_position.contiguous().ptr<float>(),
+            ctx.w2c_ptr,
+            ctx.cam_position_ptr,
             ctx.forward_ctx,
             gaussian_model.means_grad().ptr<float>(),        // Direct access to SplatData gradients
             gaussian_model.scaling_grad().ptr<float>(),

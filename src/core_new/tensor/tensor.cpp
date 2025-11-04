@@ -124,13 +124,31 @@ namespace lfs::core {
                                       other.storage_offset_ * dtype_size(other.dtype_);
 
                 if (device_ == Device::CUDA && other.device_ == Device::CUDA) {
-                    CHECK_CUDA(cudaMemcpy(dst_ptr, src_ptr, bytes(), cudaMemcpyDeviceToDevice));
+                    CHECK_CUDA(cudaMemcpyAsync(dst_ptr, src_ptr, bytes(), cudaMemcpyDeviceToDevice, stream_));
                 } else if (device_ == Device::CUDA && other.device_ == Device::CPU) {
-                    CHECK_CUDA(cudaMemcpy(dst_ptr, src_ptr, bytes(), cudaMemcpyHostToDevice));
+                    CHECK_CUDA(cudaMemcpyAsync(dst_ptr, src_ptr, bytes(), cudaMemcpyHostToDevice, stream_));
                 } else if (device_ == Device::CPU && other.device_ == Device::CUDA) {
-                    CHECK_CUDA(cudaMemcpy(dst_ptr, src_ptr, bytes(), cudaMemcpyDeviceToHost));
+                    // GPU→CPU requires sync before copy
+                    if (other.stream_) {
+                        cudaStreamSynchronize(other.stream_);
+                    } else {
+                        cudaDeviceSynchronize();
+                    }
+                    CHECK_CUDA(cudaMemcpyAsync(dst_ptr, src_ptr, bytes(), cudaMemcpyDeviceToHost, stream_));
                 } else {
                     std::memcpy(dst_ptr, src_ptr, bytes());
+                }
+
+                // Synchronize to ensure copy completes before we return
+                // (maintains blocking semantics for safety)
+                if (device_ == Device::CUDA || other.device_ == Device::CUDA) {
+                    if (stream_) {
+                        cudaStreamSynchronize(stream_);
+                    } else if (other.stream_) {
+                        cudaStreamSynchronize(other.stream_);
+                    } else {
+                        cudaDeviceSynchronize();
+                    }
                 }
             }
 
@@ -205,13 +223,31 @@ namespace lfs::core {
                                           other.storage_offset_ * dtype_size(other.dtype_);
 
                     if (device_ == Device::CUDA && other.device_ == Device::CUDA) {
-                        CHECK_CUDA(cudaMemcpy(dst_ptr, src_ptr, bytes(), cudaMemcpyDeviceToDevice));
+                        CHECK_CUDA(cudaMemcpyAsync(dst_ptr, src_ptr, bytes(), cudaMemcpyDeviceToDevice, stream_));
                     } else if (device_ == Device::CUDA && other.device_ == Device::CPU) {
-                        CHECK_CUDA(cudaMemcpy(dst_ptr, src_ptr, bytes(), cudaMemcpyHostToDevice));
+                        CHECK_CUDA(cudaMemcpyAsync(dst_ptr, src_ptr, bytes(), cudaMemcpyHostToDevice, stream_));
                     } else if (device_ == Device::CPU && other.device_ == Device::CUDA) {
-                        CHECK_CUDA(cudaMemcpy(dst_ptr, src_ptr, bytes(), cudaMemcpyDeviceToHost));
+                        // GPU→CPU requires sync before copy
+                        if (other.stream_) {
+                            cudaStreamSynchronize(other.stream_);
+                        } else {
+                            cudaDeviceSynchronize();
+                        }
+                        CHECK_CUDA(cudaMemcpyAsync(dst_ptr, src_ptr, bytes(), cudaMemcpyDeviceToHost, stream_));
                     } else {
                         std::memcpy(dst_ptr, src_ptr, bytes());
+                    }
+
+                    // Synchronize to ensure copy completes before we return
+                    // (maintains blocking semantics for safety)
+                    if (device_ == Device::CUDA || other.device_ == Device::CUDA) {
+                        if (stream_) {
+                            cudaStreamSynchronize(stream_);
+                        } else if (other.stream_) {
+                            cudaStreamSynchronize(other.stream_);
+                        } else {
+                            cudaDeviceSynchronize();
+                        }
                     }
                 }
 
@@ -541,11 +577,11 @@ namespace lfs::core {
                 // Account for storage offset
                 const char* src = static_cast<const char*>(data_) + storage_offset_ * dtype_size(dtype_);
 
-                // FAST PATH: Rank-3 uses optimized kernel with immediate parameters (no device memory allocation!)
-                // This eliminates 2x cudaMalloc + 2x cudaMemcpy overhead (~0.5-1ms saved)
+                // FAST PATHS: Use optimized kernels with immediate parameters (no device memory allocation!)
+                // This eliminates 2x cudaMalloc + 2x cudaMemcpy overhead (~0.5-1ms saved per upload)
                 // ASYNC: Kernel launches asynchronously - CUDA runtime handles synchronization automatically
-                if (shape_.rank() == 3) {
-                    LOG_DEBUG("Using optimized rank-3 strided upload (no metadata allocation)");
+                if (shape_.rank() <= 3) {
+                    LOG_DEBUG("Using optimized rank-{} strided upload (no metadata allocation)", shape_.rank());
 
                     // Pass host pointers directly - the launcher will use them as immediate kernel parameters
                     tensor_ops::launch_strided_upload(
@@ -563,11 +599,11 @@ namespace lfs::core {
                     // The pinned memory (src) is safe because:
                     // 1. It's managed by shared_ptr in data_owner_
                     // 2. cudaFreeHost() blocks until kernel completes
-                    LOG_DEBUG("Optimized rank-3 strided upload launched (async): {} elements", numel());
+                    LOG_DEBUG("Optimized rank-{} strided upload launched (async): {} elements", shape_.rank(), numel());
                     return t;
                 }
 
-                // GENERIC PATH: For rank != 3, allocate device memory for metadata
+                // GENERIC PATH: For rank > 3, allocate device memory for metadata
                 LOG_DEBUG("Using generic strided upload (requires metadata allocation for rank={})", shape_.rank());
 
                 size_t* d_shape;
@@ -618,6 +654,74 @@ namespace lfs::core {
         if (device_ == Device::CPU && device == Device::CUDA) {
             // Use cudaMemcpyAsync with pinned memory for maximum PCIe bandwidth (~7-11 GB/s)
             // CPU tensor now uses pinned memory (allocated via PinnedMemoryAllocator)
+
+            // PROFILING: Track H2D uploads to identify bottlenecks
+            static std::atomic<uint64_t> h2d_counter{0};
+            static std::atomic<uint64_t> h2d_bytes{0};
+            static std::atomic<uint64_t> h2d_tiny{0};      // < 64 bytes (metadata)
+            static std::atomic<uint64_t> h2d_small{0};     // 64B - 1KB
+            static std::atomic<uint64_t> h2d_medium{0};    // 1KB - 1MB
+            static std::atomic<uint64_t> h2d_large{0};     // > 1MB (images)
+
+            uint64_t current_count = h2d_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+            uint64_t upload_bytes = bytes();
+            h2d_bytes.fetch_add(upload_bytes, std::memory_order_relaxed);
+
+            // Categorize by size
+            if (upload_bytes < 64) {
+                h2d_tiny.fetch_add(1, std::memory_order_relaxed);
+            } else if (upload_bytes < 1024) {
+                h2d_small.fetch_add(1, std::memory_order_relaxed);
+            } else if (upload_bytes < 1024*1024) {
+                h2d_medium.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                h2d_large.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            // Log details for TINY uploads to understand the bottleneck
+            if (upload_bytes < 64) {
+                std::string shape_str = "[";
+                for (size_t i = 0; i < shape_.rank(); ++i) {
+                    if (i > 0) shape_str += ", ";
+                    shape_str += std::to_string(shape_.dims()[i]);
+                }
+                shape_str += "]";
+
+                if (current_count <= 100) {
+                    // First 100 tiny uploads
+                    LOG_WARN("TINY H2D Upload #{}: {} bytes, shape={}",
+                             current_count, upload_bytes, shape_str);
+                } else if (current_count >= 500 && current_count <= 510) {
+                    // Tiny uploads DURING TRAINING (after initialization) - these are the bottleneck!
+                    LOG_WARN("TRAINING TINY H2D Upload #{}: {} bytes, shape={} - THIS IS THE BOTTLENECK!",
+                             current_count, upload_bytes, shape_str);
+                }
+
+                // SPECIFIC TRACKING FOR 32-BYTE UPLOADS (8 floats)
+                if (upload_bytes == 32) {
+                    static std::atomic<uint64_t> h2d_32byte_counter{0};
+                    uint64_t count_32 = h2d_32byte_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+                    if (count_32 <= 20 || (count_32 >= 400 && count_32 <= 420)) {
+                        LOG_ERROR("32-BYTE H2D Upload #{}: shape={}, dtype={}, numel={}",
+                                 count_32, shape_str, static_cast<int>(dtype_), numel());
+                    }
+                }
+
+                // SPECIFIC TRACKING FOR 4-BYTE UPLOADS (single scalars)
+                if (upload_bytes == 4) {
+                    static std::atomic<uint64_t> h2d_4byte_counter{0};
+                    uint64_t count_4 = h2d_4byte_counter.fetch_add(1, std::memory_order_relaxed) + 1;
+                    if (count_4 <= 20 || (count_4 >= 500 && count_4 <= 520)) {
+                        LOG_ERROR("4-BYTE H2D Upload #{}: shape={}, dtype={}, numel={}",
+                                 count_4, shape_str, static_cast<int>(dtype_), numel());
+                    }
+                }
+            } else if (current_count % 1000 == 0) {
+                LOG_WARN("H2D Upload #{}: {:.1f} MB total | Tiny(<64B): {}, Small(64B-1KB): {}, Medium(1KB-1MB): {}, Large(>1MB): {}",
+                         current_count, h2d_bytes.load() / 1024.0 / 1024.0,
+                         h2d_tiny.load(), h2d_small.load(), h2d_medium.load(), h2d_large.load());
+            }
+
             cudaStream_t transfer_stream = stream ? stream : 0;
             CHECK_CUDA(cudaMemcpyAsync(t.data_, src, bytes(), cudaMemcpyHostToDevice, transfer_stream));
 
