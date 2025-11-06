@@ -765,17 +765,19 @@ namespace lfs::core {
             // Full reduction to scalar
             if (axes.size() == shape_.rank()) {
                 if (op == ReduceOp::Sum) {
-                    float sum = 0;
+                    // Use double accumulation to avoid FP32 precision loss
+                    double sum = 0.0;
                     for (size_t i = 0; i < numel(); ++i) {
                         sum += src[i];
                     }
-                    dst[0] = sum;
+                    dst[0] = static_cast<float>(sum);
                 } else if (op == ReduceOp::Mean) {
-                    float sum = 0;
+                    // Use double accumulation to avoid FP32 precision loss
+                    double sum = 0.0;
                     for (size_t i = 0; i < numel(); ++i) {
                         sum += src[i];
                     }
-                    dst[0] = sum / numel();
+                    dst[0] = static_cast<float>(sum / numel());
                 } else if (op == ReduceOp::Max) {
                     float max_val = src[0];
                     for (size_t i = 1; i < numel(); ++i) {
@@ -865,13 +867,16 @@ namespace lfs::core {
                 }
 
                 // Initialize result with identity value for this output element
-                float result_val = 0.0f;
+                // Use double for sum/mean to avoid FP32 precision loss
+                double result_val_double = 0.0;
+                float result_val_float = 0.0f;
+
                 if (op == ReduceOp::Max) {
-                    result_val = -std::numeric_limits<float>::infinity();
+                    result_val_float = -std::numeric_limits<float>::infinity();
                 } else if (op == ReduceOp::Min) {
-                    result_val = std::numeric_limits<float>::infinity();
+                    result_val_float = std::numeric_limits<float>::infinity();
                 } else if (op == ReduceOp::Prod) {
-                    result_val = 1.0f;
+                    result_val_float = 1.0f;
                 }
 
                 // Iterate through all combinations of reduced dimensions
@@ -898,16 +903,16 @@ namespace lfs::core {
                     switch (op) {
                     case ReduceOp::Sum:
                     case ReduceOp::Mean: // Mean accumulates like sum, then divides at end
-                        result_val += val;
+                        result_val_double += val;  // Use double accumulation
                         break;
                     case ReduceOp::Max:
-                        result_val = std::max(result_val, val);
+                        result_val_float = std::max(result_val_float, val);
                         break;
                     case ReduceOp::Min:
-                        result_val = std::min(result_val, val);
+                        result_val_float = std::min(result_val_float, val);
                         break;
                     case ReduceOp::Prod:
-                        result_val *= val;
+                        result_val_float *= val;
                         break;
                     default:
                         break;
@@ -915,10 +920,12 @@ namespace lfs::core {
                 }
 
                 // Store result (apply mean if needed)
-                if (op == ReduceOp::Mean) {
-                    dst[out_idx] = result_val / reduce_count;
+                if (op == ReduceOp::Sum) {
+                    dst[out_idx] = static_cast<float>(result_val_double);
+                } else if (op == ReduceOp::Mean) {
+                    dst[out_idx] = static_cast<float>(result_val_double / reduce_count);
                 } else {
-                    dst[out_idx] = result_val;
+                    dst[out_idx] = result_val_float;
                 }
             }
         }
