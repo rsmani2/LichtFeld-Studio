@@ -343,7 +343,7 @@ namespace lfs::training {
         auto sampled_scales = _splat_data.get_scaling().index_select(0, sampled_idxs);
 
         // Count occurrences
-        auto ratios = Tensor::zeros({_splat_data.size()}, Device::CUDA, DataType::Float32);
+        auto ratios = Tensor::zeros({static_cast<size_t>(_splat_data.size())}, Device::CUDA, DataType::Float32);
         ratios.index_add_(0, sampled_idxs, Tensor::ones_like(sampled_idxs).to(DataType::Float32));
         ratios = ratios.index_select(0, sampled_idxs) + 1.0f;
 
