@@ -131,7 +131,8 @@ std::tuple<int, int, int, int, int> fast_lfs::rasterization::forward(
     CHECK_CUDA(config::debug, "cub::DeviceScan::ExclusiveSum (Primitive Offsets)")
 
     // Allocate per-instance buffers through arena
-    char* per_instance_buffers_blob = per_instance_buffers_func(required<PerInstanceBuffers>(n_instances));
+    size_t instance_buffer_bytes = required<PerInstanceBuffers>(n_instances);
+    char* per_instance_buffers_blob = per_instance_buffers_func(instance_buffer_bytes);
     PerInstanceBuffers per_instance_buffers = PerInstanceBuffers::from_blob(per_instance_buffers_blob, n_instances);
 
     // Create instances

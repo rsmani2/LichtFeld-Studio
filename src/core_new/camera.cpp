@@ -239,8 +239,13 @@ namespace lfs::core {
 
         // Extract dimensions from tensor shape
         auto shape = image.shape();
+        int old_width = _image_width;
+        int old_height = _image_height;
         _image_width = shape[2];
         _image_height = shape[1];
+
+        LOG_DEBUG("load_and_get_image(): Tensor shape [C,H,W]=[{},{},{}], setting dimensions: {}x{} → {}x{}",
+                  shape[0], shape[1], shape[2], old_width, old_height, _image_width, _image_height);
 
         // Transfer to CUDA using async stream transfer
         image = image.to(Device::CUDA, _stream);
@@ -260,6 +265,9 @@ namespace lfs::core {
         int w = std::get<0>(result);
         int h = std::get<1>(result);
 
+        LOG_DEBUG("load_image_size(): Original dimensions from file: {}x{}, resize_factor={}, max_width={}",
+                  w, h, resize_factor, max_width);
+
         if (resize_factor > 0) {
             if (w % resize_factor || h % resize_factor) {
                 LOG_WARN("width or height are not divisible by resize_factor w {} h {} resize_factor {}", w, h, resize_factor);
@@ -271,15 +279,26 @@ namespace lfs::core {
             _image_height = h;
         }
 
+        LOG_DEBUG("load_image_size(): After resize_factor: {}x{}", _image_width, _image_height);
+
         if (max_width > 0 && (_image_width > max_width || _image_height > max_width)) {
+            int old_width = _image_width;
+            int old_height = _image_height;
+
             if (_image_width > _image_height) {
                 _image_width = max_width;
-                _image_height = (_image_height * max_width) / _image_width;
+                _image_height = (old_height * max_width) / old_width;  // Fixed: Use old_width
+                LOG_DEBUG("load_image_size(): Resized {}x{} → {}x{} (limited by max_width={})",
+                         old_width, old_height, _image_width, _image_height, max_width);
             } else {
                 _image_height = max_width;
-                _image_width = (_image_width * max_width) / _image_height;
+                _image_width = (old_width * max_width) / old_height;  // Fixed: Use old_height
+                LOG_DEBUG("load_image_size(): Resized {}x{} → {}x{} (limited by max_width={})",
+                         old_width, old_height, _image_width, _image_height, max_width);
             }
         }
+
+        LOG_DEBUG("load_image_size(): Final dimensions: {}x{}", _image_width, _image_height);
     }
 
     size_t Camera::get_num_bytes_from_file(int resize_factor, int max_width) const {

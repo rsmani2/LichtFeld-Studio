@@ -113,6 +113,13 @@ namespace lfs::core {
                 size_t free_mem = 0, total_mem = 0;
                 cudaMemGetInfo(&free_mem, &total_mem);
 
+                // Log large direct allocations
+                static std::atomic<size_t> direct_total{0};
+                direct_total += bytes;
+                printf("[POOL] Direct cudaMalloc: %.2f GB (total direct: %.2f GB)\n",
+                       bytes / (1024.0 * 1024.0 * 1024.0),
+                       direct_total.load() / (1024.0 * 1024.0 * 1024.0));
+
                 cudaError_t err = cudaMalloc(&ptr, bytes);
                 if (err != cudaSuccess) {
                     printf("[POOL ERROR] cudaMalloc (direct) failed: %s\n", cudaGetErrorString(err));
@@ -166,6 +173,55 @@ namespace lfs::core {
             cudaError_t err = cudaMallocAsync(&ptr, bytes, stream);
             if (err == cudaSuccess) {
                 method = AllocMethod::Async;
+
+                // Track allocation sizes
+                static std::atomic<int> alloc_count{0};
+                static std::atomic<size_t> total_bytes_allocated{0};
+                static std::atomic<int> small_allocs{0};   // < 1 MB
+                static std::atomic<int> medium_allocs{0};  // 1-100 MB
+                static std::atomic<int> large_allocs{0};   // 100MB-1GB
+
+                alloc_count++;
+                total_bytes_allocated += bytes;
+
+                if (bytes < (1 << 20)) small_allocs++;
+                else if (bytes < (100 << 20)) medium_allocs++;
+                else large_allocs++;
+
+                if (alloc_count % 5000 == 0) {
+                    // Query memory pool attributes
+                    int device;
+                    cudaGetDevice(&device);
+                    cudaMemPool_t pool;
+                    cudaDeviceGetDefaultMemPool(&pool, device);
+
+                    // Get pool reserved memory (what's actually allocated from OS)
+                    uint64_t pool_reserved = 0;
+                    cudaMemPoolGetAttribute(pool, cudaMemPoolAttrReservedMemCurrent, &pool_reserved);
+
+                    // Get pool used memory (what's actively in use)
+                    uint64_t pool_used = 0;
+                    cudaMemPoolGetAttribute(pool, cudaMemPoolAttrUsedMemCurrent, &pool_used);
+
+                    // Get total process CUDA memory usage
+                    size_t free_mem, total_mem;
+                    cudaMemGetInfo(&free_mem, &total_mem);
+                    size_t process_used = total_mem - free_mem;
+
+                    // Calculate non-pool memory (direct allocations + arena + driver overhead)
+                    size_t non_pool = process_used - pool_reserved;
+
+                    printf("[POOL] After %d allocs (small:%d med:%d large:%d) | Pool: reserved=%.2f GB, used=%.2f GB | Cumulative allocated: %.2f GB | Process: %.2f GB (non-pool: %.2f GB)\n",
+                           alloc_count.load(),
+                           small_allocs.load(),
+                           medium_allocs.load(),
+                           large_allocs.load(),
+                           pool_reserved / (1024.0 * 1024.0 * 1024.0),
+                           pool_used / (1024.0 * 1024.0 * 1024.0),
+                           total_bytes_allocated.load() / (1024.0 * 1024.0 * 1024.0),
+                           process_used / (1024.0 * 1024.0 * 1024.0),
+                           non_pool / (1024.0 * 1024.0 * 1024.0));
+                }
             } else {
                 LOG_ERROR("cudaMallocAsync failed for {} bytes: {}",
                           bytes, cudaGetErrorString(err));
@@ -258,6 +314,8 @@ namespace lfs::core {
                 if (err != cudaSuccess) {
                     LOG_ERROR("cudaFreeAsync failed for Async allocation: {}", cudaGetErrorString(err));
                 }
+
+                // No logging for deallocations - too noisy
 #else
                 // Shouldn't happen (Async not used on old CUDA), but fallback to cudaFree
                 LOG_WARN("Unexpected Async allocation on CUDA < 12.8, using cudaFree");
