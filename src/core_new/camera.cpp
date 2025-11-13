@@ -231,45 +231,24 @@ namespace lfs::core {
     }
 
     Tensor Camera::load_and_get_image(int resize_factor, int max_width) {
-        unsigned char* data;
-        int w, h, c;
         auto& loader = lfs::loader::CacheLoader::getInstance();
-        // Load image synchronously
+        // Load image synchronously - returns preprocessed tensor [C,H,W] float32
         lfs::loader::LoadParams params{.resize_factor = resize_factor, .max_width = max_width};
 
-        auto result = loader.load_cached_image(_image_path, params);
+        auto image = loader.load_cached_image(_image_path, params);
 
-        data = std::get<0>(result);
-        w = std::get<1>(result);
-        h = std::get<2>(result);
-        c = std::get<3>(result);
+        // Extract dimensions from tensor shape
+        auto shape = image.shape();
+        _image_width = shape[2];
+        _image_height = shape[1];
 
-        _image_width = w;
-        _image_height = h;
-
-        // Create tensor from raw data [H, W, C] uint8
-        auto image = Tensor::from_blob(
-            data,
-            TensorShape({static_cast<size_t>(h), static_cast<size_t>(w), static_cast<size_t>(c)}),
-            Device::CPU,
-            DataType::UInt8);
-
-        // Convert to float and normalize, then permute to [C, H, W]
-        image = image.to(DataType::Float32) / 255.0f;
-        image = image.permute({2, 0, 1}).contiguous();  // Make contiguous BEFORE CUDA transfer
-
-        // This allows image loading to overlap with GPU compute
         // Transfer to CUDA using async stream transfer
         image = image.to(Device::CUDA, _stream);
 
-        // Free the original data
-        free_image(data);
-
         // Sync stream to ensure transfer completes before returning
+        // NOTE: This is necessary because the training loop needs the data immediately
         if (_stream) {
             cudaStreamSynchronize(_stream);
-        } else {
-            // If no stream, the sync already happened in .to()
         }
 
         return image;
