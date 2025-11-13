@@ -13,6 +13,9 @@ namespace lfs::training {
     AdamOptimizer::AdamOptimizer(lfs::core::SplatData& splat_data, const AdamConfig& config)
         : splat_data_(splat_data), config_(config) {
 
+        LOG_DEBUG("AdamOptimizer constructor: config.initial_capacity={}, config.growth_factor={}",
+                  config_.initial_capacity, config_.growth_factor);
+
         // Ensure gradients are allocated
         if (!splat_data_.has_gradients()) {
             splat_data_.allocate_gradients();
@@ -291,18 +294,28 @@ namespace lfs::training {
     }
 
     size_t AdamOptimizer::compute_new_capacity(size_t current_capacity, size_t required_size) const {
+        size_t new_capacity;
         if (current_capacity == 0) {
             // First allocation: use initial_capacity if set, otherwise exact fit with some growth
             if (config_.initial_capacity > 0) {
-                return std::max(config_.initial_capacity, required_size);
+                new_capacity = std::max(config_.initial_capacity, required_size);
+                LOG_DEBUG("compute_new_capacity: initial allocation with config.initial_capacity={}, required_size={} -> new_capacity={}",
+                          config_.initial_capacity, required_size, new_capacity);
+            } else {
+                // Default: allocate 150% of required to avoid immediate reallocation
+                new_capacity = static_cast<size_t>(required_size * 1.5f);
+                LOG_DEBUG("compute_new_capacity: initial allocation (no initial_capacity set), required_size={} -> new_capacity={} (1.5x)",
+                          required_size, new_capacity);
             }
-            // Default: allocate 150% of required to avoid immediate reallocation
-            return static_cast<size_t>(required_size * 1.5f);
+            return new_capacity;
         }
 
         // Grow by growth_factor (like std::vector uses 1.5x or 2x)
         size_t grown_capacity = static_cast<size_t>(current_capacity * config_.growth_factor);
-        return std::max(grown_capacity, required_size);
+        new_capacity = std::max(grown_capacity, required_size);
+        LOG_DEBUG("compute_new_capacity: growth, current_capacity={}, required_size={}, growth_factor={} -> new_capacity={}",
+                  current_capacity, required_size, config_.growth_factor, new_capacity);
+        return new_capacity;
     }
 
     const AdamParamState* AdamOptimizer::get_state(ParamType type) const {

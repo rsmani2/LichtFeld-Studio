@@ -2056,14 +2056,22 @@ namespace lfs::core {
         if (capacity_ >= new_capacity) {
             // Make sure logical_size_ is correct (in case reserve was called after resize)
             logical_size_ = current_rows;
+            LOG_DEBUG("Tensor #{}: reserve({}) skipped, already have capacity {} (current size {})",
+                      id_, new_capacity, capacity_, current_rows);
             return;
         }
+
+        LOG_DEBUG("Tensor #{}: reserve({}) starting (current size {}, capacity {})",
+                  id_, new_capacity, current_rows, capacity_);
 
         // Calculate sizes
         const size_t row_size = numel() / current_rows; // elements per "row"
         const size_t new_total_elements = new_capacity * row_size;
         const size_t element_size = dtype_size(dtype_);
         const size_t new_bytes = new_total_elements * element_size;
+
+        LOG_DEBUG("  Allocating: {} rows × {} elements/row × {} bytes/elem = {} MB",
+                  new_capacity, row_size, element_size, new_bytes / (1024.0 * 1024.0));
 
         // First, explicitly release the old buffer to avoid double allocation
         // This ensures the old buffer is freed BEFORE we allocate the new one
@@ -2072,13 +2080,20 @@ namespace lfs::core {
 
         // Allocate new buffer
         void* new_data = nullptr;
-        if (device_ == Device::CUDA) {
-            CHECK_CUDA(cudaMalloc(&new_data, new_bytes));
-        } else {
-            new_data = std::malloc(new_bytes);
-            if (!new_data) {
-                throw TensorError("Failed to allocate CPU memory for reserve()", this);
+        try {
+            if (device_ == Device::CUDA) {
+                CHECK_CUDA(cudaMalloc(&new_data, new_bytes));
+                LOG_DEBUG("  ✓ CUDA allocation succeeded: {} MB at {}", new_bytes / (1024.0 * 1024.0), new_data);
+            } else {
+                new_data = std::malloc(new_bytes);
+                if (!new_data) {
+                    throw TensorError("Failed to allocate CPU memory for reserve()", this);
+                }
+                LOG_DEBUG("  ✓ CPU allocation succeeded: {} MB at {}", new_bytes / (1024.0 * 1024.0), new_data);
             }
+        } catch (const std::exception& e) {
+            LOG_ERROR("  ✗ Allocation failed: {}", e.what());
+            throw;
         }
 
         // Copy existing data
@@ -2107,10 +2122,8 @@ namespace lfs::core {
         // This ensures we don't have both buffers alive at the same time
         old_owner.reset();  // Decrement ref count, potentially freeing old buffer immediately
 
-        if (profiling_enabled_) {
-            LOG_DEBUG("Tensor #{}: reserved capacity {} (current size {}, row_size {})",
-                      id_, new_capacity, current_rows, row_size);
-        }
+        LOG_DEBUG("✓ Tensor #{}: reserve({}) SUCCEEDED - capacity now {}, size {} ({:.1f}% utilization)",
+                  id_, new_capacity, capacity_, current_rows, 100.0 * current_rows / capacity_);
     }
 
     // ============= Error Classes =============

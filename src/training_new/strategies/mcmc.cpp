@@ -532,29 +532,46 @@ namespace lfs::training {
         // Pre-allocate tensor capacity if max_cap is specified
         if (_params->max_cap > 0) {
             const size_t capacity = static_cast<size_t>(_params->max_cap);
-            LOG_INFO("Pre-allocating capacity for {} Gaussians (attributes + gradients)", capacity);
+            const size_t current_size = _splat_data.size();
+            LOG_INFO("Pre-allocating capacity for {} Gaussians (current size: {}, utilization: {:.1f}%)",
+                     capacity, current_size, 100.0f * current_size / capacity);
 
             try {
                 // Pre-allocate attribute tensors
+                LOG_DEBUG("  Reserving capacity for parameters:");
                 _splat_data.means().reserve(capacity);
+                LOG_DEBUG("    means: size={}, capacity={}", _splat_data.means().shape()[0], _splat_data.means().capacity());
                 _splat_data.sh0().reserve(capacity);
+                LOG_DEBUG("    sh0: size={}, capacity={}", _splat_data.sh0().shape()[0], _splat_data.sh0().capacity());
                 _splat_data.shN().reserve(capacity);
+                LOG_DEBUG("    shN: size={}, capacity={}", _splat_data.shN().shape()[0], _splat_data.shN().capacity());
                 _splat_data.scaling_raw().reserve(capacity);
+                LOG_DEBUG("    scaling: size={}, capacity={}", _splat_data.scaling_raw().shape()[0], _splat_data.scaling_raw().capacity());
                 _splat_data.rotation_raw().reserve(capacity);
+                LOG_DEBUG("    rotation: size={}, capacity={}", _splat_data.rotation_raw().shape()[0], _splat_data.rotation_raw().capacity());
                 _splat_data.opacity_raw().reserve(capacity);
+                LOG_DEBUG("    opacity: size={}, capacity={}", _splat_data.opacity_raw().shape()[0], _splat_data.opacity_raw().capacity());
 
                 // Pre-allocate gradient tensors (must allocate gradients first)
                 if (!_splat_data.has_gradients()) {
                     _splat_data.allocate_gradients();
                 }
+                LOG_DEBUG("  Reserving capacity for gradients:");
                 _splat_data.means_grad().reserve(capacity);
+                LOG_DEBUG("    means_grad: size={}, capacity={}", _splat_data.means_grad().shape()[0], _splat_data.means_grad().capacity());
                 _splat_data.sh0_grad().reserve(capacity);
+                LOG_DEBUG("    sh0_grad: size={}, capacity={}", _splat_data.sh0_grad().shape()[0], _splat_data.sh0_grad().capacity());
                 _splat_data.shN_grad().reserve(capacity);
+                LOG_DEBUG("    shN_grad: size={}, capacity={}", _splat_data.shN_grad().shape()[0], _splat_data.shN_grad().capacity());
                 _splat_data.scaling_grad().reserve(capacity);
+                LOG_DEBUG("    scaling_grad: size={}, capacity={}", _splat_data.scaling_grad().shape()[0], _splat_data.scaling_grad().capacity());
                 _splat_data.rotation_grad().reserve(capacity);
+                LOG_DEBUG("    rotation_grad: size={}, capacity={}", _splat_data.rotation_grad().shape()[0], _splat_data.rotation_grad().capacity());
                 _splat_data.opacity_grad().reserve(capacity);
+                LOG_DEBUG("    opacity_grad: size={}, capacity={}", _splat_data.opacity_grad().shape()[0], _splat_data.opacity_grad().capacity());
 
-                LOG_INFO("Tensor capacity pre-allocation complete (attributes + gradients)");
+                LOG_INFO("✓ Tensor capacity pre-allocation complete: {}/{} Gaussians ({:.1f}% utilization)",
+                         current_size, capacity, 100.0f * current_size / capacity);
             } catch (const std::exception& e) {
                 LOG_WARN("Failed to pre-allocate capacity: {}. Continuing without pre-allocation.", e.what());
             }
