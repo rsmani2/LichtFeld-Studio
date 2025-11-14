@@ -482,7 +482,7 @@ namespace lfs::vis::gui {
                         ImGui::TableNextColumn();
                         ImGui::TextColored(actionColor, "* Navigate Scene (Up/Down)");
                         ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "Q, U");
+                        ImGui::TextColored(controlColor, "Q, E");
 
                         ImGui::TableNextRow();
                         ImGui::TableNextColumn();

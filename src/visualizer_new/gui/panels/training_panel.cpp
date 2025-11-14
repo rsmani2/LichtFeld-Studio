@@ -872,6 +872,8 @@ namespace lfs::vis::gui::panels {
         g_iter_rate_tracker.addSample(current_iteration);
         // Get iteration rate
         float iters_per_sec = g_iter_rate_tracker.getIterationsPerSecond();
+        iters_per_sec = iters_per_sec > 0.0f ? iters_per_sec : 0.0f;
+
         // Display iteration with rate
         ImGui::Text("Iteration: %d (%.1f iters/sec)", current_iteration, iters_per_sec);
 

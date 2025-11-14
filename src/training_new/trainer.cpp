@@ -328,6 +328,14 @@ namespace lfs::training {
             }
             LOG_DEBUG("Camera cache initialized with {} cameras", m_cam_id_to_cam.size());
 
+            auto& splat = strategy_->get_model();
+
+            int max_cap = params.optimization.max_cap;
+            if (max_cap < splat.size()) {
+                LOG_WARN("Max cap is less than to {} initial splats {}. Choosing randomly {} splats", max_cap, splat.size(), max_cap);
+                splat.random_choose(max_cap);
+            }
+
             // Re-initialize strategy with new parameters
             strategy_->initialize(params.optimization);
             LOG_DEBUG("Strategy initialized");

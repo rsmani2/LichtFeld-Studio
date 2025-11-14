@@ -100,6 +100,12 @@ namespace lfs::training {
                         std::format("Failed to initialize model: {}", splat_result.error()));
                 }
 
+                int max_cap = params.optimization.max_cap;
+                if (max_cap < splat_result->size()) {
+                    LOG_WARN("Max cap is less than to {} initial splats {}. Choosing randomly {} splats", max_cap, splat_result->size(), max_cap);
+                    splat_result->random_choose(max_cap);
+                }
+
                 // 5. Create strategy
                 std::unique_ptr<IStrategy> strategy;
                 if (params.optimization.strategy == "mcmc") {

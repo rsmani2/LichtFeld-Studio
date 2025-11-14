@@ -118,6 +118,13 @@ namespace lfs::core {
 
         SplatData crop_by_cropbox(const lfs::geometry::BoundingBox& bounding_box) const;
 
+        /**
+         * @brief Randomly select a subset of splats in-place
+         * @param num_splat Amount splats to keep
+         * @param seed Random seed for reproducibility (default: 0)
+         */
+        void random_choose(int num_splat, int seed = 0);
+
         // Convert to point cloud for export (public for testing)
         PointCloud to_point_cloud() const;
 

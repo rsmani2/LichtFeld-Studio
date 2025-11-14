@@ -21,7 +21,9 @@
 #include <future>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
+#include <numeric> // for std::iota
 #include <print>
+#include <random> // for std::mt19937
 #include <string>
 #include <thread>
 #include <vector>
@@ -873,6 +875,99 @@ namespace lfs::core {
                   num_points, points_inside, _scene_scale, new_scene_scale);
 
         return cropped_splat;
+    }
+
+    // RANDOM CROP
+
+    void SplatData::random_choose(int num_splat, int seed) {
+        LOG_TIMER("SplatData::random_choose");
+
+        if (!_means.is_valid() || _means.size(0) == 0) {
+            LOG_WARN("Cannot choose from invalid or empty SplatData");
+            return;
+        }
+
+        const int num_points = _means.size(0);
+
+        // Clamp num_splat to valid range
+        if (num_splat <= 0) {
+            LOG_WARN("num_splat must be positive, got {}", num_splat);
+            return;
+        }
+
+        if (num_splat >= num_points) {
+            LOG_DEBUG("num_splat ({}) >= total points ({}), keeping all data",
+                      num_splat, num_points);
+            return;
+        }
+
+        LOG_DEBUG("Randomly selecting {} points from {} total points (seed: {})",
+                  num_splat, num_points, seed);
+
+        // Generate random indices
+        // Create a vector of all indices [0, 1, 2, ..., num_points-1]
+        std::vector<int> all_indices(num_points);
+        std::iota(all_indices.begin(), all_indices.end(), 0);
+
+        // Shuffle the indices using the provided seed
+        std::mt19937 rng(seed);
+        std::shuffle(all_indices.begin(), all_indices.end(), rng);
+
+        // Take the first num_splat indices
+        std::vector<int> selected_indices(all_indices.begin(),
+                                          all_indices.begin() + num_splat);
+
+        // Convert to tensor for indexing
+        auto indices_tensor = Tensor::from_vector(
+            selected_indices,
+            TensorShape({static_cast<size_t>(num_splat)}),
+            _means.device());
+
+        // Index all tensors in-place using the selected indices
+        _means = _means.index_select(0, indices_tensor).contiguous();
+        _sh0 = _sh0.index_select(0, indices_tensor).contiguous();
+        _shN = _shN.index_select(0, indices_tensor).contiguous();
+        _scaling = _scaling.index_select(0, indices_tensor).contiguous();
+        _rotation = _rotation.index_select(0, indices_tensor).contiguous();
+        _opacity = _opacity.index_select(0, indices_tensor).contiguous();
+
+        // Update gradients if they exist
+        if (_means_grad.is_valid()) {
+            _means_grad = _means_grad.index_select(0, indices_tensor).contiguous();
+        }
+        if (_sh0_grad.is_valid()) {
+            _sh0_grad = _sh0_grad.index_select(0, indices_tensor).contiguous();
+        }
+        if (_shN_grad.is_valid()) {
+            _shN_grad = _shN_grad.index_select(0, indices_tensor).contiguous();
+        }
+        if (_scaling_grad.is_valid()) {
+            _scaling_grad = _scaling_grad.index_select(0, indices_tensor).contiguous();
+        }
+        if (_rotation_grad.is_valid()) {
+            _rotation_grad = _rotation_grad.index_select(0, indices_tensor).contiguous();
+        }
+        if (_opacity_grad.is_valid()) {
+            _opacity_grad = _opacity_grad.index_select(0, indices_tensor).contiguous();
+        }
+
+        // Update densification info if it exists
+        if (_densification_info.is_valid() && _densification_info.size(0) == num_points) {
+            _densification_info = _densification_info.index_select(0, indices_tensor).contiguous();
+        }
+
+        // Recalculate scene scale for the selected data
+        Tensor scene_center = _means.mean({0}, false);
+        Tensor dists = _means.sub(scene_center).norm(2.0f, {1}, false);
+
+        float old_scene_scale = _scene_scale;
+        if (num_splat > 1) {
+            auto sorted_dists = dists.sort(0, false);
+            _scene_scale = sorted_dists.first[num_splat / 2].item();
+        }
+
+        LOG_DEBUG("Successfully selected {} random splats in-place (scale: {:.4f} -> {:.4f})",
+                  num_splat, old_scene_scale, _scene_scale);
     }
 
     // ========== FACTORY METHOD ==========
