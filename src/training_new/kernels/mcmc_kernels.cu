@@ -30,34 +30,25 @@ namespace lfs::training::mcmc {
             return;
 
         int n_idx = ratios[idx];
-
-        // Safety check: n_idx must be >= 1
-        if (n_idx < 1) {
-            new_opacities[idx] = opacities[idx];
-            for (int i = 0; i < 3; ++i) {
-                new_scales[idx * 3 + i] = scales[idx * 3 + i];
-            }
-            return;
-        }
-
         float denom_sum = 0.0f;
 
         // Compute new opacity: 1 - (1 - old_opacity)^(1/n_idx)
-        float opacity_base = fmaxf(0.0f, fminf(1.0f, opacities[idx]));  // Clamp to [0, 1]
-        new_opacities[idx] = 1.0f - powf(1.0f - opacity_base, 1.0f / static_cast<float>(n_idx));
+        // Match legacy gsplat implementation exactly - no clamping, no safety checks
+        // Use pow() instead of powf() to match legacy exactly
+        new_opacities[idx] = 1.0f - pow(1.0f - opacities[idx], 1.0f / n_idx);
 
         // Compute new scale
         for (int i = 1; i <= n_idx; ++i) {
             for (int k = 0; k <= (i - 1); ++k) {
                 float bin_coeff = binoms[(i - 1) * n_max + k];
-                float term = (powf(-1.0f, k) / sqrtf(static_cast<float>(k + 1))) *
-                             powf(new_opacities[idx], k + 1);
+                float term = (pow(-1.0f, k) / sqrt(static_cast<float>(k + 1))) *
+                             pow(new_opacities[idx], k + 1);
                 denom_sum += (bin_coeff * term);
             }
         }
 
-        // Safety check: avoid division by zero
-        float coeff = (fabsf(denom_sum) > 1e-8f) ? (opacity_base / denom_sum) : 1.0f;
+        // Match legacy exactly - use raw opacity, no division by zero check
+        float coeff = (opacities[idx] / denom_sum);
         for (int i = 0; i < 3; ++i) {
             new_scales[idx * 3 + i] = coeff * scales[idx * 3 + i];
         }
@@ -363,12 +354,8 @@ namespace lfs::training::mcmc {
             scaling_raw[target_idx * 3 + i] = new_scaling[idx * 3 + i];
         }
 
-        // Update opacity [1] or []
-        if (opacity_dim == 1) {
-            opacity_raw[target_idx] = new_opacity_raw[idx];
-        } else {
-            opacity_raw[target_idx] = new_opacity_raw[idx];
-        }
+        // Update opacity
+        opacity_raw[target_idx] = new_opacity_raw[idx];
     }
 
     void launch_update_scaling_opacity(

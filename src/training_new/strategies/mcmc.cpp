@@ -361,17 +361,20 @@ namespace lfs::training {
         if (n_new == 0)
             return 0;
 
+        // Ensure indices are Int64 (test may pass Int32)
+        Tensor sampled_idxs_i64 = (sampled_idxs.dtype() == DataType::Int64) ? sampled_idxs : sampled_idxs.to(DataType::Int64);
+
         // Get opacities
         auto opacities = _splat_data.get_opacity();
 
         // Get parameters for sampled Gaussians
-        auto sampled_opacities = opacities.index_select(0, sampled_idxs);
-        auto sampled_scales = _splat_data.get_scaling().index_select(0, sampled_idxs);
+        auto sampled_opacities = opacities.index_select(0, sampled_idxs_i64);
+        auto sampled_scales = _splat_data.get_scaling().index_select(0, sampled_idxs_i64);
 
         // Count occurrences
         auto ratios = Tensor::zeros({static_cast<size_t>(_splat_data.size())}, Device::CUDA, DataType::Float32);
-        ratios.index_add_(0, sampled_idxs, Tensor::ones_like(sampled_idxs).to(DataType::Float32));
-        ratios = ratios.index_select(0, sampled_idxs) + 1.0f;
+        ratios.index_add_(0, sampled_idxs_i64, Tensor::ones_like(sampled_idxs_i64).to(DataType::Float32));
+        ratios = ratios.index_select(0, sampled_idxs_i64) + 1.0f;
 
         // Clamp and convert to int
         const int n_max = static_cast<int>(_binoms.shape()[0]);
@@ -419,12 +422,12 @@ namespace lfs::training {
 
             // Use direct CUDA kernel to preserve tensor capacity (unlike index_put_ which creates new tensors)
             mcmc::launch_update_scaling_opacity(
-                sampled_idxs.ptr<int64_t>(),
+                sampled_idxs_i64.ptr<int64_t>(),
                 new_scaling_raw.ptr<float>(),
                 new_opacity_raw.ptr<float>(),
                 _splat_data.scaling_raw().ptr<float>(),
                 _splat_data.opacity_raw().ptr<float>(),
-                sampled_idxs.numel(),
+                sampled_idxs_i64.numel(),
                 opacity_dim,
                 N
             );
@@ -434,12 +437,12 @@ namespace lfs::training {
         {
             LOG_TIMER("add_new_params_gather");
             // NOTE: We must gather opacity/scaling AFTER updating them above!
-            _optimizer->add_new_params_gather(ParamType::Means, sampled_idxs);
-            _optimizer->add_new_params_gather(ParamType::Sh0, sampled_idxs);
-            _optimizer->add_new_params_gather(ParamType::ShN, sampled_idxs);
-            _optimizer->add_new_params_gather(ParamType::Rotation, sampled_idxs);
-            _optimizer->add_new_params_gather(ParamType::Opacity, sampled_idxs);
-            _optimizer->add_new_params_gather(ParamType::Scaling, sampled_idxs);
+            _optimizer->add_new_params_gather(ParamType::Means, sampled_idxs_i64);
+            _optimizer->add_new_params_gather(ParamType::Sh0, sampled_idxs_i64);
+            _optimizer->add_new_params_gather(ParamType::ShN, sampled_idxs_i64);
+            _optimizer->add_new_params_gather(ParamType::Rotation, sampled_idxs_i64);
+            _optimizer->add_new_params_gather(ParamType::Opacity, sampled_idxs_i64);
+            _optimizer->add_new_params_gather(ParamType::Scaling, sampled_idxs_i64);
         }
 
         return n_new;

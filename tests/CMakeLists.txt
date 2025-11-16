@@ -116,6 +116,7 @@ set(OPTIONAL_TEST_FILES
     test_tensor_mcmc_memory_profile.cpp  # MCMC-style memory profiling with huge tensors
     test_mcmc_tensor_ops.cpp        # Comprehensive MCMC tensor operation tests (nonzero, multinomial, index_select)
     test_mcmc_memory_ops.cpp        # Consolidated: append_gather, in-place cat, memory leak detection for MCMC
+    test_mcmc_critical_bugs.cpp     # Critical MCMC bugs: Adam add_new_params, inject_noise, cat self-ref, index_add_ int64
 )
 
 foreach(TEST_FILE ${OPTIONAL_TEST_FILES})

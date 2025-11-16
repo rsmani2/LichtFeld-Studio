@@ -119,17 +119,19 @@ namespace lfs::training {
                 LOG_ERROR("CUDA error before param_fn: {}", cudaGetErrorString(err_before));
             }
 
+            auto param_type = index_to_param_type(i);
+            LOG_DEBUG("Calling param_fn for param {}", i);
+
             auto new_param = param_fn(i, *param);
 
             cudaError_t err_after = cudaGetLastError();
             if (err_after != cudaSuccess) {
-                LOG_ERROR("CUDA error after param_fn({}): {}", i, cudaGetErrorString(err_after));
-                throw std::runtime_error(std::string("CUDA error in param_fn: ") + cudaGetErrorString(err_after));
+                LOG_ERROR("CUDA error after param_fn({}) [param_type={}]: {}", i, static_cast<int>(param_type), cudaGetErrorString(err_after));
+                throw std::runtime_error(std::string("CUDA error in param_fn (param ") + std::to_string(i) + "): " + cudaGetErrorString(err_after));
             }
             new_params[i] = new_param;
 
             // Get optimizer state for this parameter type
-            ParamType param_type = index_to_param_type(i);
             const AdamParamState* state = optimizer->get_state(param_type);
 
             if (state) {

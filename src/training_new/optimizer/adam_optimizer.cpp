@@ -79,6 +79,14 @@ namespace lfs::training {
         auto& param = get_param(type);
         auto name = param_name(type);
 
+        // Validate param before creating state
+        if (!param.is_valid()) {
+            throw std::runtime_error("init_state: parameter " + name + " is not valid!");
+        }
+        if (param.ndim() == 0) {
+            throw std::runtime_error("init_state: parameter " + name + " has rank 0! This will create rank-0 optimizer state.");
+        }
+
         auto& state = states_[name];
         size_t param_size = param.shape()[0];
 
@@ -251,47 +259,76 @@ namespace lfs::training {
         auto& state = states_[name];
         size_t new_size = state.size + n_new;
 
-        // OPTIMIZATION: Check if we have enough capacity (avoids reallocation)
+        // DISABLED: Fast path optimization is buggy - tensors need to be resized, not just state.size updated
+        // TODO: Implement proper fast path using narrow() or a resize_bytes() operation
+        /*
         if (new_size <= state.capacity) {
-            // Fast path: Just update the size, no allocation needed!
-            size_t old_size = state.size;
-            state.size = new_size;
-
-            LOG_DEBUG("✓ Fast path: extend_state_for_new_params for {} (no reallocation)", name);
-            LOG_DEBUG("  Added {} parameters: size {} -> {} (capacity: {}, utilization: {:.1f}%)",
-                     n_new, old_size, state.size, state.capacity,
-                     100.0f * state.size / state.capacity);
-
+            // Fast path: would avoid reallocation IF we could resize tensors properly
+            ...
             return;
         }
+        */
 
         // Slow path: Need to grow capacity
         auto param_shape = param.shape();
-        std::vector<size_t> zeros_dims(param_shape.rank());
 
-        // Calculate new capacity with growth factor (like std::vector)
-        size_t new_capacity = compute_new_capacity(state.capacity, new_size);
-
-        // Allocate new tensors with extra capacity
-        for (size_t i = 0; i < param_shape.rank(); i++) {
-            zeros_dims[i] = (i == 0) ? (new_capacity - state.size) : param_shape[i];
+        // Defensive check: ensure param is valid
+        if (!param.is_valid() || param_shape.rank() == 0) {
+            throw std::runtime_error("extend_state_for_new_params: param " + name +
+                                   " is invalid! is_valid=" + std::to_string(param.is_valid()) +
+                                   ", rank=" + std::to_string(param_shape.rank()));
         }
-        auto zeros_shape = lfs::core::TensorShape(zeros_dims);
-        auto zeros = lfs::core::Tensor::zeros(zeros_shape, param.device());
 
-        // Concatenate to grow
-        state.exp_avg = lfs::core::Tensor::cat(std::vector<lfs::core::Tensor>{state.exp_avg, zeros}, 0);
-        state.exp_avg_sq = lfs::core::Tensor::cat(std::vector<lfs::core::Tensor>{state.exp_avg_sq, zeros}, 0);
+        // Defensive check: ensure state tensors are valid
+        if (!state.exp_avg.is_valid() || state.exp_avg.ndim() == 0) {
+            throw std::runtime_error("extend_state_for_new_params: state.exp_avg for " + name +
+                                   " is invalid! is_valid=" + std::to_string(state.exp_avg.is_valid()) +
+                                   ", ndim=" + std::to_string(state.exp_avg.ndim()));
+        }
 
-        // Update capacity and size
-        state.capacity = new_capacity;
+        // SIMPLE FIX: Just create zeros with the exact size needed (n_new params)
+        // No capacity pre-allocation optimization - not worth the complexity without proper slice operations
+        std::vector<size_t> new_zeros_dims(param_shape.rank());
+        new_zeros_dims[0] = n_new;
+        for (size_t i = 1; i < param_shape.rank(); i++) {
+            new_zeros_dims[i] = param_shape[i];
+        }
+        auto new_zeros_shape = lfs::core::TensorShape(new_zeros_dims);
+        auto new_zeros = lfs::core::Tensor::zeros(new_zeros_shape, param.device());
+
+        // Concatenate: old state + new zeros
+        // NOTE: state.exp_avg may have shape larger than state.size due to previous pre-allocation
+        // We need to handle this by only using the first state.size elements
+        // WORKAROUND: Since we don't have narrow/slice, recreate tensors with exact size
+        std::vector<size_t> current_dims(param_shape.rank());
+        current_dims[0] = state.size;
+        for (size_t i = 1; i < param_shape.rank(); i++) {
+            current_dims[i] = param_shape[i];
+        }
+        auto current_shape = lfs::core::TensorShape(current_dims);
+
+        // Copy first state.size elements (TODO: optimize with slice when available)
+        auto exp_avg_trimmed = lfs::core::Tensor::zeros(current_shape, param.device());
+        auto exp_avg_sq_trimmed = lfs::core::Tensor::zeros(current_shape, param.device());
+
+        // Copy data (manual memory copy as workaround)
+        size_t bytes_to_copy = state.size * param.numel() / param.shape()[0] * sizeof(float);
+        cudaMemcpy(exp_avg_trimmed.ptr<float>(), state.exp_avg.ptr<float>(), bytes_to_copy, cudaMemcpyDeviceToDevice);
+        cudaMemcpy(exp_avg_sq_trimmed.ptr<float>(), state.exp_avg_sq.ptr<float>(), bytes_to_copy, cudaMemcpyDeviceToDevice);
+
+        // Now concatenate
+        std::vector<lfs::core::Tensor> exp_avg_parts = {exp_avg_trimmed, new_zeros};
+        std::vector<lfs::core::Tensor> exp_avg_sq_parts = {exp_avg_sq_trimmed, new_zeros};
+
+        state.exp_avg = lfs::core::Tensor::cat(exp_avg_parts, 0);
+        state.exp_avg_sq = lfs::core::Tensor::cat(exp_avg_sq_parts, 0);
+
+        // Update capacity and size (no pre-allocation, exact fit)
+        state.capacity = new_size;
         state.size = new_size;
 
-        // IMPORTANT: Preserve step_count (matching MCMC behavior)
-        LOG_DEBUG("Extended optimizer state for {} by {} parameters with reallocation "
-                  "(size: {} -> {}, capacity: {} -> {}, growth_factor: {:.2f})",
-                  name, n_new, state.size - n_new, state.size,
-                  state.size - n_new, state.capacity, config_.growth_factor);
+        LOG_DEBUG("Extended optimizer state for {} by {} parameters (size: {} -> {})",
+                  name, n_new, state.size - n_new, state.size);
     }
 
     size_t AdamOptimizer::compute_new_capacity(size_t current_capacity, size_t required_size) const {
@@ -385,6 +422,21 @@ namespace lfs::training {
         // with excess capacity and use slicing. This is a cleaner API but allocates.
         param = lfs::core::Tensor::cat(std::vector<lfs::core::Tensor>{param, new_values}, 0);
 
+        // Verify param is still valid after cat
+        if (!param.is_valid() || param.ndim() == 0) {
+            throw std::runtime_error("add_new_params: parameter became invalid after cat()!");
+        }
+
+        // Re-obtain gradient reference after modifying param
+        // (in case the reference became stale)
+        auto& grad_updated = get_grad(type);
+
+        // Verify grad is valid
+        if (!grad_updated.is_valid() || grad_updated.ndim() == 0) {
+            throw std::runtime_error("add_new_params: gradient is invalid or rank-0! param.ndim()=" +
+                                   std::to_string(param.ndim()) + ", grad.ndim()=" + std::to_string(grad_updated.ndim()));
+        }
+
         // Extend gradient with zeros
         std::vector<size_t> grad_dims(param.ndim());
         for (size_t i = 0; i < param.ndim(); i++) {
@@ -393,15 +445,15 @@ namespace lfs::training {
         auto zeros_grad = lfs::core::Tensor::zeros(lfs::core::TensorShape(grad_dims), param.device());
 
         LOG_DEBUG("  add_new_params gradient concatenation:");
-        LOG_DEBUG("    existing grad: shape[0]={}, ndim={}", grad.shape()[0], grad.ndim());
+        LOG_DEBUG("    existing grad: shape[0]={}, ndim={}", grad_updated.shape()[0], grad_updated.ndim());
         LOG_DEBUG("    zeros_grad: shape[0]={}, ndim={}", zeros_grad.shape()[0], zeros_grad.ndim());
 
-        grad = lfs::core::Tensor::cat(std::vector<lfs::core::Tensor>{grad, zeros_grad}, 0);
+        grad_updated = lfs::core::Tensor::cat(std::vector<lfs::core::Tensor>{grad_updated, zeros_grad}, 0);
 
-        if (grad.numel() == 0) {
+        if (grad_updated.numel() == 0) {
             LOG_ERROR("  Gradient concatenation failed! Resulting tensor is empty");
         } else {
-            LOG_DEBUG("    result grad: shape[0]={}, ndim={}", grad.shape()[0], grad.ndim());
+            LOG_DEBUG("    result grad: shape[0]={}, ndim={}", grad_updated.shape()[0], grad_updated.ndim());
         }
 
         // Extend optimizer state (this can be optimized with capacity tracking)

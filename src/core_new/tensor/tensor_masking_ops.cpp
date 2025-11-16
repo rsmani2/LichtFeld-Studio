@@ -1601,14 +1601,17 @@ namespace lfs::core {
             LOG_DEBUG("  Launching index_select kernel: write_offset_elements={}, output_ptr_offset={}, n_gather={}",
                       write_offset_elements, write_offset_elements * sizeof(float), n_gather);
 
-            // Create temporary shape for the output (same as input but with n_gather rows)
-            std::vector<size_t> output_shape = shape_.dims();
-            output_shape[0] = n_gather;
+            // IMPORTANT: Pass the INPUT shape to the kernel, not the output shape!
+            // The kernel needs to know the source tensor dimensions to validate indices
+            const size_t* input_shape = shape_.dims().data();
 
             // Use index_select kernel to gather into the output location
             if (dtype_ == DataType::Float32) {
+                LOG_DEBUG("  Calling index_select: src_shape[0]={}, idx[0]={}, n_gather={}, row_size={}",
+                          shape_[0], idx_ptr[0], n_gather, row_size);
+
                 tensor_ops::launch_index_select(ptr<float>(), idx_ptr,
-                                                output_ptr, output_shape.data(),
+                                                output_ptr, input_shape,
                                                 shape_.rank(), 0, n_gather,
                                                 0 /*BoundaryMode::Assert*/, stream_);
 

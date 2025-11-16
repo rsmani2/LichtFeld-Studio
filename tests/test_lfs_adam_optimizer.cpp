@@ -496,11 +496,12 @@ TEST(AdamOptimizerStateTest, StepCountPreservation) {
     }
 
     EXPECT_EQ(optimizer.get_step_count(ParamType::Means), 5);
-
-    // Extend state - step count should NOT change
-    optimizer.extend_state_for_new_params(ParamType::Means, 10);
+    auto new_means = Tensor::randn({10, 3}, Device::CUDA);
+    optimizer.add_new_params(ParamType::Means, new_means);
     EXPECT_EQ(optimizer.get_step_count(ParamType::Means), 5)
-        << "Extending state should preserve step_count";
+        << "Adding new params should preserve step_count";
+    EXPECT_EQ(splat_data.means().shape()[0], 30)
+        << "Parameter size should be updated";
 
     // Reset state at indices - step count should NOT change
     optimizer.reset_state_at_indices(ParamType::Means, {0, 5, 10});
@@ -1007,24 +1008,31 @@ TEST(AdamOptimizerSafeAPITest, AddNewParamsValidation) {
     AdamConfig config;
     AdamOptimizer opt(splat, config);
 
-    // Test 1: Wrong rank
+    // Test 1: Wrong rank (validation enabled)
     auto wrong_rank = Tensor::randn({10, 3, 1}, Device::CUDA);
-    EXPECT_THROW(opt.add_new_params(ParamType::Means, wrong_rank), std::runtime_error)
-        << "Should reject tensor with wrong rank";
+    EXPECT_THROW(opt.add_new_params(ParamType::Means, wrong_rank, true), std::runtime_error)
+        << "Should reject tensor with wrong rank when validation enabled";
 
-    // Test 2: Wrong dimension size
+    // Test 2: Wrong dimension size (validation enabled)
     auto wrong_dim = Tensor::randn({10, 5}, Device::CUDA);  // means should be (N, 3)
-    EXPECT_THROW(opt.add_new_params(ParamType::Means, wrong_dim), std::runtime_error)
-        << "Should reject tensor with wrong dimension size";
+    EXPECT_THROW(opt.add_new_params(ParamType::Means, wrong_dim, true), std::runtime_error)
+        << "Should reject tensor with wrong dimension size when validation enabled";
 
-    // Test 3: Wrong device
+    // Test 3: Wrong device (validation enabled)
     auto wrong_device = Tensor::randn({10, 3}, Device::CPU);
-    EXPECT_THROW(opt.add_new_params(ParamType::Means, wrong_device), std::runtime_error)
-        << "Should reject tensor on wrong device";
+    EXPECT_THROW(opt.add_new_params(ParamType::Means, wrong_device, true), std::runtime_error)
+        << "Should reject tensor on wrong device when validation enabled";
 
-    // Test 4: Validation can be disabled
-    EXPECT_NO_THROW(opt.add_new_params(ParamType::Means, wrong_dim, false))
-        << "Should allow mismatched shapes when validation disabled";
+    // Test 4: Wrong dimension (validation disabled - still throws from cat, but different exception)
+    // When validation is disabled, the early checks are skipped, but cat() itself will still
+    // throw std::invalid_argument for mismatched shapes (lower-level check)
+    EXPECT_THROW(opt.add_new_params(ParamType::Means, wrong_dim, false), std::invalid_argument)
+        << "cat() should throw invalid_argument for mismatched shapes even when validation disabled";
+
+    // Test 5: Correct shape should work
+    auto correct = Tensor::randn({10, 3}, Device::CUDA);
+    EXPECT_NO_THROW(opt.add_new_params(ParamType::Means, correct, true))
+        << "Should accept tensor with correct shape";
 }
 
 TEST(AdamOptimizerSafeAPITest, RelocateParamsAtIndicesZerosGradients) {

@@ -396,7 +396,9 @@ namespace lfs::core::tensor_ops {
     __global__ void where_kernel(const unsigned char* cond, const float* x, const float* y,
                                  float* r, const size_t* shapes,
                                  size_t cr, size_t xr, size_t yr, size_t rr, size_t n) {
-        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t idx = block_id * blockDim.x + threadIdx.x;
         if (idx >= n)
             return;
 
@@ -421,8 +423,19 @@ namespace lfs::core::tensor_ops {
         std::copy(r_shape, r_shape + r_rank, h_shapes + 30);
         shapes.copy_from_host(h_shapes, 40);
 
-        where_kernel<<<(total + 255) / 256, 256, 0, stream>>>(
-            cond, x, y, r, shapes.get(), cond_rank, x_rank, y_rank, r_rank, total);
+        // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+        size_t num_blocks = (total + 255) / 256;
+        const size_t max_blocks_x = 65535;
+
+        if (num_blocks <= max_blocks_x) {
+            where_kernel<<<num_blocks, 256, 0, stream>>>(
+                cond, x, y, r, shapes.get(), cond_rank, x_rank, y_rank, r_rank, total);
+        } else {
+            dim3 grid(std::min(num_blocks, max_blocks_x),
+                      (num_blocks + max_blocks_x - 1) / max_blocks_x);
+            where_kernel<<<grid, 256, 0, stream>>>(
+                cond, x, y, r, shapes.get(), cond_rank, x_rank, y_rank, r_rank, total);
+        }
     }
 
     // ============= Count Nonzero =============
@@ -469,7 +482,9 @@ namespace lfs::core::tensor_ops {
     __global__ void index_select_kernel(const T* in, const int* idx, T* out,
                                         size_t outer, size_t dim_size, size_t inner,
                                         size_t idx_size, int boundary) {
-        size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t tid = block_id * blockDim.x + threadIdx.x;
         size_t total = outer * idx_size * inner;
         if (tid >= total)
             return;
@@ -506,8 +521,26 @@ namespace lfs::core::tensor_ops {
         for (size_t i = dim + 1; i < rank; ++i)
             inner *= shape[i];
         size_t total = outer * idx_size * inner;
-        index_select_kernel<float><<<(total + 255) / 256, 256, 0, stream>>>(
-            in, idx, out, outer, shape[dim], inner, idx_size, boundary);
+
+        // Early return if no work to do
+        if (total == 0) {
+            return;
+        }
+
+        // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+        size_t num_blocks = (total + 255) / 256;
+        const size_t max_blocks_x = 65535;  // Safe limit for all CUDA devices
+
+        if (num_blocks <= max_blocks_x) {
+            index_select_kernel<float><<<num_blocks, 256, 0, stream>>>(
+                in, idx, out, outer, shape[dim], inner, idx_size, boundary);
+        } else {
+            // Use 2D grid: gridDim.x = min(num_blocks, max), gridDim.y = ceil(num_blocks / max)
+            dim3 grid(std::min(num_blocks, max_blocks_x),
+                      (num_blocks + max_blocks_x - 1) / max_blocks_x);
+            index_select_kernel<float><<<grid, 256, 0, stream>>>(
+                in, idx, out, outer, shape[dim], inner, idx_size, boundary);
+        }
     }
 
     // Int64 overload
@@ -525,8 +558,26 @@ namespace lfs::core::tensor_ops {
         for (size_t i = dim + 1; i < rank; ++i)
             inner *= shape[i];
         size_t total = outer * idx_size * inner;
-        index_select_kernel<int64_t><<<(total + 255) / 256, 256, 0, stream>>>(
-            in, idx, out, outer, shape[dim], inner, idx_size, boundary);
+
+        // Early return if no work to do
+        if (total == 0) {
+            return;
+        }
+
+        // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+        size_t num_blocks = (total + 255) / 256;
+        const size_t max_blocks_x = 65535;  // Safe limit for all CUDA devices
+
+        if (num_blocks <= max_blocks_x) {
+            index_select_kernel<int64_t><<<num_blocks, 256, 0, stream>>>(
+                in, idx, out, outer, shape[dim], inner, idx_size, boundary);
+        } else {
+            // Use 2D grid
+            dim3 grid(std::min(num_blocks, max_blocks_x),
+                      (num_blocks + max_blocks_x - 1) / max_blocks_x);
+            index_select_kernel<int64_t><<<grid, 256, 0, stream>>>(
+                in, idx, out, outer, shape[dim], inner, idx_size, boundary);
+        }
     }
 
     // Int32 overload
@@ -543,8 +594,26 @@ namespace lfs::core::tensor_ops {
         for (size_t i = dim + 1; i < rank; ++i)
             inner *= shape[i];
         size_t total = outer * idx_size * inner;
-        index_select_kernel<int32_t><<<(total + 255) / 256, 256, 0, stream>>>(
-            in, idx, out, outer, shape[dim], inner, idx_size, boundary);
+
+        // Early return if no work to do
+        if (total == 0) {
+            return;
+        }
+
+        // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+        size_t num_blocks = (total + 255) / 256;
+        const size_t max_blocks_x = 65535;  // Safe limit for all CUDA devices
+
+        if (num_blocks <= max_blocks_x) {
+            index_select_kernel<int32_t><<<num_blocks, 256, 0, stream>>>(
+                in, idx, out, outer, shape[dim], inner, idx_size, boundary);
+        } else {
+            // Use 2D grid
+            dim3 grid(std::min(num_blocks, max_blocks_x),
+                      (num_blocks + max_blocks_x - 1) / max_blocks_x);
+            index_select_kernel<int32_t><<<grid, 256, 0, stream>>>(
+                in, idx, out, outer, shape[dim], inner, idx_size, boundary);
+        }
     }
 
     template<typename T>
@@ -744,7 +813,9 @@ namespace lfs::core::tensor_ops {
     __global__ void scatter_kernel(float* out, const int* idx, const float* in,
                                    size_t outer, size_t dim_sz, size_t inner,
                                    size_t idx_sz, int mode) {
-        size_t tid = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t tid = block_id * blockDim.x + threadIdx.x;
         size_t n = outer * idx_sz * inner;
         if (tid >= n)
             return;
@@ -774,8 +845,20 @@ namespace lfs::core::tensor_ops {
             outer *= out_shape[i];
         for (size_t i = dim + 1; i < rank; ++i)
             inner *= out_shape[i];
-        scatter_kernel<<<(total + 255) / 256, 256, 0, stream>>>(
-            out, idx, in, outer, out_shape[dim], inner, in_shape[dim], mode);
+
+        // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+        size_t num_blocks = (total + 255) / 256;
+        const size_t max_blocks_x = 65535;
+
+        if (num_blocks <= max_blocks_x) {
+            scatter_kernel<<<num_blocks, 256, 0, stream>>>(
+                out, idx, in, outer, out_shape[dim], inner, in_shape[dim], mode);
+        } else {
+            dim3 grid(std::min(num_blocks, max_blocks_x),
+                      (num_blocks + max_blocks_x - 1) / max_blocks_x);
+            scatter_kernel<<<grid, 256, 0, stream>>>(
+                out, idx, in, outer, out_shape[dim], inner, in_shape[dim], mode);
+        }
     }
 
     void launch_index_fill(float* data, const int* idx, float val,

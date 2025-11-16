@@ -1781,8 +1781,14 @@ namespace lfs::core {
             return int_tensor.to_vector_int();
         }
 
+        // Handle Int64 by converting to Int32
+        if (dtype_ == DataType::Int64) {
+            auto int_tensor = to(DataType::Int32);
+            return int_tensor.to_vector_int();
+        }
+
         if (dtype_ != DataType::Int32) {
-            LOG_ERROR("to_vector_int only supports int32 and bool tensors, got {}",
+            LOG_ERROR("to_vector_int only supports int32, int64, and bool tensors, got {}",
                       dtype_name(dtype_));
             return {};
         }

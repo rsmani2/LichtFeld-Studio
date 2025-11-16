@@ -267,6 +267,12 @@ TEST(LfsLossesTest, PhotometricLoss_Combined) {
     ASSERT_TRUE(result.has_value()) << result.error();
     auto [combined_loss_tensor, combined_ctx] = *result;
 
+    // IMPORTANT: Synchronize to ensure all GPU operations are complete
+    cudaDeviceSynchronize();
+
+    // IMPORTANT: Read combined loss BEFORE calling forward() again (which reuses buffers)
+    float combined_loss = combined_loss_tensor.item();
+
     // Compute pure L1
     params.lambda_dssim = 0.0f;
     auto l1_result = loss_fn.forward(rendered, gt_image, params);
@@ -280,8 +286,8 @@ TEST(LfsLossesTest, PhotometricLoss_Combined) {
     float ssim_loss = ssim_result->first.item();
 
     // Combined should be weighted average
-    float combined_loss = combined_loss_tensor.item();
     float expected_combined = 0.8f * l1_loss + 0.2f * ssim_loss;
+
     EXPECT_TRUE(float_close(combined_loss, expected_combined, 1e-4f, 1e-5f))
         << "Combined: " << combined_loss << " vs expected: " << expected_combined;
 }

@@ -1593,7 +1593,9 @@ namespace lfs::core::tensor_ops {
         size_t num_tensors,
         size_t num_rows,
         size_t row_size) {
-        size_t row = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t row = block_id * blockDim.x + threadIdx.x;
         if (row >= num_rows)
             return;
 
@@ -1728,16 +1730,29 @@ namespace lfs::core::tensor_ops {
                         num_tensors * sizeof(size_t), cudaMemcpyHostToDevice, stream);
 
         int block_size = 256;
-        int grid_size = (num_rows + block_size - 1) / block_size;
+        size_t num_blocks = (num_rows + block_size - 1) / block_size;
+        const size_t max_blocks_x = 65535;  // Safe limit for all CUDA devices
 
-        // Use vectorized kernel (4× faster for float data!)
-        cat_last_dim_kernel_vectorized<<<grid_size, block_size, 0, stream>>>(
-            static_cast<float*>(output),
-            d_input_ptrs,
-            d_input_sizes,
-            num_tensors,
-            num_rows,
-            row_size);
+        // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+        if (num_blocks <= max_blocks_x) {
+            cat_last_dim_kernel_vectorized<<<num_blocks, block_size, 0, stream>>>(
+                static_cast<float*>(output),
+                d_input_ptrs,
+                d_input_sizes,
+                num_tensors,
+                num_rows,
+                row_size);
+        } else {
+            dim3 grid(std::min(num_blocks, max_blocks_x),
+                      (num_blocks + max_blocks_x - 1) / max_blocks_x);
+            cat_last_dim_kernel_vectorized<<<grid, block_size, 0, stream>>>(
+                static_cast<float*>(output),
+                d_input_ptrs,
+                d_input_sizes,
+                num_tensors,
+                num_rows,
+                row_size);
+        }
 
         // Return metadata arrays to memory pool (instant, cached for reuse)
         CudaMemoryPool::instance().deallocate(const_cast<float**>(d_input_ptrs), stream);
@@ -1753,7 +1768,9 @@ namespace lfs::core::tensor_ops {
         size_t outer_size,
         size_t inner_size,
         size_t total_dim_size) {
-        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t idx = block_id * blockDim.x + threadIdx.x;
         size_t total = outer_size * total_dim_size * inner_size;
 
         if (idx >= total)
@@ -1823,16 +1840,31 @@ namespace lfs::core::tensor_ops {
                         num_tensors * sizeof(size_t), cudaMemcpyHostToDevice, stream);
 
         int block_size = 256;
-        int grid_size = (total_elements + block_size - 1) / block_size;
+        size_t num_blocks = (total_elements + block_size - 1) / block_size;
+        const size_t max_blocks_x = 65535;  // Safe limit for all CUDA devices
 
-        cat_middle_dim_kernel<<<grid_size, block_size, 0, stream>>>(
-            static_cast<float*>(output),
-            d_input_ptrs,
-            d_input_sizes,
-            num_tensors,
-            outer_size,
-            inner_size,
-            total_dim_size);
+        // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+        if (num_blocks <= max_blocks_x) {
+            cat_middle_dim_kernel<<<num_blocks, block_size, 0, stream>>>(
+                static_cast<float*>(output),
+                d_input_ptrs,
+                d_input_sizes,
+                num_tensors,
+                outer_size,
+                inner_size,
+                total_dim_size);
+        } else {
+            dim3 grid(std::min(num_blocks, max_blocks_x),
+                      (num_blocks + max_blocks_x - 1) / max_blocks_x);
+            cat_middle_dim_kernel<<<grid, block_size, 0, stream>>>(
+                static_cast<float*>(output),
+                d_input_ptrs,
+                d_input_sizes,
+                num_tensors,
+                outer_size,
+                inner_size,
+                total_dim_size);
+        }
 
         // Return metadata arrays to memory pool
         CudaMemoryPool::instance().deallocate(const_cast<float**>(d_input_ptrs), stream);
@@ -2253,7 +2285,9 @@ namespace lfs::core::tensor_ops {
         size_t stride0, // Stride for dimension 0 (rows)
         size_t n        // Number of elements to fill
     ) {
-        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t idx = block_id * blockDim.x + threadIdx.x;
 
         if (idx < n) {
             // For column slice: offset = storage_offset + idx * stride0
@@ -2271,7 +2305,9 @@ namespace lfs::core::tensor_ops {
         size_t storage_offset,
         int ndim,
         size_t n) {
-        size_t linear_idx = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t linear_idx = block_id * blockDim.x + threadIdx.x;
 
         if (linear_idx < n) {
             size_t offset = calculate_strided_offset(linear_idx, shape, strides, storage_offset, ndim);
@@ -2287,7 +2323,9 @@ namespace lfs::core::tensor_ops {
         size_t shape0,
         size_t stride0,
         size_t storage_offset) {
-        size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t idx = block_id * blockDim.x + threadIdx.x;
         if (idx < shape0) {
             data[storage_offset + idx * stride0] = value;
         }
@@ -2301,7 +2339,9 @@ namespace lfs::core::tensor_ops {
         size_t stride0, size_t stride1, size_t stride2,
         size_t storage_offset,
         size_t n) {
-        size_t linear_idx = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t linear_idx = block_id * blockDim.x + threadIdx.x;
         if (linear_idx < n) {
             // Decompose linear index into 3D coordinates
             size_t idx2 = linear_idx % shape2;
@@ -2323,7 +2363,9 @@ namespace lfs::core::tensor_ops {
         size_t stride0, size_t stride1, size_t stride2, size_t stride3,
         size_t storage_offset,
         size_t n) {
-        size_t linear_idx = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t linear_idx = block_id * blockDim.x + threadIdx.x;
         if (linear_idx < n) {
             // Decompose linear index into 4D coordinates
             size_t idx3 = linear_idx % shape3;
@@ -2355,7 +2397,9 @@ namespace lfs::core::tensor_ops {
         size_t storage_offset,
         int ndim,
         size_t n) {
-        size_t linear_idx = blockIdx.x * blockDim.x + threadIdx.x;
+        // Support both 1D and 2D grids for large arrays
+        size_t block_id = blockIdx.y * gridDim.x + blockIdx.x;
+        size_t linear_idx = block_id * blockDim.x + threadIdx.x;
 
         if (linear_idx < n) {
             // Decompose linear index to multi-dimensional indices
@@ -2386,15 +2430,24 @@ namespace lfs::core::tensor_ops {
             return;
 
         constexpr int BLOCK_SIZE = 256;
-        int num_blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        size_t num_blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        const size_t max_blocks_x = 65535;  // Safe limit for all CUDA devices
 
         // FAST PATHS: Avoid expensive malloc/memcpy/free for common cases
         int ndim = static_cast<int>(shape.size());
 
         // FAST PATH: 1D tensors (most common)
         if (ndim == 1) {
-            fill_strided_1d_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
-                data, value, shape[0], strides[0], storage_offset);
+            // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+            if (num_blocks <= max_blocks_x) {
+                fill_strided_1d_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+                    data, value, shape[0], strides[0], storage_offset);
+            } else {
+                dim3 grid(std::min(num_blocks, max_blocks_x),
+                          (num_blocks + max_blocks_x - 1) / max_blocks_x);
+                fill_strided_1d_kernel<<<grid, BLOCK_SIZE, 0, stream>>>(
+                    data, value, shape[0], strides[0], storage_offset);
+            }
 
             CHECK_CUDA(cudaGetLastError());
             if (stream == nullptr) {
@@ -2405,8 +2458,16 @@ namespace lfs::core::tensor_ops {
 
         // FAST PATH: 2D column slice (e.g., rotation.slice(1, 0, 1).fill_())
         if (ndim == 2 && shape[1] == 1) {
-            fill_strided_2d_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
-                data, value, storage_offset, strides[0], n);
+            // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+            if (num_blocks <= max_blocks_x) {
+                fill_strided_2d_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+                    data, value, storage_offset, strides[0], n);
+            } else {
+                dim3 grid(std::min(num_blocks, max_blocks_x),
+                          (num_blocks + max_blocks_x - 1) / max_blocks_x);
+                fill_strided_2d_kernel<<<grid, BLOCK_SIZE, 0, stream>>>(
+                    data, value, storage_offset, strides[0], n);
+            }
 
             CHECK_CUDA(cudaGetLastError());
             if (stream == nullptr) {
@@ -2417,11 +2478,22 @@ namespace lfs::core::tensor_ops {
 
         // FAST PATH: 3D tensors
         if (ndim == 3) {
-            fill_strided_3d_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
-                data, value,
-                shape[0], shape[1], shape[2],
-                strides[0], strides[1], strides[2],
-                storage_offset, n);
+            // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+            if (num_blocks <= max_blocks_x) {
+                fill_strided_3d_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+                    data, value,
+                    shape[0], shape[1], shape[2],
+                    strides[0], strides[1], strides[2],
+                    storage_offset, n);
+            } else {
+                dim3 grid(std::min(num_blocks, max_blocks_x),
+                          (num_blocks + max_blocks_x - 1) / max_blocks_x);
+                fill_strided_3d_kernel<<<grid, BLOCK_SIZE, 0, stream>>>(
+                    data, value,
+                    shape[0], shape[1], shape[2],
+                    strides[0], strides[1], strides[2],
+                    storage_offset, n);
+            }
 
             CHECK_CUDA(cudaGetLastError());
             if (stream == nullptr) {
@@ -2432,11 +2504,22 @@ namespace lfs::core::tensor_ops {
 
         // FAST PATH: 4D tensors (very common - e.g., [N, H, W, C])
         if (ndim == 4) {
-            fill_strided_4d_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
-                data, value,
-                shape[0], shape[1], shape[2], shape[3],
-                strides[0], strides[1], strides[2], strides[3],
-                storage_offset, n);
+            // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+            if (num_blocks <= max_blocks_x) {
+                fill_strided_4d_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+                    data, value,
+                    shape[0], shape[1], shape[2], shape[3],
+                    strides[0], strides[1], strides[2], strides[3],
+                    storage_offset, n);
+            } else {
+                dim3 grid(std::min(num_blocks, max_blocks_x),
+                          (num_blocks + max_blocks_x - 1) / max_blocks_x);
+                fill_strided_4d_kernel<<<grid, BLOCK_SIZE, 0, stream>>>(
+                    data, value,
+                    shape[0], shape[1], shape[2], shape[3],
+                    strides[0], strides[1], strides[2], strides[3],
+                    storage_offset, n);
+            }
 
             CHECK_CUDA(cudaGetLastError());
             if (stream == nullptr) {
@@ -2453,9 +2536,16 @@ namespace lfs::core::tensor_ops {
             std::copy_n(shape.begin(), ndim, meta.shape);
             std::copy_n(strides.begin(), ndim, meta.strides);
 
-            // Launch kernel with struct passed by value
-            fill_strided_immediate_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
-                data, value, meta, storage_offset, ndim, n);
+            // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+            if (num_blocks <= max_blocks_x) {
+                fill_strided_immediate_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+                    data, value, meta, storage_offset, ndim, n);
+            } else {
+                dim3 grid(std::min(num_blocks, max_blocks_x),
+                          (num_blocks + max_blocks_x - 1) / max_blocks_x);
+                fill_strided_immediate_kernel<<<grid, BLOCK_SIZE, 0, stream>>>(
+                    data, value, meta, storage_offset, ndim, n);
+            }
 
             CHECK_CUDA(cudaGetLastError());
             if (stream == nullptr) {
@@ -2475,8 +2565,16 @@ namespace lfs::core::tensor_ops {
         CHECK_CUDA(cudaMemcpy(d_shape, shape.data(), ndim * sizeof(size_t), cudaMemcpyHostToDevice));
         CHECK_CUDA(cudaMemcpy(d_strides, strides.data(), ndim * sizeof(size_t), cudaMemcpyHostToDevice));
 
-        fill_strided_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
-            data, value, d_shape, d_strides, storage_offset, ndim, n);
+        // Use 2D grid for large arrays to avoid exceeding grid dimension limits
+        if (num_blocks <= max_blocks_x) {
+            fill_strided_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(
+                data, value, d_shape, d_strides, storage_offset, ndim, n);
+        } else {
+            dim3 grid(std::min(num_blocks, max_blocks_x),
+                      (num_blocks + max_blocks_x - 1) / max_blocks_x);
+            fill_strided_kernel<<<grid, BLOCK_SIZE, 0, stream>>>(
+                data, value, d_shape, d_strides, storage_offset, ndim, n);
+        }
 
         CHECK_CUDA(cudaGetLastError());
         if (stream == nullptr) {

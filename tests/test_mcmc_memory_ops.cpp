@@ -238,11 +238,11 @@ TEST(MemoryLeak, MultinomialRepeatedCalls) {
     }
 
     size_t mem_after = get_gpu_memory_usage();
-    size_t mem_growth = mem_after - mem_before;
+    int64_t mem_growth = static_cast<int64_t>(mem_after) - static_cast<int64_t>(mem_before);
 
-    // Memory should stabilize - allow max 50MB growth for cached allocations
+    // Memory should stabilize - allow max 50MB growth for cached allocations (negative is fine)
     EXPECT_LT(mem_growth, 50 * 1024 * 1024)
-        << "multinomial() leaking memory: grew by " << format_bytes(mem_growth);
+        << "multinomial() leaking memory: grew by " << (mem_growth >= 0 ? format_bytes(mem_growth) : "-" + format_bytes(-mem_growth));
 }
 
 TEST(MemoryLeak, AppendGatherVsIndexSelectCat) {
@@ -271,9 +271,9 @@ TEST(MemoryLeak, AppendGatherVsIndexSelectCat) {
         }
 
         size_t mem_after = get_gpu_memory_usage();
-        size_t old_way_growth = mem_after - mem_before;
+        int64_t old_way_growth = static_cast<int64_t>(mem_after) - static_cast<int64_t>(mem_before);
 
-        std::cout << "OLD WAY memory growth: " << format_bytes(old_way_growth) << std::endl;
+        std::cout << "OLD WAY memory growth: " << (old_way_growth >= 0 ? format_bytes(old_way_growth) : "-" + format_bytes(-old_way_growth)) << std::endl;
     }
 
     // Test 2: NEW WAY - append_gather (no intermediate allocation)
@@ -295,11 +295,11 @@ TEST(MemoryLeak, AppendGatherVsIndexSelectCat) {
         }
 
         size_t mem_after = get_gpu_memory_usage();
-        size_t new_way_growth = mem_after - mem_before;
+        int64_t new_way_growth = static_cast<int64_t>(mem_after) - static_cast<int64_t>(mem_before);
 
-        std::cout << "NEW WAY memory growth: " << format_bytes(new_way_growth) << std::endl;
+        std::cout << "NEW WAY memory growth: " << (new_way_growth >= 0 ? format_bytes(new_way_growth) : "-" + format_bytes(-new_way_growth)) << std::endl;
 
-        // Both should have similar growth (just actual data), but this verifies no leak
+        // Memory should not grow excessively (negative growth is fine - means pool trimming worked)
         EXPECT_LT(new_way_growth, 500 * 1024 * 1024)
             << "append_gather() using excessive memory";
     }

@@ -567,7 +567,7 @@ namespace lfs::core {
         LoadArgs args;
         args.shape = TensorShape({static_cast<size_t>(num_samples)});
         args.device = weights.device();
-        args.dtype = DataType::Int64;  // FIX: Must be Int64, not Int32!
+        args.dtype = DataType::Int64;  // Must be Int64 for MCMC compatibility (nonzero() returns Int64)
         args.args = std::pair<void*, bool>{const_cast<void*>(static_cast<const void*>(&weights)), replacement};
         return load(LoadOp::Multinomial, args);
     }
@@ -1189,6 +1189,13 @@ namespace lfs::core {
         const auto first_device = tensors[0].device();
         const auto first_dtype = tensors[0].dtype();
 
+        // Early detection of rank-0 tensors
+        if (first_shape.rank() == 0) {
+            LOG_ERROR("cat(): First tensor is rank-0 (scalar)! Cannot concatenate scalars.");
+            LOG_ERROR("  Tensor 0: valid={}, shape={}", tensors[0].is_valid(), first_shape.str());
+            throw std::runtime_error("cat() called with rank-0 first tensor");
+        }
+
         size_t total_size_along_dim = first_shape[resolved_dim];
 
         // Validate all tensors
@@ -1200,10 +1207,18 @@ namespace lfs::core {
                 LOG_ERROR("CRITICAL: cat() rank mismatch detected!");
                 LOG_ERROR("================================================================");
                 LOG_ERROR("Attempting to concatenate tensors with different ranks:");
-                LOG_ERROR("  Tensor 0: rank={}, shape={}", first_shape.rank(), first_shape.str());
-                LOG_ERROR("  Tensor {}: rank={}, shape={}", i, shape.rank(), shape.str());
+                LOG_ERROR("  Tensor 0: rank={}, shape={}, valid={}", first_shape.rank(), first_shape.str(), tensors[0].is_valid());
+                LOG_ERROR("  Tensor {}: rank={}, shape={}, valid={}", i, shape.rank(), shape.str(), tensors[i].is_valid());
                 LOG_ERROR("  Concatenation dimension: {}", dim);
                 LOG_ERROR("  Number of tensors being concatenated: {}", tensors.size());
+
+                // Check if tensor 1 is invalid or scalar
+                if (i == 1 && shape.rank() == 0) {
+                    LOG_ERROR("  Tensor 1 is SCALAR/RANK-0! This usually means:");
+                    LOG_ERROR("    - Tensor was created with empty shape vector");
+                    LOG_ERROR("    - Tensor is invalid (is_valid={})", tensors[i].is_valid());
+                    LOG_ERROR("    - Bug in tensor creation code (e.g., zeros_dims empty)");
+                }
                 LOG_ERROR("================================================================");
                 throw std::runtime_error(fmt::format(
                     "cat() rank mismatch: tensor 0 has rank {} (shape {}), tensor {} has rank {} (shape {})",
