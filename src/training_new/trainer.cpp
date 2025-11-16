@@ -905,6 +905,8 @@ namespace lfs::training {
                 auto camera_with_image = batch[0].data;
                 lfs::core::Camera* cam = camera_with_image.camera;
                 lfs::core::Tensor gt_image = std::move(camera_with_image.image);
+                gt_image = gt_image.to(core::DataType::Float32) / 255.0f;
+                gt_image = gt_image.to(core::Device::CUDA, callback_stream_);
 
                 auto step_result = train_step(iter, cam, gt_image, render_mode, stop_token);
                 if (!step_result) {
