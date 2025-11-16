@@ -328,6 +328,8 @@ namespace lfs::loader {
                 Device::CPU,
                 DataType::UInt8);
 
+            // Convert and permute to float32 [C,H,W]
+            tensor = tensor.to(DataType::Float32) / 255.0f;
             tensor = tensor.permute({2, 0, 1}).contiguous();
 
             // Free original data
@@ -352,13 +354,15 @@ namespace lfs::loader {
             Device::CPU,
             DataType::UInt8);
 
+        // Convert and permute to float32 [C,H,W]
+        tensor = tensor.to(DataType::Float32) / 255.0f;
         tensor = tensor.permute({2, 0, 1}).contiguous();
 
         // Free original uint8 data
         free_image(img_data);
 
         // Calculate tensor size (in bytes)
-        std::size_t tensor_bytes = tensor.numel() * sizeof(uint8_t);
+        std::size_t tensor_bytes = tensor.numel() * sizeof(float);
 
         // Try to cache the preprocessed tensor in CPU memory
         {

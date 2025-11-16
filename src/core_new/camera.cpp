@@ -247,6 +247,14 @@ namespace lfs::core {
         LOG_DEBUG("load_and_get_image(): Tensor shape [C,H,W]=[{},{},{}], setting dimensions: {}x{} → {}x{}",
                   shape[0], shape[1], shape[2], old_width, old_height, _image_width, _image_height);
 
+        // Transfer to CUDA using async stream transfer
+        image = image.to(Device::CUDA, _stream);
+
+        // Sync stream to ensure transfer completes before returning
+        // NOTE: This is necessary because the training loop needs the data immediately
+        if (_stream) {
+            cudaStreamSynchronize(_stream);
+        }
 
         return image;
     }
