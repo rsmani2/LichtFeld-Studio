@@ -14,8 +14,8 @@
 
 namespace lfs::training {
 
-    // Initialize Gaussians (move to GPU, etc.)
-    void initialize_gaussians(lfs::core::SplatData& splat_data);
+    // Initialize Gaussians (move to GPU, pre-allocate capacity, etc.)
+    void initialize_gaussians(lfs::core::SplatData& splat_data, int max_cap = 0);
 
     // Create optimizer for splat data
     std::unique_ptr<AdamOptimizer> create_optimizer(

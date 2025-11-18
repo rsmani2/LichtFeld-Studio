@@ -839,7 +839,7 @@ namespace lfs::training::mcmc {
 
     __global__ void multinomial_sample_and_gather_kernel(
         const float* __restrict__ opacities,
-        const float* __restrict__ scales,
+        const float* __restrict__ scaling_raw,  // OPTIMIZATION: Takes raw scaling, applies exp() inline
         const int64_t* __restrict__ alive_indices,
         size_t n_alive,
         size_t n_samples,
@@ -886,15 +886,16 @@ namespace lfs::training::mcmc {
         sampled_global_indices[idx] = selected_global_idx;
 
         // Directly gather opacity and scales (fused in same kernel)
+        // OPTIMIZATION: Apply exp() inline to avoid intermediate tensor allocation
         sampled_opacities[idx] = opacities[selected_global_idx];
-        sampled_scales[idx * 3 + 0] = scales[selected_global_idx * 3 + 0];
-        sampled_scales[idx * 3 + 1] = scales[selected_global_idx * 3 + 1];
-        sampled_scales[idx * 3 + 2] = scales[selected_global_idx * 3 + 2];
+        sampled_scales[idx * 3 + 0] = expf(scaling_raw[selected_global_idx * 3 + 0]);
+        sampled_scales[idx * 3 + 1] = expf(scaling_raw[selected_global_idx * 3 + 1]);
+        sampled_scales[idx * 3 + 2] = expf(scaling_raw[selected_global_idx * 3 + 2]);
     }
 
     void launch_multinomial_sample_and_gather(
         const float* opacities,
-        const float* scales,
+        const float* scaling_raw,  // OPTIMIZATION: Takes raw scaling, kernel applies exp() inline
         const int64_t* alive_indices,
         size_t n_alive,
         size_t n_samples,
@@ -951,7 +952,7 @@ namespace lfs::training::mcmc {
 
         multinomial_sample_and_gather_kernel<<<sample_grid, sample_threads, 0, cuda_stream>>>(
             opacities,
-            scales,
+            scaling_raw,  // Pass raw scaling
             alive_indices,
             n_alive,
             n_samples,
@@ -967,7 +968,7 @@ namespace lfs::training::mcmc {
     // Simplified multinomial kernel that samples from ALL N opacities (no alive_indices)
     __global__ void multinomial_sample_all_kernel(
         const float* __restrict__ opacities,
-        const float* __restrict__ scales,
+        const float* __restrict__ scaling_raw,  // OPTIMIZATION: Takes raw scaling, applies exp() inline
         size_t N,
         size_t n_samples,
         float prob_sum,
@@ -1000,11 +1001,12 @@ namespace lfs::training::mcmc {
         }
 
         // Output index and gather opacity/scales
+        // OPTIMIZATION: Apply exp() inline to avoid intermediate tensor allocation
         sampled_indices[idx] = selected_idx;
         sampled_opacities[idx] = opacities[selected_idx];
-        sampled_scales[idx * 3 + 0] = scales[selected_idx * 3 + 0];
-        sampled_scales[idx * 3 + 1] = scales[selected_idx * 3 + 1];
-        sampled_scales[idx * 3 + 2] = scales[selected_idx * 3 + 2];
+        sampled_scales[idx * 3 + 0] = expf(scaling_raw[selected_idx * 3 + 0]);
+        sampled_scales[idx * 3 + 1] = expf(scaling_raw[selected_idx * 3 + 1]);
+        sampled_scales[idx * 3 + 2] = expf(scaling_raw[selected_idx * 3 + 2]);
     }
 
     // Reduction kernel for summing all opacities (simpler version without indices)
@@ -1042,7 +1044,7 @@ namespace lfs::training::mcmc {
 
     void launch_multinomial_sample_all(
         const float* opacities,
-        const float* scales,
+        const float* scaling_raw,  // OPTIMIZATION: Takes raw scaling, kernel applies exp() inline
         size_t N,
         size_t n_samples,
         uint64_t seed,
@@ -1097,7 +1099,7 @@ namespace lfs::training::mcmc {
 
         multinomial_sample_all_kernel<<<sample_grid, sample_threads, 0, cuda_stream>>>(
             opacities,
-            scales,
+            scaling_raw,  // Pass raw scaling
             N,
             n_samples,
             prob_sum,
@@ -1106,6 +1108,93 @@ namespace lfs::training::mcmc {
             sampled_opacities,
             sampled_scales
         );
+    }
+
+    // Compute rotation magnitude squared kernel (eliminates [N,4] intermediate tensor)
+    __global__ void compute_rotation_mag_sq_kernel(
+        const float* rotations,  // [N, 4]
+        float* mag_sq,           // [N]
+        size_t N) {
+
+        size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+        if (idx >= N)
+            return;
+
+        // Each rotation is a quaternion [w, x, y, z] or [x, y, z, w]
+        // Compute ||q||^2 = q[0]^2 + q[1]^2 + q[2]^2 + q[3]^2
+        const float* q = &rotations[idx * 4];
+        mag_sq[idx] = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+    }
+
+    void launch_compute_rotation_mag_sq(
+        const float* rotations,
+        float* mag_sq,
+        size_t N,
+        void* stream) {
+
+        if (N == 0) {
+            return;
+        }
+
+        dim3 threads(256);
+        dim3 grid((N + threads.x - 1) / threads.x);
+
+        cudaStream_t cuda_stream = stream ? static_cast<cudaStream_t>(stream) : nullptr;
+
+        compute_rotation_mag_sq_kernel<<<grid, threads, 0, cuda_stream>>>(
+            rotations,
+            mag_sq,
+            N);
+    }
+
+    // Fused dead mask computation kernel (ZERO intermediate allocations)
+    __global__ void compute_dead_mask_kernel(
+        const float* opacities,   // [N]
+        const float* rotations,   // [N, 4]
+        uint8_t* dead_mask,       // [N]
+        size_t N,
+        float min_opacity) {
+
+        size_t idx = threadIdx.x + blockIdx.x * blockDim.x;
+        if (idx >= N)
+            return;
+
+        // Check opacity condition: opacity <= min_opacity
+        bool is_dead = opacities[idx] <= min_opacity;
+
+        // Check rotation magnitude condition: ||rotation||^2 < 1e-8
+        if (!is_dead) {
+            const float* q = &rotations[idx * 4];
+            float mag_sq = q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3];
+            is_dead = mag_sq < 1e-8f;
+        }
+
+        dead_mask[idx] = is_dead ? 1 : 0;
+    }
+
+    void launch_compute_dead_mask(
+        const float* opacities,
+        const float* rotations,
+        uint8_t* dead_mask,
+        size_t N,
+        float min_opacity,
+        void* stream) {
+
+        if (N == 0) {
+            return;
+        }
+
+        dim3 threads(256);
+        dim3 grid((N + threads.x - 1) / threads.x);
+
+        cudaStream_t cuda_stream = stream ? static_cast<cudaStream_t>(stream) : nullptr;
+
+        compute_dead_mask_kernel<<<grid, threads, 0, cuda_stream>>>(
+            opacities,
+            rotations,
+            dead_mask,
+            N,
+            min_opacity);
     }
 
 } // namespace lfs::training::mcmc

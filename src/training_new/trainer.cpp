@@ -11,6 +11,7 @@
 #include "core_new/events.hpp"
 #include "core_new/image_io.hpp"
 #include "core_new/logger.hpp"
+#include "core_new/tensor/internal/memory_pool.hpp"
 #include "optimizer/adam_optimizer.hpp"
 // TODO: Fused SSIM kernels not needed - using lfs::training::losses::PhotometricLoss
 // #include "kernels/fused_ssim.cuh"
@@ -886,6 +887,9 @@ namespace lfs::training {
             LOG_DEBUG("Starting training iterations");
             // Single loop without epochs
             while (iter <= params_.optimization.iterations) {
+                // Update iteration tracker for memory profiling
+                lfs::core::CudaMemoryPool::instance().set_iteration(iter);
+
                 if (stop_token.stop_requested() || stop_requested_.load()) {
                     break;
                 }

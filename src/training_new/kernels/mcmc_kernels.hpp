@@ -279,7 +279,7 @@ namespace lfs::training::mcmc {
      * 4. Directly gathers opacities and scales at sampled indices
      *
      * @param opacities [N] - Source opacities (full array)
-     * @param scales [N, 3] - Source scales (full array)
+     * @param scaling_raw [N, 3] - Source raw scales (exp() applied inline)
      * @param alive_indices [n_alive] - Indices of alive Gaussians
      * @param n_alive - Number of alive Gaussians
      * @param n_samples - Number of samples to draw
@@ -292,7 +292,7 @@ namespace lfs::training::mcmc {
      */
     void launch_multinomial_sample_and_gather(
         const float* opacities,
-        const float* scales,
+        const float* scaling_raw,
         const int64_t* alive_indices,
         size_t n_alive,
         size_t n_samples,
@@ -310,7 +310,7 @@ namespace lfs::training::mcmc {
      * Used in add_new_gs() where we sample from the full population.
      *
      * @param opacities [N] - Source opacities (full array)
-     * @param scales [N, 3] - Source scales (full array)
+     * @param scaling_raw [N, 3] - Source raw scales (exp() applied inline)
      * @param N - Number of Gaussians
      * @param n_samples - Number of samples to draw
      * @param seed - Random seed for sampling
@@ -321,13 +321,57 @@ namespace lfs::training::mcmc {
      */
     void launch_multinomial_sample_all(
         const float* opacities,
-        const float* scales,
+        const float* scaling_raw,
         size_t N,
         size_t n_samples,
         uint64_t seed,
         int64_t* sampled_indices,
         float* sampled_opacities,
         float* sampled_scales,
+        void* stream = nullptr);
+
+    /**
+     * Compute rotation magnitude squared (ZERO intermediate allocations)
+     *
+     * Computes ||q||^2 = q[0]^2 + q[1]^2 + q[2]^2 + q[3]^2 for each quaternion.
+     * Replaces (rotation * rotation).sum(-1) which creates intermediate [N, 4] tensor.
+     *
+     * @param rotations [N, 4] - Input quaternion rotations
+     * @param mag_sq [N] - Output: magnitude squared for each rotation
+     * @param N - Number of Gaussians
+     * @param stream - CUDA stream
+     */
+    void launch_compute_rotation_mag_sq(
+        const float* rotations,
+        float* mag_sq,
+        size_t N,
+        void* stream = nullptr);
+
+    /**
+     * Fused dead mask computation (ZERO intermediate allocations)
+     *
+     * Directly computes boolean dead mask from opacities and rotations in a single pass.
+     * Replaces the two-step process of:
+     *   1. Computing rot_mag_sq = (rotation * rotation).sum(-1)  [creates [N] intermediate]
+     *   2. Computing dead_mask = (opacity <= min_opacity).logical_or(rot_mag_sq < 1e-8f)
+     *
+     * Dead Gaussians are those with:
+     *   - opacity <= min_opacity OR
+     *   - ||rotation||^2 < 1e-8 (near-zero rotation magnitude)
+     *
+     * @param opacities [N] - Opacity values
+     * @param rotations [N, 4] - Quaternion rotations
+     * @param dead_mask [N] - Output: boolean mask (uint8_t)
+     * @param N - Number of Gaussians
+     * @param min_opacity - Minimum valid opacity threshold
+     * @param stream - CUDA stream
+     */
+    void launch_compute_dead_mask(
+        const float* opacities,
+        const float* rotations,
+        uint8_t* dead_mask,
+        size_t N,
+        float min_opacity,
         void* stream = nullptr);
 
 } // namespace lfs::training::mcmc

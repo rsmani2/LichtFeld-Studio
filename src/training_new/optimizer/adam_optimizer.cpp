@@ -264,24 +264,11 @@ namespace lfs::training {
         auto& state = states_[name];
         size_t new_size = state.size + n_new;
 
-        // DISABLED: Fast path optimization is buggy - tensors need to be resized, not just state.size updated
-        // TODO: Implement proper fast path using narrow() or a resize_bytes() operation
-        /*
-        if (new_size <= state.capacity) {
-            // Fast path: would avoid reallocation IF we could resize tensors properly
-            ...
-            return;
-        }
-        */
-
-        // Slow path: Need to grow capacity
-        auto param_shape = param.shape();
-
         // Defensive check: ensure param is valid
-        if (!param.is_valid() || param_shape.rank() == 0) {
+        if (!param.is_valid() || param.shape().rank() == 0) {
             throw std::runtime_error("extend_state_for_new_params: param " + name +
                                    " is invalid! is_valid=" + std::to_string(param.is_valid()) +
-                                   ", rank=" + std::to_string(param_shape.rank()));
+                                   ", rank=" + std::to_string(param.shape().rank()));
         }
 
         // Defensive check: ensure state tensors are valid
@@ -291,47 +278,32 @@ namespace lfs::training {
                                    ", ndim=" + std::to_string(state.exp_avg.ndim()));
         }
 
-        // SIMPLE FIX: Just create zeros with the exact size needed (n_new params)
-        // No capacity pre-allocation optimization - not worth the complexity without proper slice operations
-        std::vector<size_t> new_zeros_dims(param_shape.rank());
-        new_zeros_dims[0] = n_new;
-        for (size_t i = 1; i < param_shape.rank(); i++) {
-            new_zeros_dims[i] = param_shape[i];
+        // Check if we can use fast path with append_zeros (requires pre-allocated capacity)
+        if (state.exp_avg.capacity() > 0 && new_size <= state.exp_avg.capacity()) {
+            // FAST PATH: Use append_zeros() which uses reserved capacity (zero-copy extension)
+            LOG_DEBUG("extend_state (FAST PATH): {} by {} params (using reserved capacity)", name, n_new);
+            state.exp_avg.append_zeros(n_new);
+            state.exp_avg_sq.append_zeros(n_new);
+            state.size = new_size;
+            state.capacity = state.exp_avg.capacity();
+        } else {
+            // SLOW PATH: Tensor doesn't have capacity or we exceeded it
+            // Fall back to cat() approach (creates allocations)
+            LOG_DEBUG("extend_state (SLOW PATH): {} by {} params (no capacity, will allocate)", name, n_new);
+
+            auto param_shape = param.shape();
+            std::vector<size_t> new_zeros_dims(param_shape.rank());
+            new_zeros_dims[0] = n_new;
+            for (size_t i = 1; i < param_shape.rank(); i++) {
+                new_zeros_dims[i] = param_shape[i];
+            }
+            auto new_zeros = lfs::core::Tensor::zeros(lfs::core::TensorShape(new_zeros_dims), param.device());
+
+            state.exp_avg = lfs::core::Tensor::cat({state.exp_avg, new_zeros}, 0);
+            state.exp_avg_sq = lfs::core::Tensor::cat({state.exp_avg_sq, new_zeros}, 0);
+            state.size = new_size;
+            state.capacity = new_size;  // No extra capacity
         }
-        auto new_zeros_shape = lfs::core::TensorShape(new_zeros_dims);
-        auto new_zeros = lfs::core::Tensor::zeros(new_zeros_shape, param.device());
-
-        // Concatenate: old state + new zeros
-        // NOTE: state.exp_avg may have shape larger than state.size due to previous pre-allocation
-        // We need to handle this by only using the first state.size elements
-        // WORKAROUND: Since we don't have narrow/slice, recreate tensors with exact size
-        std::vector<size_t> current_dims(param_shape.rank());
-        current_dims[0] = state.size;
-        for (size_t i = 1; i < param_shape.rank(); i++) {
-            current_dims[i] = param_shape[i];
-        }
-        auto current_shape = lfs::core::TensorShape(current_dims);
-
-        // Copy first state.size elements (TODO: optimize with slice when available)
-        auto exp_avg_trimmed = lfs::core::Tensor::zeros(current_shape, param.device());
-        auto exp_avg_sq_trimmed = lfs::core::Tensor::zeros(current_shape, param.device());
-
-        // Copy data (manual memory copy as workaround)
-        size_t bytes_to_copy = state.size * param.numel() / param.shape()[0] * sizeof(float);
-
-        cudaMemcpy(exp_avg_trimmed.ptr<float>(), state.exp_avg.ptr<float>(), bytes_to_copy, cudaMemcpyDeviceToDevice);
-        cudaMemcpy(exp_avg_sq_trimmed.ptr<float>(), state.exp_avg_sq.ptr<float>(), bytes_to_copy, cudaMemcpyDeviceToDevice);
-
-        // Now concatenate
-        std::vector<lfs::core::Tensor> exp_avg_parts = {exp_avg_trimmed, new_zeros};
-        std::vector<lfs::core::Tensor> exp_avg_sq_parts = {exp_avg_sq_trimmed, new_zeros};
-
-        state.exp_avg = lfs::core::Tensor::cat(exp_avg_parts, 0);
-        state.exp_avg_sq = lfs::core::Tensor::cat(exp_avg_sq_parts, 0);
-
-        // Update capacity and size (no pre-allocation, exact fit)
-        state.capacity = new_size;
-        state.size = new_size;
 
         LOG_DEBUG("Extended optimizer state for {} by {} parameters (size: {} -> {}, step_count={})",
                   name, n_new, state.size - n_new, state.size, state.step_count);
@@ -491,16 +463,31 @@ namespace lfs::training {
 
         size_t n_new = indices.numel();
         size_t n_current = param.shape()[0];
+        size_t param_capacity = param.capacity();
 
-        LOG_DEBUG("  Appending {} new values to {} existing values", n_new, n_current);
-
-        // Use fused append_gather() operation - NO INTERMEDIATE ALLOCATION!
+        // Use fused append_gather() operation - NO INTERMEDIATE ALLOCATION (if capacity available)!
+        size_t old_size = param.shape()[0];
         param.append_gather(indices);
+        size_t new_size = param.shape()[0];
 
-        // Zero ALL gradients to match LEGACY behavior (same as add_new_params)
-        LOG_DEBUG("  add_new_params_gather: Zeroing ALL gradients (matching LEGACY) for {}", param_name(type));
-        grad = lfs::core::Tensor::zeros(param.shape(), param.device());
-        LOG_DEBUG("    grad after: shape={} (all zeros)", grad.shape()[0]);
+        if (new_size != old_size + n_new) {
+            LOG_ERROR("append_gather FAILED for {}: expected new_size={}, got new_size={} (unchanged!)",
+                      param_name(type), old_size + n_new, new_size);
+        }
+
+        // Extend gradient tensor to match parameter size
+        // OPTIMIZATION: Use append_zeros if gradient has capacity, otherwise create new tensor
+        LOG_DEBUG("  add_new_params_gather: Extending gradient for {}", param_name(type));
+        if (grad.capacity() > 0 && grad.shape()[0] + n_new <= grad.capacity()) {
+            // FAST PATH: Use append_zeros() to extend gradient using reserved capacity
+            LOG_DEBUG("    grad FAST PATH: using append_zeros({}) [capacity={}]", n_new, grad.capacity());
+            grad.append_zeros(n_new);
+        } else {
+            // SLOW PATH: No capacity available, must create new tensor (ALLOCATION!)
+            LOG_DEBUG("    grad SLOW PATH: creating new zeros tensor (allocation!)");
+            grad = lfs::core::Tensor::zeros(param.shape(), param.device());
+        }
+        LOG_DEBUG("    grad after: shape={}", grad.shape()[0]);
 
         // Extend optimizer state (this can be optimized with capacity tracking)
         extend_state_for_new_params(type, n_new);

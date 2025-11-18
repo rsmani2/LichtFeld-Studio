@@ -101,6 +101,7 @@ namespace lfs::core {
 
         // Gradient management
         void allocate_gradients();
+        void reserve_capacity(size_t capacity);  // Pre-allocate capacity for params AND gradients
         void zero_gradients();
         bool has_gradients() const;
 

@@ -54,9 +54,16 @@ namespace lfs::training {
         size_t n_dead;
         {
             LOG_TIMER("relocate_find_dead");
-            Tensor rotation_raw = _splat_data.rotation_raw();
-            Tensor rot_mag_sq = (rotation_raw * rotation_raw).sum(-1);
-            dead_mask = (opacities <= _params->min_opacity).logical_or(rot_mag_sq < 1e-8f);
+            // OPTIMIZATION: Fully fused kernel - ZERO intermediate allocations
+            const size_t N = opacities.numel();
+            dead_mask = Tensor::empty({N}, Device::CUDA, DataType::Bool);
+            mcmc::launch_compute_dead_mask(
+                opacities.ptr<float>(),
+                _splat_data.rotation_raw().ptr<float>(),
+                dead_mask.ptr<uint8_t>(),
+                N,
+                _params->min_opacity
+            );
             dead_indices = dead_mask.nonzero().squeeze(-1);
             n_dead = dead_indices.numel();
         }
@@ -81,7 +88,7 @@ namespace lfs::training {
 
             // Get source tensors (contiguous)
             Tensor opacities_contig = opacities.contiguous();
-            Tensor scales = _splat_data.get_scaling().contiguous();
+            Tensor scaling_raw_contig = _splat_data.scaling_raw().contiguous();  // OPTIMIZATION: Pass raw scaling, kernel applies exp() inline
 
             // Allocate outputs
             sampled_idxs = Tensor::empty({n_dead}, Device::CUDA, DataType::Int64);
@@ -95,7 +102,7 @@ namespace lfs::training {
             // does multinomial sampling + gathering in one pass
             mcmc::launch_multinomial_sample_and_gather(
                 opacities_contig.ptr<float>(),
-                scales.ptr<float>(),
+                scaling_raw_contig.ptr<float>(),  // Pass raw scaling
                 alive_indices.ptr<int64_t>(),
                 alive_indices.numel(),
                 n_dead,
@@ -239,8 +246,8 @@ namespace lfs::training {
 
             const size_t N = opacities.numel();
 
-            // Get scales and ensure contiguity
-            auto scales = _splat_data.get_scaling().contiguous();
+            // Get raw scaling and ensure contiguity
+            auto scaling_raw_contig = _splat_data.scaling_raw().contiguous();  // OPTIMIZATION: Pass raw scaling, kernel applies exp() inline
             auto opacities_contig = opacities.contiguous();
 
             // Allocate output tensors
@@ -254,7 +261,7 @@ namespace lfs::training {
             // Call fused CUDA kernel
             mcmc::launch_multinomial_sample_all(
                 opacities_contig.ptr<float>(),
-                scales.ptr<float>(),
+                scaling_raw_contig.ptr<float>(),  // Pass raw scaling
                 N,
                 n_new,
                 seed,
@@ -331,30 +338,19 @@ namespace lfs::training {
             );
         }
 
-        // Prepare new Gaussians to concatenate (gather updated values)
-        Tensor new_means, new_sh0, new_shN, new_rotation, new_opacity_to_add, new_scaling_to_add;
+        // OPTIMIZATION: Use add_new_params_gather() to avoid double allocation
+        // (no index_select intermediate tensor + no cat allocation)
+        // This leverages tensor's reserved capacity via append_gather()
         {
-            LOG_TIMER("add_new_gather_params");
-            // Gather parameters for new Gaussians
-            // NOTE: We must gather opacity/scaling AFTER updating them above!
-            new_means = _splat_data.means().index_select(0, sampled_idxs);
-            new_sh0 = _splat_data.sh0().index_select(0, sampled_idxs);
-            new_shN = _splat_data.shN().index_select(0, sampled_idxs);
-            new_rotation = _splat_data.rotation_raw().index_select(0, sampled_idxs);
-            new_opacity_to_add = _splat_data.opacity_raw().index_select(0, sampled_idxs);
-            new_scaling_to_add = _splat_data.scaling_raw().index_select(0, sampled_idxs);
-        }
-
-        // Concatenate all parameters using optimizer's add_new_params
-        {
-            LOG_TIMER("add_new_concatenate_params");
-            // Note: add_new_params REPLACES the parameter tensors with concatenated versions
-            _optimizer->add_new_params(ParamType::Means, new_means);
-            _optimizer->add_new_params(ParamType::Sh0, new_sh0);
-            _optimizer->add_new_params(ParamType::ShN, new_shN);
-            _optimizer->add_new_params(ParamType::Scaling, new_scaling_to_add);
-            _optimizer->add_new_params(ParamType::Rotation, new_rotation);
-            _optimizer->add_new_params(ParamType::Opacity, new_opacity_to_add);
+            LOG_TIMER("add_new_append_gather");
+            // Gather and append parameters for new Gaussians directly (zero-copy when capacity available)
+            // NOTE: We must do this AFTER updating opacity/scaling above!
+            _optimizer->add_new_params_gather(ParamType::Means, sampled_idxs);
+            _optimizer->add_new_params_gather(ParamType::Sh0, sampled_idxs);
+            _optimizer->add_new_params_gather(ParamType::ShN, sampled_idxs);
+            _optimizer->add_new_params_gather(ParamType::Rotation, sampled_idxs);
+            _optimizer->add_new_params_gather(ParamType::Opacity, sampled_idxs);
+            _optimizer->add_new_params_gather(ParamType::Scaling, sampled_idxs);
         }
 
         return n_new;
@@ -468,11 +464,11 @@ namespace lfs::training {
         // Get current learning rate from optimizer (after scheduler has updated it)
         const float current_lr = _optimizer->get_lr() * _noise_lr;
 
-        // Generate noise
-        Tensor noise;
+        // Generate noise (unfortunately creates allocation since Tensor API lacks in-place random generation)
+        // TODO: Add Tensor::randn_() in-place method to avoid this allocation
         {
             LOG_TIMER("inject_noise_generate");
-            noise = Tensor::randn_like(_splat_data.means());
+            _noise_buffer = Tensor::randn(_splat_data.means().shape(), Device::CUDA, DataType::Float32);
         }
 
         // Call CUDA add_noise kernel
@@ -482,7 +478,7 @@ namespace lfs::training {
                 _splat_data.opacity_raw().ptr<float>(),
                 _splat_data.scaling_raw().ptr<float>(),
                 _splat_data.rotation_raw().ptr<float>(),
-                noise.ptr<float>(),
+                _noise_buffer.ptr<float>(),
                 _splat_data.means().ptr<float>(),
                 current_lr,
                 _splat_data.size()

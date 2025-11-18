@@ -106,6 +106,14 @@ namespace lfs::core {
                 });
                 result.data_ = result.data_owner_.get();
                 result.compute_alignment(); // Compute alignment flags once
+
+                // Record tensor allocation for profiling
+                CudaMemoryPool::instance().record_tensor(
+                    result.data_,
+                    result.shape().dims(),
+                    bytes,
+                    dtype_name(result.dtype_)
+                );
             } else {
                 // Use pinned memory for CPU tensors (2-3x faster PCIe bandwidth)
                 void* ptr = PinnedMemoryAllocator::instance().allocate(bytes);
@@ -227,6 +235,14 @@ namespace lfs::core {
                     CudaMemoryPool::instance().deallocate(p, nullptr);
                 });
                 result.data_ = result.data_owner_.get();
+
+                // Record tensor allocation for profiling
+                CudaMemoryPool::instance().record_tensor(
+                    result.data_,
+                    result.shape().dims(),
+                    bytes,
+                    dtype_name(result.dtype_)
+                );
 
                 if (result.dtype_ == DataType::Float32) {
                     std::vector<float> data(count);

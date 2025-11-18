@@ -64,6 +64,7 @@ namespace lfs::training {
 
         // State variables
         lfs::core::Tensor _binoms;  // [n_max, n_max] binomial coefficients
+        lfs::core::Tensor _noise_buffer;  // Reusable buffer for noise injection
     };
 
 } // namespace lfs::training

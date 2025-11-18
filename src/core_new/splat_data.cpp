@@ -1172,6 +1172,24 @@ namespace lfs::core {
         }
     }
 
+    void SplatData::reserve_capacity(size_t capacity) {
+        // Reserve capacity for parameters
+        if (_means.is_valid()) _means.reserve(capacity);
+        if (_sh0.is_valid()) _sh0.reserve(capacity);
+        if (_shN.is_valid()) _shN.reserve(capacity);
+        if (_scaling.is_valid()) _scaling.reserve(capacity);
+        if (_rotation.is_valid()) _rotation.reserve(capacity);
+        if (_opacity.is_valid()) _opacity.reserve(capacity);
+
+        // Reserve capacity for gradients (must be same as parameters!)
+        if (_means_grad.is_valid()) _means_grad.reserve(capacity);
+        if (_sh0_grad.is_valid()) _sh0_grad.reserve(capacity);
+        if (_shN_grad.is_valid()) _shN_grad.reserve(capacity);
+        if (_scaling_grad.is_valid()) _scaling_grad.reserve(capacity);
+        if (_rotation_grad.is_valid()) _rotation_grad.reserve(capacity);
+        if (_opacity_grad.is_valid()) _opacity_grad.reserve(capacity);
+    }
+
     void SplatData::zero_gradients() {
         if (_means_grad.is_valid()) {
             _means_grad.zero_();

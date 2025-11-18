@@ -17,7 +17,7 @@ namespace lfs::training {
     void DefaultStrategy::initialize(const lfs::core::param::OptimizationParameters& optimParams) {
         _params = std::make_unique<const lfs::core::param::OptimizationParameters>(optimParams);
 
-        initialize_gaussians(_splat_data);
+        initialize_gaussians(_splat_data, _params->max_cap);
 
         // Initialize optimizer
         _optimizer = create_optimizer(_splat_data, *_params);

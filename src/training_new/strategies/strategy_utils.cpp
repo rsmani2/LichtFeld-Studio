@@ -7,11 +7,34 @@
 
 namespace lfs::training {
 
-    void initialize_gaussians(lfs::core::SplatData& splat_data) {
+    void initialize_gaussians(lfs::core::SplatData& splat_data, int max_cap) {
         // Tensors are already on GPU in the new framework (created with Device::CUDA by default)
         // Just need to ensure gradients are allocated
         if (!splat_data.has_gradients()) {
             splat_data.allocate_gradients();
+        }
+
+        // Pre-allocate tensor capacity to avoid reallocations during MCMC operations
+        // This eliminates memory fragmentation from varying tensor sizes
+        if (max_cap > 0) {
+            const size_t capacity = static_cast<size_t>(max_cap);
+            LOG_INFO("Pre-allocating tensor capacity for {} Gaussians (parameters + gradients)", capacity);
+
+            // Reserve capacity for all parameters
+            splat_data.means().reserve(capacity);
+            splat_data.sh0().reserve(capacity);
+            splat_data.shN().reserve(capacity);
+            splat_data.scaling_raw().reserve(capacity);
+            splat_data.rotation_raw().reserve(capacity);
+            splat_data.opacity_raw().reserve(capacity);
+
+            // Reserve capacity for all gradients
+            splat_data.means_grad().reserve(capacity);
+            splat_data.sh0_grad().reserve(capacity);
+            splat_data.shN_grad().reserve(capacity);
+            splat_data.scaling_grad().reserve(capacity);
+            splat_data.rotation_grad().reserve(capacity);
+            splat_data.opacity_grad().reserve(capacity);
         }
     }
 

@@ -196,6 +196,9 @@ namespace lfs::core {
                     // Print allocation profiling report every 2k allocations
                     if constexpr (ENABLE_ALLOCATION_PROFILING) {
                         AllocationProfiler::instance().print_top_allocators(30);
+                        AllocationProfiler::instance().print_tensor_allocations(50);
+                        AllocationProfiler::instance().print_lifetime_stats(20);
+                        AllocationProfiler::instance().print_lifetime_stats_by_origin(20);
                     }
 
                     // Query memory pool attributes
@@ -266,6 +269,27 @@ namespace lfs::core {
         }
 
         /**
+         * @brief Record a tensor allocation in the profiler
+         * @param shape Shape of the tensor
+         * @param bytes Memory size in bytes
+         * @param dtype Data type string (e.g., "float32", "int32")
+         *
+         * Call this from Tensor class after allocation to track tensor metadata.
+         */
+        // Set current iteration number (for lifetime tracking)
+        void set_iteration(int iteration) {
+            if constexpr (ENABLE_ALLOCATION_PROFILING) {
+                AllocationProfiler::instance().set_iteration(iteration);
+            }
+        }
+
+        void record_tensor(void* ptr, const std::vector<size_t>& shape, size_t bytes, const std::string& dtype) {
+            if constexpr (ENABLE_ALLOCATION_PROFILING) {
+                AllocationProfiler::instance().record_tensor_allocation(ptr, shape, bytes, dtype, 3);
+            }
+        }
+
+        /**
          * @brief Deallocate memory back to the pool
          * @param ptr Pointer to memory to deallocate
          * @param stream CUDA stream for stream-ordered deallocation
@@ -280,6 +304,11 @@ namespace lfs::core {
         void deallocate(void* ptr, cudaStream_t stream = nullptr) {
             if (!ptr) {
                 return;
+            }
+
+            // Record deallocation for profiling (must be done before actual deallocation)
+            if constexpr (ENABLE_ALLOCATION_PROFILING) {
+                AllocationProfiler::instance().record_deallocation(ptr);
             }
 
             // DISABLED: Arena allocator has stream-ordering bugs
