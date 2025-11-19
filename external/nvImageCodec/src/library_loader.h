@@ -21,6 +21,7 @@
 
 #include "ilibrary_loader.h"
 #include <string>
+#include <stdexcept>
 
 namespace nvimgcodec {
 
