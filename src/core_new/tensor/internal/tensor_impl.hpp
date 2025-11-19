@@ -776,6 +776,11 @@ namespace lfs::core {
             return load(LoadOp::Const, args);
         }
 
+        // Create zeros tensor with DIRECT cudaMalloc (bypass memory pool) and pre-allocated capacity
+        // Single-shot allocation in final state - NO intermediate allocations!
+        static Tensor zeros_direct(TensorShape shape, size_t capacity, Device device = Device::CUDA);
+
+
         static Tensor ones(TensorShape shape, Device device = Device::CUDA,
                            DataType dtype = DataType::Float32) {
             LoadArgs args;

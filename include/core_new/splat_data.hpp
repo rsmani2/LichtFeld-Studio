@@ -47,7 +47,8 @@ namespace lfs::core {
         static std::expected<SplatData, std::string> init_model_from_pointcloud(
             const lfs::core::param::TrainingParameters& params,
             Tensor scene_center,
-            const PointCloud& point_cloud);
+            const PointCloud& point_cloud,
+            int capacity = 0);  // If > 0, use zeros_direct() to bypass memory pool
 
         // Computed getters (implemented in cpp)
         Tensor get_means() const;

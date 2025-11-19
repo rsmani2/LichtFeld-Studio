@@ -54,7 +54,7 @@ namespace lfs::training {
         size_t n_dead;
         {
             LOG_TIMER("relocate_find_dead");
-            // OPTIMIZATION: Fully fused kernel - ZERO intermediate allocations
+            // Fully fused kernel - no intermediate allocations
             const size_t N = opacities.numel();
             dead_mask = Tensor::empty({N}, Device::CUDA, DataType::Bool);
             mcmc::launch_compute_dead_mask(
@@ -88,7 +88,7 @@ namespace lfs::training {
 
             // Get source tensors (contiguous)
             Tensor opacities_contig = opacities.contiguous();
-            Tensor scaling_raw_contig = _splat_data.scaling_raw().contiguous();  // OPTIMIZATION: Pass raw scaling, kernel applies exp() inline
+            Tensor scaling_raw_contig = _splat_data.scaling_raw().contiguous();  // Pass raw scaling, kernel applies exp()
 
             // Allocate outputs
             sampled_idxs = Tensor::empty({n_dead}, Device::CUDA, DataType::Int64);
@@ -247,7 +247,7 @@ namespace lfs::training {
             const size_t N = opacities.numel();
 
             // Get raw scaling and ensure contiguity
-            auto scaling_raw_contig = _splat_data.scaling_raw().contiguous();  // OPTIMIZATION: Pass raw scaling, kernel applies exp() inline
+            auto scaling_raw_contig = _splat_data.scaling_raw().contiguous();  // Pass raw scaling, kernel applies exp()
             auto opacities_contig = opacities.contiguous();
 
             // Allocate output tensors
@@ -318,14 +318,13 @@ namespace lfs::training {
             }
         }
 
-        // CRITICAL: Update existing Gaussians FIRST (before concatenation)
-        // This matches the legacy implementation and ensures the correct values are copied
+        // Update existing Gaussians first (before concatenation)
         {
             LOG_TIMER("add_new_update_original");
             const int opacity_dim = (_splat_data.opacity_raw().ndim() == 2) ? 1 : 0;
             const size_t N = _splat_data.means().shape()[0];
 
-            // Use direct CUDA kernel to preserve tensor capacity (unlike index_put_ which creates new tensors)
+            // Use direct CUDA kernel to preserve tensor capacity
             mcmc::launch_update_scaling_opacity(
                 sampled_idxs.ptr<int64_t>(),
                 new_scaling_raw.ptr<float>(),
@@ -338,13 +337,10 @@ namespace lfs::training {
             );
         }
 
-        // OPTIMIZATION: Use add_new_params_gather() to avoid double allocation
-        // (no index_select intermediate tensor + no cat allocation)
-        // This leverages tensor's reserved capacity via append_gather()
+        // Use add_new_params_gather() to leverage reserved capacity
         {
             LOG_TIMER("add_new_append_gather");
-            // Gather and append parameters for new Gaussians directly (zero-copy when capacity available)
-            // NOTE: We must do this AFTER updating opacity/scaling above!
+            // Gather and append parameters for new Gaussians (done after updating opacity/scaling)
             _optimizer->add_new_params_gather(ParamType::Means, sampled_idxs);
             _optimizer->add_new_params_gather(ParamType::Sh0, sampled_idxs);
             _optimizer->add_new_params_gather(ParamType::ShN, sampled_idxs);
@@ -422,14 +418,13 @@ namespace lfs::training {
             }
         }
 
-        // CRITICAL: Update existing Gaussians FIRST (before concatenation)
-        // This matches the legacy implementation and ensures the correct values are copied
+        // Update existing Gaussians first
         {
             LOG_TIMER("add_new_update_original");
             const int opacity_dim = (_splat_data.opacity_raw().ndim() == 2) ? 1 : 0;
             const size_t N = _splat_data.means().shape()[0];
 
-            // Use direct CUDA kernel to preserve tensor capacity (unlike index_put_ which creates new tensors)
+            // Use direct CUDA kernel to preserve tensor capacity
             mcmc::launch_update_scaling_opacity(
                 sampled_idxs_i64.ptr<int64_t>(),
                 new_scaling_raw.ptr<float>(),
@@ -442,10 +437,10 @@ namespace lfs::training {
             );
         }
 
-        // Use fused append_gather() operation - NO intermediate allocations!
+        // Use fused append_gather() operation
         {
             LOG_TIMER("add_new_params_gather");
-            // NOTE: We must gather opacity/scaling AFTER updating them above!
+            // Gather opacity/scaling after updating them
             _optimizer->add_new_params_gather(ParamType::Means, sampled_idxs_i64);
             _optimizer->add_new_params_gather(ParamType::Sh0, sampled_idxs_i64);
             _optimizer->add_new_params_gather(ParamType::ShN, sampled_idxs_i64);
@@ -508,8 +503,7 @@ namespace lfs::training {
                 LOG_DEBUG("MCMC: Added {} new Gaussians at iteration {} (total: {})",
                          n_added, iter, _splat_data.size());
             }
-            // Release cached memory from cudaMallocAsync pool to avoid memory bloat
-            // This is especially important after add_new_gs() which creates many temporary tensors
+            // Release cached pool memory to avoid bloat (important after add_new_gs)
             lfs::core::CudaMemoryPool::instance().trim_cached_memory();
         }
 
@@ -564,8 +558,7 @@ namespace lfs::training {
         _splat_data.rotation_raw() = _splat_data.rotation_raw().index_select(0, keep_indices).contiguous();
         _splat_data.opacity_raw() = _splat_data.opacity_raw().index_select(0, keep_indices).contiguous();
 
-        // Recreate optimizer with reduced parameters
-        // This is simpler than trying to manually update optimizer state
+        // Recreate optimizer with reduced parameters (simpler than manual state update)
         _optimizer = create_optimizer(_splat_data, *_params);
 
         // Recreate scheduler
@@ -586,38 +579,50 @@ namespace lfs::training {
                      capacity, current_size, 100.0f * current_size / capacity);
 
             try {
-                // Pre-allocate attribute tensors
-                LOG_DEBUG("  Reserving capacity for parameters:");
-                _splat_data.means().reserve(capacity);
-                LOG_DEBUG("    means: size={}, capacity={}", _splat_data.means().shape()[0], _splat_data.means().capacity());
-                _splat_data.sh0().reserve(capacity);
-                LOG_DEBUG("    sh0: size={}, capacity={}", _splat_data.sh0().shape()[0], _splat_data.sh0().capacity());
-                _splat_data.shN().reserve(capacity);
-                LOG_DEBUG("    shN: size={}, capacity={}", _splat_data.shN().shape()[0], _splat_data.shN().capacity());
-                _splat_data.scaling_raw().reserve(capacity);
-                LOG_DEBUG("    scaling: size={}, capacity={}", _splat_data.scaling_raw().shape()[0], _splat_data.scaling_raw().capacity());
-                _splat_data.rotation_raw().reserve(capacity);
-                LOG_DEBUG("    rotation: size={}, capacity={}", _splat_data.rotation_raw().shape()[0], _splat_data.rotation_raw().capacity());
-                _splat_data.opacity_raw().reserve(capacity);
-                LOG_DEBUG("    opacity: size={}, capacity={}", _splat_data.opacity_raw().shape()[0], _splat_data.opacity_raw().capacity());
+                // ELIMINATE ALL POOL ALLOCATIONS: Replace pool-allocated parameters with direct cudaMalloc versions
+                LOG_DEBUG("  Replacing pool-allocated parameters with direct cudaMalloc versions:");
 
-                // Pre-allocate gradient tensors (must allocate gradients first)
+                auto replace_with_direct = [capacity](Tensor& param) {
+                    // Create new tensor with direct cudaMalloc (ZERO pool usage!)
+                    auto new_param = Tensor::zeros_direct(param.shape(), capacity);
+                    // Copy data from old pool-allocated tensor to new direct tensor
+                    cudaMemcpy(new_param.ptr<float>(), param.ptr<float>(),
+                              param.numel() * sizeof(float), cudaMemcpyDeviceToDevice);
+                    // Replace (old pool-allocated tensor gets freed)
+                    param = new_param;
+                };
+
+                replace_with_direct(_splat_data.means());
+                LOG_DEBUG("    means: replaced pool allocation with direct cudaMalloc (capacity={})", capacity);
+
+                replace_with_direct(_splat_data.sh0());
+                LOG_DEBUG("    sh0: replaced pool allocation with direct cudaMalloc (capacity={})", capacity);
+
+                replace_with_direct(_splat_data.shN());
+                LOG_DEBUG("    shN: replaced pool allocation with direct cudaMalloc (capacity={})", capacity);
+
+                replace_with_direct(_splat_data.scaling_raw());
+                LOG_DEBUG("    scaling: replaced pool allocation with direct cudaMalloc (capacity={})", capacity);
+
+                replace_with_direct(_splat_data.rotation_raw());
+                LOG_DEBUG("    rotation: replaced pool allocation with direct cudaMalloc (capacity={})", capacity);
+
+                replace_with_direct(_splat_data.opacity_raw());
+                LOG_DEBUG("    opacity: replaced pool allocation with direct cudaMalloc (capacity={})", capacity);
+
+                // Create gradients with direct cudaMalloc
+                LOG_DEBUG("  Allocating gradients with direct cudaMalloc:");
+
                 if (!_splat_data.has_gradients()) {
-                    _splat_data.allocate_gradients();
+                    _splat_data.means_grad() = Tensor::zeros_direct(_splat_data.means().shape(), capacity);
+                    _splat_data.sh0_grad() = Tensor::zeros_direct(_splat_data.sh0().shape(), capacity);
+                    _splat_data.shN_grad() = Tensor::zeros_direct(_splat_data.shN().shape(), capacity);
+                    _splat_data.scaling_grad() = Tensor::zeros_direct(_splat_data.scaling_raw().shape(), capacity);
+                    _splat_data.rotation_grad() = Tensor::zeros_direct(_splat_data.rotation_raw().shape(), capacity);
+                    _splat_data.opacity_grad() = Tensor::zeros_direct(_splat_data.opacity_raw().shape(), capacity);
+
+                    LOG_DEBUG("  Gradients allocated with direct cudaMalloc");
                 }
-                LOG_DEBUG("  Reserving capacity for gradients:");
-                _splat_data.means_grad().reserve(capacity);
-                LOG_DEBUG("    means_grad: size={}, capacity={}", _splat_data.means_grad().shape()[0], _splat_data.means_grad().capacity());
-                _splat_data.sh0_grad().reserve(capacity);
-                LOG_DEBUG("    sh0_grad: size={}, capacity={}", _splat_data.sh0_grad().shape()[0], _splat_data.sh0_grad().capacity());
-                _splat_data.shN_grad().reserve(capacity);
-                LOG_DEBUG("    shN_grad: size={}, capacity={}", _splat_data.shN_grad().shape()[0], _splat_data.shN_grad().capacity());
-                _splat_data.scaling_grad().reserve(capacity);
-                LOG_DEBUG("    scaling_grad: size={}, capacity={}", _splat_data.scaling_grad().shape()[0], _splat_data.scaling_grad().capacity());
-                _splat_data.rotation_grad().reserve(capacity);
-                LOG_DEBUG("    rotation_grad: size={}, capacity={}", _splat_data.rotation_grad().shape()[0], _splat_data.rotation_grad().capacity());
-                _splat_data.opacity_grad().reserve(capacity);
-                LOG_DEBUG("    opacity_grad: size={}, capacity={}", _splat_data.opacity_grad().shape()[0], _splat_data.opacity_grad().capacity());
 
                 LOG_INFO("✓ Tensor capacity pre-allocation complete: {}/{} Gaussians ({:.1f}% utilization)",
                          current_size, capacity, 100.0f * current_size / capacity);

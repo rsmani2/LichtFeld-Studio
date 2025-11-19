@@ -36,14 +36,14 @@ namespace lfs::core {
             return Tensor();
         }
 
-        // CRITICAL: Check device compatibility BEFORE any operations
+        // Check device compatibility
         if (mask.device() != device_) {
             LOG_ERROR("masked_select: mask device ({}) doesn't match tensor device ({})",
                       device_name(mask.device()), device_name(device_));
             return Tensor();
         }
 
-        // CRITICAL FIX: Count TRUE values in mask to determine output size
+        // Count TRUE values in mask
         size_t output_size = mask.count_nonzero();
 
         LOG_DEBUG("masked_select: input size={}, mask trues={}, output size={}",
@@ -68,7 +68,7 @@ namespace lfs::core {
 
             size_t write_idx = 0;
             for (size_t i = 0; i < numel(); ++i) {
-                // CRITICAL FIX: Only copy when mask is TRUE
+                // Only copy when mask is TRUE
                 if (mask_data[i]) {
                     dst[write_idx++] = src[i];
                 }
@@ -96,7 +96,7 @@ namespace lfs::core {
             return *this;
         }
 
-        // CRITICAL: Check device compatibility
+        // Check device compatibility
         if (mask.device() != device_) {
             LOG_ERROR("masked_fill_: mask device ({}) doesn't match tensor device ({})",
                       device_name(mask.device()), device_name(device_));
@@ -926,8 +926,7 @@ namespace lfs::core {
         // Helper lambda for index_put_ implementation
         auto index_put_impl = [&]<typename DataT, typename IndexT>() {
             if (device_ == Device::CUDA) {
-                // For CUDA, transfer to CPU, operate, transfer back
-                // This is more reliable than the thrust::scatter implementation
+                // Transfer to CPU, operate, transfer back (more reliable than thrust::scatter)
                 auto cpu_tensor = to(Device::CPU);
                 auto cpu_idx = idx_same_device.to(Device::CPU);
                 auto cpu_vals = vals_same_device.to(Device::CPU);

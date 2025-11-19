@@ -975,7 +975,8 @@ namespace lfs::core {
     std::expected<SplatData, std::string> SplatData::init_model_from_pointcloud(
         const param::TrainingParameters& params,
         Tensor scene_center,
-        const PointCloud& pcd) {
+        const PointCloud& pcd,
+        int capacity) {
 
         try {
             // Generate positions and colors based on init type
@@ -1013,74 +1014,163 @@ namespace lfs::core {
                 return rgb.sub(0.5f).div(kInvSH);
             };
 
-            // 1. _means
-            Tensor means_;
-            if (params.optimization.random) {
-                means_ = positions.mul(_scene_scale).cuda();
-            } else {
-                means_ = positions.cuda();
-            }
-
-            // 2. _scaling (log(σ))
-            auto nn_dist = compute_mean_neighbor_distances(means_).clamp_min(1e-7f);
-            std::vector<int> scale_expand_shape = {static_cast<int>(means_.size(0)), 3};
-            auto scaling_ = nn_dist.sqrt()
-                                .mul(params.optimization.init_scaling)
-                                .log()
-                                .unsqueeze(-1)
-                                .expand(std::span<const int>(scale_expand_shape))
-                                .cuda();
-
-            // 3. _rotation (quaternion, identity)
-            auto ones_col = Tensor::ones({means_.size(0), 1}, Device::CUDA);
-            auto zeros_cols = Tensor::zeros({means_.size(0), 3}, Device::CUDA);
-            auto rotation_ = ones_col.cat(zeros_cols, 1); // [1, 0, 0, 0] for each point
-
-            // 4. _opacity (inverse sigmoid of init_opacity)
-            auto opacity_ = Tensor::full(
-                                {means_.size(0), 1},
-                                params.optimization.init_opacity,
-                                Device::CUDA)
-                                .logit();
-
-            // 5. shs (SH coefficients)
-            // CRITICAL: Match ACTUAL reference layout [N, coeffs, channels] NOT the documented layout!
-            auto colors_device = colors.cuda();
-            auto fused_color = rgb_to_sh(colors_device);
-
+            const size_t num_points = positions.size(0);
             const int64_t feature_shape = static_cast<int64_t>(
                 std::pow(params.optimization.sh_degree + 1, 2));
 
-            // Create SH tensor with ACTUAL REFERENCE layout: [N, coeffs, channels]
-            auto shs = Tensor::zeros(
-                {fused_color.size(0), static_cast<size_t>(feature_shape), 3},
-                Device::CUDA);
+            // Create final tensors first to avoid pool allocations
+            Tensor means_, scaling_, rotation_, opacity_, sh0_, shN_;
 
-            // Fill DC coefficient (coefficient 0) for all channels
-            // shs[:, 0, :] = fused_color
-            auto shs_cpu = shs.cpu();
-            auto fused_cpu = fused_color.cpu();
+            if (capacity > 0) {
+                LOG_DEBUG("Creating direct tensors with capacity={}", capacity);
 
-            auto shs_acc = shs_cpu.accessor<float, 3>();
-            auto fused_acc = fused_cpu.accessor<float, 2>();
+                means_ = Tensor::zeros_direct(TensorShape({num_points, 3}), capacity);
+                scaling_ = Tensor::zeros_direct(TensorShape({num_points, 3}), capacity);
+                rotation_ = Tensor::zeros_direct(TensorShape({num_points, 4}), capacity);
+                opacity_ = Tensor::zeros_direct(TensorShape({num_points, 1}), capacity);
+                sh0_ = Tensor::zeros_direct(TensorShape({num_points, 1, 3}), capacity);
+                shN_ = Tensor::zeros_direct(TensorShape({num_points, static_cast<size_t>(feature_shape - 1), 3}), capacity);
 
-            for (size_t i = 0; i < fused_color.size(0); ++i) {
-                for (size_t c = 0; c < 3; ++c) {
-                    shs_acc(i, 0, c) = fused_acc(i, c); // Set channel c at coeff=0
-                }
+                LOG_DEBUG("Computing and filling values...");
             }
 
-            // Move back to CUDA
-            shs = shs_cpu.cuda();
+            // Compute parameter values on CPU to avoid pool allocations
+            Tensor means_cpu, scaling_cpu, rotation_cpu, opacity_cpu, sh0_cpu, shN_cpu;
 
-            // Split into _sh0 and _shN along coeffs dimension (dim 1)
-            // Result: _sh0 [N, 1, 3], _shN [N, (degree+1)^2-1, 3]
-            auto sh0_ = shs.slice(1, 0, 1).contiguous();             // [N, 1, 3]
-            auto shN_ = shs.slice(1, 1, feature_shape).contiguous(); // [N, coeffs-1, 3]
+            if (capacity > 0) {
+                LOG_DEBUG("Computing values on CPU");
+
+                // Compute means on CPU
+                auto positions_cpu = positions.cpu();
+                if (params.optimization.random) {
+                    means_cpu = positions_cpu.mul(_scene_scale);
+                } else {
+                    means_cpu = positions_cpu;
+                }
+
+                // Compute scaling on CPU
+                auto nn_dist = compute_mean_neighbor_distances(means_cpu).clamp_min(1e-7f);
+                std::vector<int> scale_expand_shape = {static_cast<int>(num_points), 3};
+                scaling_cpu = nn_dist.sqrt()
+                                  .mul(params.optimization.init_scaling)
+                                  .log()
+                                  .unsqueeze(-1)
+                                  .expand(std::span<const int>(scale_expand_shape));
+
+                // Create identity quaternion rotations on CPU
+                rotation_cpu = Tensor::zeros({num_points, 4}, Device::CPU);
+                auto rot_acc = rotation_cpu.accessor<float, 2>();
+                for (size_t i = 0; i < num_points; i++) {
+                    rot_acc(i, 0) = 1.0f;
+                }
+
+                // Compute opacity on CPU
+                auto init_val = params.optimization.init_opacity;
+                opacity_cpu = Tensor::full({num_points, 1}, init_val, Device::CPU).logit();
+
+                // Compute SH coefficients on CPU
+                auto colors_cpu = colors.cpu();
+                auto fused_color = rgb_to_sh(colors_cpu);
+
+                // Create SH tensor on CPU
+                auto shs_cpu_tensor = Tensor::zeros(
+                    {fused_color.size(0), static_cast<size_t>(feature_shape), 3},
+                    Device::CPU);
+
+                auto shs_acc = shs_cpu_tensor.accessor<float, 3>();
+                auto fused_acc = fused_color.accessor<float, 2>();
+
+                for (size_t i = 0; i < fused_color.size(0); ++i) {
+                    for (size_t c = 0; c < 3; ++c) {
+                        shs_acc(i, 0, c) = fused_acc(i, c); // Set DC coefficient
+                    }
+                }
+
+                sh0_cpu = shs_cpu_tensor.slice(1, 0, 1).contiguous();
+                shN_cpu = shs_cpu_tensor.slice(1, 1, feature_shape).contiguous();
+
+                // Copy CPU data to direct CUDA tensors
+                LOG_DEBUG("Copying CPU values to direct CUDA tensors");
+                cudaError_t err;
+
+                err = cudaMemcpy(means_.ptr<float>(), means_cpu.ptr<float>(),
+                                means_cpu.numel() * sizeof(float), cudaMemcpyHostToDevice);
+                if (err != cudaSuccess) throw TensorError("cudaMemcpy failed for means: " + std::string(cudaGetErrorString(err)));
+
+                err = cudaMemcpy(scaling_.ptr<float>(), scaling_cpu.ptr<float>(),
+                                scaling_cpu.numel() * sizeof(float), cudaMemcpyHostToDevice);
+                if (err != cudaSuccess) throw TensorError("cudaMemcpy failed for scaling: " + std::string(cudaGetErrorString(err)));
+
+                err = cudaMemcpy(rotation_.ptr<float>(), rotation_cpu.ptr<float>(),
+                                rotation_cpu.numel() * sizeof(float), cudaMemcpyHostToDevice);
+                if (err != cudaSuccess) throw TensorError("cudaMemcpy failed for rotation: " + std::string(cudaGetErrorString(err)));
+
+                err = cudaMemcpy(opacity_.ptr<float>(), opacity_cpu.ptr<float>(),
+                                opacity_cpu.numel() * sizeof(float), cudaMemcpyHostToDevice);
+                if (err != cudaSuccess) throw TensorError("cudaMemcpy failed for opacity: " + std::string(cudaGetErrorString(err)));
+
+                err = cudaMemcpy(sh0_.ptr<float>(), sh0_cpu.ptr<float>(),
+                                sh0_cpu.numel() * sizeof(float), cudaMemcpyHostToDevice);
+                if (err != cudaSuccess) throw TensorError("cudaMemcpy failed for sh0: " + std::string(cudaGetErrorString(err)));
+
+                err = cudaMemcpy(shN_.ptr<float>(), shN_cpu.ptr<float>(),
+                                shN_cpu.numel() * sizeof(float), cudaMemcpyHostToDevice);
+                if (err != cudaSuccess) throw TensorError("cudaMemcpy failed for shN: " + std::string(cudaGetErrorString(err)));
+            } else {
+                // No capacity specified - use pool
+                Tensor means_temp;
+                if (params.optimization.random) {
+                    means_temp = positions.mul(_scene_scale).cuda();
+                } else {
+                    means_temp = positions.cuda();
+                }
+
+                auto nn_dist = compute_mean_neighbor_distances(means_temp).clamp_min(1e-7f);
+                std::vector<int> scale_expand_shape = {static_cast<int>(num_points), 3};
+                auto scaling_temp = nn_dist.sqrt()
+                                    .mul(params.optimization.init_scaling)
+                                    .log()
+                                    .unsqueeze(-1)
+                                    .expand(std::span<const int>(scale_expand_shape))
+                                    .cuda();
+
+                auto ones_col = Tensor::ones({num_points, 1}, Device::CUDA);
+                auto zeros_cols = Tensor::zeros({num_points, 3}, Device::CUDA);
+                auto rotation_temp = ones_col.cat(zeros_cols, 1);
+
+                auto opacity_temp = Tensor::full({num_points, 1}, params.optimization.init_opacity, Device::CUDA).logit();
+
+                auto colors_device = colors.cuda();
+                auto fused_color = rgb_to_sh(colors_device);
+
+                auto shs = Tensor::zeros({fused_color.size(0), static_cast<size_t>(feature_shape), 3}, Device::CUDA);
+                auto shs_cpu_tmp = shs.cpu();
+                auto fused_cpu_tmp = fused_color.cpu();
+
+                auto shs_acc = shs_cpu_tmp.accessor<float, 3>();
+                auto fused_acc = fused_cpu_tmp.accessor<float, 2>();
+
+                for (size_t i = 0; i < fused_color.size(0); ++i) {
+                    for (size_t c = 0; c < 3; ++c) {
+                        shs_acc(i, 0, c) = fused_acc(i, c);
+                    }
+                }
+
+                shs = shs_cpu_tmp.cuda();
+                auto sh0_temp = shs.slice(1, 0, 1).contiguous();
+                auto shN_temp = shs.slice(1, 1, feature_shape).contiguous();
+
+                means_ = means_temp;
+                scaling_ = scaling_temp;
+                rotation_ = rotation_temp;
+                opacity_ = opacity_temp;
+                sh0_ = sh0_temp;
+                shN_ = shN_temp;
+            }
 
             std::println("Scene scale: {}", _scene_scale);
             std::println("Initialized SplatData with:");
-            std::println("  - {} points", means_.size(0));
+            std::println("  - {} points", num_points);
             std::println("  - Max SH degree: {}", params.optimization.sh_degree);
             std::println("  - Total SH coefficients: {}", feature_shape);
             std::println("  - _sh0 shape: {}", sh0_.shape().str());
@@ -1152,23 +1242,24 @@ namespace lfs::core {
     // ========== GRADIENT MANAGEMENT ==========
 
     void SplatData::allocate_gradients() {
+        // Use empty() instead of zeros() - will be zeroed before first use
         if (_means.is_valid()) {
-            _means_grad = Tensor::zeros(_means.shape(), _means.device());
+            _means_grad = Tensor::empty(_means.shape(), _means.device());
         }
         if (_sh0.is_valid()) {
-            _sh0_grad = Tensor::zeros(_sh0.shape(), _sh0.device());
+            _sh0_grad = Tensor::empty(_sh0.shape(), _sh0.device());
         }
         if (_shN.is_valid()) {
-            _shN_grad = Tensor::zeros(_shN.shape(), _shN.device());
+            _shN_grad = Tensor::empty(_shN.shape(), _shN.device());
         }
         if (_scaling.is_valid()) {
-            _scaling_grad = Tensor::zeros(_scaling.shape(), _scaling.device());
+            _scaling_grad = Tensor::empty(_scaling.shape(), _scaling.device());
         }
         if (_rotation.is_valid()) {
-            _rotation_grad = Tensor::zeros(_rotation.shape(), _rotation.device());
+            _rotation_grad = Tensor::empty(_rotation.shape(), _rotation.device());
         }
         if (_opacity.is_valid()) {
-            _opacity_grad = Tensor::zeros(_opacity.shape(), _opacity.device());
+            _opacity_grad = Tensor::empty(_opacity.shape(), _opacity.device());
         }
     }
 

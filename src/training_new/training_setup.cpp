@@ -47,6 +47,7 @@ namespace lfs::training {
 
                 // Initialize model directly with point cloud
                 std::expected<lfs::core::SplatData, std::string> splat_result;
+                int max_cap = params.optimization.max_cap;
                 if (params.init_ply.has_value()) {
                     // I don't like this
                     // PLYLoader is not exposed publicly so I have to use the general Loader class
@@ -73,34 +74,57 @@ namespace lfs::training {
                     // Get point cloud or generate random one
                     lfs::core::PointCloud point_cloud_to_use;
                     if (data.point_cloud && data.point_cloud->size() > 0) {
-                        point_cloud_to_use = *data.point_cloud;
-                        LOG_INFO("Using point cloud with {} points", point_cloud_to_use.size());
+                        if (max_cap > 0) {
+                            // Move point cloud to CPU to avoid pool allocations (init will be on CPU)
+                            LOG_INFO("Moving point cloud to CPU to avoid pool allocations ({} points)", data.point_cloud->size());
+                            point_cloud_to_use = *data.point_cloud;
+                            point_cloud_to_use.means = point_cloud_to_use.means.cpu();
+                            point_cloud_to_use.colors = point_cloud_to_use.colors.cpu();
+                            // Free the original CUDA point cloud to eliminate pool allocations
+                            data.point_cloud->means = lfs::core::Tensor();  // Clear CUDA tensor
+                            data.point_cloud->colors = lfs::core::Tensor(); // Clear CUDA tensor
+                            LOG_DEBUG("Cleared original CUDA point cloud from pool");
+                        } else {
+                            point_cloud_to_use = *data.point_cloud;
+                            LOG_INFO("Using point cloud with {} points", point_cloud_to_use.size());
+                        }
                     } else {
                         // Generate random point cloud if needed
                         LOG_INFO("No point cloud provided, using random initialization");
-                        // Need to generate random point cloud - this should be provided by the loader or a utility
                         size_t numInitGaussian = 10000;
                         uint64_t seed = 8128;
 
-                        // Use lfs::core::Tensor for random generation
-                        auto positions = lfs::core::Tensor::rand({numInitGaussian, 3}, lfs::core::Device::CUDA); // in [0, 1]
-                        positions = positions * 2.0f - 1.0f;                                                      // now in [-1, 1]
-                        auto colors = lfs::core::Tensor::randint({numInitGaussian, 3}, 0, 256, lfs::core::Device::CUDA, lfs::core::DataType::UInt8);
-
-                        point_cloud_to_use = lfs::core::PointCloud(positions, colors);
+                        if (max_cap > 0) {
+                            // Generate on CPU to avoid pool allocations
+                            auto positions = lfs::core::Tensor::rand({numInitGaussian, 3}, lfs::core::Device::CPU);
+                            positions = positions * 2.0f - 1.0f;
+                            auto colors = lfs::core::Tensor::randint({numInitGaussian, 3}, 0, 256, lfs::core::Device::CPU, lfs::core::DataType::UInt8);
+                            point_cloud_to_use = lfs::core::PointCloud(positions, colors);
+                        } else {
+                            // Generate on CUDA (uses pool)
+                            auto positions = lfs::core::Tensor::rand({numInitGaussian, 3}, lfs::core::Device::CUDA);
+                            positions = positions * 2.0f - 1.0f;
+                            auto colors = lfs::core::Tensor::randint({numInitGaussian, 3}, 0, 256, lfs::core::Device::CUDA, lfs::core::DataType::UInt8);
+                            point_cloud_to_use = lfs::core::PointCloud(positions, colors);
+                        }
                     }
+                    // Move scene_center to CPU if using capacity (to avoid pool allocations)
+                    auto scene_center = max_cap > 0 ? load_result->scene_center.cpu() : load_result->scene_center;
+                    if (max_cap > 0) {
+                        load_result->scene_center = lfs::core::Tensor(); // Clear original CUDA tensor
+                    }
+
                     splat_result = lfs::core::SplatData::init_model_from_pointcloud(
                         params,
-                        load_result->scene_center,
-                        point_cloud_to_use);
+                        scene_center,
+                        point_cloud_to_use,
+                        max_cap);  // Pass capacity to use zeros_direct() and avoid pool
                 }
 
                 if (!splat_result) {
                     return std::unexpected(
                         std::format("Failed to initialize model: {}", splat_result.error()));
                 }
-
-                int max_cap = params.optimization.max_cap;
                 if (max_cap < splat_result->size()) {
                     LOG_WARN("Max cap is less than to {} initial splats {}. Choosing randomly {} splats", max_cap, splat_result->size(), max_cap);
                     splat_result->random_choose(max_cap);

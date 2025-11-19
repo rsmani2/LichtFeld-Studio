@@ -2188,6 +2188,50 @@ namespace lfs::core {
         : std::runtime_error(msg),
           tensor_info_(t ? t->str() : "") {}
 
-#undef CHECK_CUDA
+    Tensor Tensor::zeros_direct(TensorShape shape, size_t capacity, Device device) {
+        if (device != Device::CUDA) {
+            throw TensorError("zeros_direct only supports CUDA device");
+        }
+
+        size_t current_size = shape[0];
+        size_t row_size = 1;
+        for (size_t i = 1; i < shape.rank(); i++) {
+            row_size *= shape[i];
+        }
+        
+        size_t total_elements = capacity * row_size;
+        size_t total_bytes = total_elements * sizeof(float);
+
+        // Direct cudaMalloc bypassing pool
+        void* data_ptr = nullptr;
+        cudaError_t err = cudaMalloc(&data_ptr, total_bytes);
+        if (err != cudaSuccess) {
+            throw TensorError("cudaMalloc failed in zeros_direct: " + std::string(cudaGetErrorString(err)));
+        }
+
+        // Zero full capacity
+        err = cudaMemset(data_ptr, 0, total_bytes);
+        if (err != cudaSuccess) {
+            cudaFree(data_ptr);
+            throw TensorError("cudaMemset failed in zeros_direct: " + std::string(cudaGetErrorString(err)));
+        }
+
+        // Create tensor with custom deleter
+        Tensor t;
+        t.data_ = data_ptr;
+        t.data_owner_ = std::shared_ptr<void>(data_ptr, [](void* ptr) {
+            if (ptr) cudaFree(ptr);
+        });
+        t.shape_ = shape;
+        t.strides_ = shape.strides();
+        t.storage_offset_ = 0;
+        t.device_ = device;
+        t.dtype_ = DataType::Float32;
+        t.capacity_ = capacity;
+        t.logical_size_ = current_size;
+        t.id_ = next_id_++;
+
+        return t;
+    }
 
 } // namespace lfs::core
