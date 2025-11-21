@@ -264,16 +264,8 @@ namespace lfs::vis {
         }
 
         if (action == GLFW_PRESS) {
-            // Special handling for point cloud mode
-            bool imgui_wants_mouse = ImGui::GetIO().WantCaptureMouse;
-            if (point_cloud_mode_ && isInViewport(x, y) &&
-                !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
-                imgui_wants_mouse = false; // Override for point cloud mode
-                LOG_TRACE("Point cloud mode - overriding ImGui mouse capture");
-            }
-
-            // Check if we should handle this
-            if (imgui_wants_mouse || !isInViewport(x, y)) {
+            // Block if hovering over GUI window
+            if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
                 return;
             }
 
@@ -500,23 +492,23 @@ namespace lfs::vis {
             }
         }
 
-        if (key == GLFW_KEY_T && action == GLFW_PRESS && !ImGui::GetIO().WantCaptureKeyboard) {
+        if (key == GLFW_KEY_T && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             cmd::CyclePLY{}.emit();
             return;
         }
 
-        if (key == GLFW_KEY_V && action == GLFW_PRESS && !ImGui::GetIO().WantCaptureKeyboard) {
+        if (key == GLFW_KEY_V && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             cmd::ToggleSplitView{}.emit();
             return;
         }
 
-        if (key == GLFW_KEY_G && action == GLFW_PRESS && !ImGui::GetIO().WantCaptureKeyboard) {
+        if (key == GLFW_KEY_G && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             cmd::ToggleGTComparison{}.emit();
             LOG_DEBUG("Toggled GT comparison mode");
             return;
         }
 
-        if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS && !ImGui::GetIO().WantCaptureKeyboard) {
+        if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             if (!training_manager_) {
                 LOG_WARN("Training manager is not set; cannot cycle camera view.");
                 return;
@@ -537,7 +529,7 @@ namespace lfs::vis {
             return;
         }
 
-        if (key == GLFW_KEY_LEFT && action == GLFW_PRESS && !ImGui::GetIO().WantCaptureKeyboard) {
+        if (key == GLFW_KEY_LEFT && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             if (!training_manager_) {
                 LOG_WARN("Training manager is not set; cannot cycle camera view.");
                 return;
@@ -636,6 +628,32 @@ namespace lfs::vis {
             drag_mode_ = DragMode::None;
             glfwSetCursor(window_, nullptr); // Reset cursor
             LOG_TRACE("Splitter drag stopped - button released outside window");
+        }
+
+        // Prevent stuck keys by syncing with actual keyboard state
+        if (keys_wasd_[0] && glfwGetKey(window_, GLFW_KEY_W) != GLFW_PRESS) {
+            keys_wasd_[0] = false;
+            LOG_TRACE("W key unstuck");
+        }
+        if (keys_wasd_[1] && glfwGetKey(window_, GLFW_KEY_A) != GLFW_PRESS) {
+            keys_wasd_[1] = false;
+            LOG_TRACE("A key unstuck");
+        }
+        if (keys_wasd_[2] && glfwGetKey(window_, GLFW_KEY_S) != GLFW_PRESS) {
+            keys_wasd_[2] = false;
+            LOG_TRACE("S key unstuck");
+        }
+        if (keys_wasd_[3] && glfwGetKey(window_, GLFW_KEY_D) != GLFW_PRESS) {
+            keys_wasd_[3] = false;
+            LOG_TRACE("D key unstuck");
+        }
+        if (keys_wasd_[4] && glfwGetKey(window_, GLFW_KEY_Q) != GLFW_PRESS) {
+            keys_wasd_[4] = false;
+            LOG_TRACE("Q key unstuck");
+        }
+        if (keys_wasd_[5] && glfwGetKey(window_, GLFW_KEY_E) != GLFW_PRESS) {
+            keys_wasd_[5] = false;
+            LOG_TRACE("E key unstuck");
         }
 
         // Handle continuous WASD movement
@@ -828,17 +846,8 @@ namespace lfs::vis {
             return false;
         }
 
-        // Special handling for point cloud mode
-        if (point_cloud_mode_) {
-            double x, y;
-            glfwGetCursorPos(window_, &x, &y);
-            if (isInViewport(x, y) && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
-                return true; // Force handle in point cloud mode
-            }
-        }
-
-        return !ImGui::GetIO().WantCaptureKeyboard &&
-               !ImGui::GetIO().WantCaptureMouse;
+        // Only block when actively using a GUI widget
+        return !ImGui::IsAnyItemActive();
     }
 
     void InputController::updateCameraSpeed(bool increase) {

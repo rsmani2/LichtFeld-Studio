@@ -545,39 +545,8 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::updateViewportFocus() {
-        // Check if mouse is in viewport area
-        ImVec2 mouse_pos = ImGui::GetMousePos();
-        const ImGuiViewport* main_viewport = ImGui::GetMainViewport();
-
-        // Convert mouse position to window-relative coordinates
-        float mouse_x = mouse_pos.x - main_viewport->WorkPos.x;
-        float mouse_y = mouse_pos.y - main_viewport->WorkPos.y;
-
-        // Check if mouse is within viewport bounds
-        bool mouse_in_viewport = (mouse_x >= viewport_pos_.x &&
-                                  mouse_x < viewport_pos_.x + viewport_size_.x &&
-                                  mouse_y >= viewport_pos_.y &&
-                                  mouse_y < viewport_pos_.y + viewport_size_.y);
-
-        // Check if ImGui wants input
-        bool imgui_wants_input = ImGui::GetIO().WantCaptureMouse ||
-                                 ImGui::GetIO().WantCaptureKeyboard ||
-                                 ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow);
-
-        // Special handling for clicks - if clicking in viewport, it gets focus immediately
-        bool mouse_clicked = ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
-                             ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
-                             ImGui::IsMouseClicked(ImGuiMouseButton_Middle);
-
-        if (mouse_clicked && mouse_in_viewport && !ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
-            // Clicking in viewport gives it focus immediately
-            viewport_has_focus_ = true;
-            // Tell ImGui we don't want this mouse event
-            ImGui::GetIO().WantCaptureMouse = false;
-        } else {
-            // Normal focus rules: viewport has focus when mouse is over it and ImGui doesn't want input
-            viewport_has_focus_ = mouse_in_viewport && !imgui_wants_input;
-        }
+        // Viewport has focus unless actively using a GUI widget
+        viewport_has_focus_ = !ImGui::IsAnyItemActive();
     }
 
     ImVec2 GuiManager::getViewportPos() const {
