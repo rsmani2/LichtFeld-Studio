@@ -129,7 +129,15 @@ bool RasterizerMemoryArena::is_vmm_supported(int device) const {
     return false;
 }
 
-uint64_t RasterizerMemoryArena::begin_frame() {
+uint64_t RasterizerMemoryArena::begin_frame(bool from_rendering) {
+    // Training waits for rendering; rendering skips this
+    if (!from_rendering) {
+        while (rendering_active_.load(std::memory_order_acquire)) {
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
+        }
+        active_training_frames_.fetch_add(1, std::memory_order_release);
+    }
+
     uint64_t frame_id = frame_counter_.fetch_add(1, std::memory_order_relaxed);
 
     // Synchronize to ensure previous frame's GPU work is complete
@@ -172,7 +180,11 @@ uint64_t RasterizerMemoryArena::begin_frame() {
     return frame_id;
 }
 
-void RasterizerMemoryArena::end_frame(uint64_t frame_id) {
+void RasterizerMemoryArena::end_frame(uint64_t frame_id, bool from_rendering) {
+    if (!from_rendering) {
+        active_training_frames_.fetch_sub(1, std::memory_order_release);
+    }
+
     // Track peak usage before resetting
     int device;
     cudaError_t err = cudaGetDevice(&device);
@@ -1131,6 +1143,12 @@ RasterizerMemoryArena& GlobalArenaManager::get_arena() {
 void GlobalArenaManager::reset() {
     std::lock_guard<std::mutex> lock(init_mutex_);
     arena_.reset();
+}
+
+void RasterizerMemoryArena::wait_for_training() const {
+    while (active_training_frames_.load(std::memory_order_acquire) > 0) {
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
 }
 
 } // namespace lfs::core

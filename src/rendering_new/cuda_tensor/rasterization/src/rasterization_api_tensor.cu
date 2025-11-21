@@ -5,13 +5,13 @@
 #include "forward.h"
 #include "rasterization_api_tensor.h"
 #include "rasterization_config.h"
+#include "core_new/cuda/memory_arena.hpp"
 #include <functional>
 #include <stdexcept>
 #include <tuple>
 
 namespace lfs::rendering {
 
-    // Helper to create resize function for custom Tensor
     inline std::function<char*(size_t)> resize_function_wrapper_tensor(Tensor& t) {
         return [&t](size_t N) -> char* {
             if (N == 0) {
@@ -23,7 +23,6 @@ namespace lfs::rendering {
         };
     }
 
-    // Validation for custom Tensor (similar to CHECK_INPUT)
     inline void check_tensor_input(bool debug, const Tensor& tensor, const char* name) {
         if (debug) {
             if (!tensor.is_valid() || tensor.device() != lfs::core::Device::CUDA ||
@@ -54,7 +53,6 @@ namespace lfs::rendering {
         const float near_plane,
         const float far_plane) {
 
-        // Validate all input tensors
         check_tensor_input(config::debug, means, "means");
         check_tensor_input(config::debug, scales_raw, "scales_raw");
         check_tensor_input(config::debug, rotations_raw, "rotations_raw");
@@ -62,34 +60,28 @@ namespace lfs::rendering {
         check_tensor_input(config::debug, sh_coefficients_0, "sh_coefficients_0");
         check_tensor_input(config::debug, sh_coefficients_rest, "sh_coefficients_rest");
 
-        // Extract dimensions
         const int n_primitives = static_cast<int>(means.size(0));
         const int total_bases_sh_rest = static_cast<int>(sh_coefficients_rest.size(1));
 
-        // Allocate output tensors
         Tensor image = Tensor::empty({3, static_cast<size_t>(height), static_cast<size_t>(width)},
                                      lfs::core::Device::CUDA, lfs::core::DataType::Float32);
         Tensor alpha = Tensor::empty({1, static_cast<size_t>(height), static_cast<size_t>(width)},
                                      lfs::core::Device::CUDA, lfs::core::DataType::Float32);
 
-        // Create buffer tensors (these will be resized by the forward function)
-        Tensor per_primitive_buffers = Tensor::empty({0}, lfs::core::Device::CUDA, lfs::core::DataType::UInt8);
-        Tensor per_tile_buffers = Tensor::empty({0}, lfs::core::Device::CUDA, lfs::core::DataType::UInt8);
-        Tensor per_instance_buffers = Tensor::empty({0}, lfs::core::Device::CUDA, lfs::core::DataType::UInt8);
+        // Coordinate with training: wait for training, use shared arena
+        auto& arena = lfs::core::GlobalArenaManager::instance().get_arena();
+        arena.set_rendering_active(true);
+        arena.wait_for_training();
+        uint64_t frame_id = arena.begin_frame(true);  // true = from_rendering
+        auto arena_allocator = arena.get_allocator(frame_id);
 
-        // Create allocator functions
-        const std::function<char*(size_t)> per_primitive_buffers_func =
-            resize_function_wrapper_tensor(per_primitive_buffers);
-        const std::function<char*(size_t)> per_tile_buffers_func =
-            resize_function_wrapper_tensor(per_tile_buffers);
-        const std::function<char*(size_t)> per_instance_buffers_func =
-            resize_function_wrapper_tensor(per_instance_buffers);
+        const std::function<char*(size_t)> per_primitive_buffers_func = arena_allocator;
+        const std::function<char*(size_t)> per_tile_buffers_func = arena_allocator;
+        const std::function<char*(size_t)> per_instance_buffers_func = arena_allocator;
 
-        // Ensure w2c and cam_position are contiguous
         Tensor w2c_contig = w2c.is_contiguous() ? w2c : w2c.contiguous();
         Tensor cam_pos_contig = cam_position.is_contiguous() ? cam_position : cam_position.contiguous();
 
-        // Call the actual CUDA forward function
         forward(
             per_primitive_buffers_func,
             per_tile_buffers_func,
@@ -115,6 +107,9 @@ namespace lfs::rendering {
             center_y,
             near_plane,
             far_plane);
+
+        arena.end_frame(frame_id, true);  // true = from_rendering
+        arena.set_rendering_active(false);
 
         return {std::move(image), std::move(alpha)};
     }

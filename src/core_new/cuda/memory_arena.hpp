@@ -1,4 +1,3 @@
-// rasterizer_memory_arena.h
 /* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
@@ -109,6 +108,10 @@ private:
     std::chrono::steady_clock::time_point creation_time_;
     std::atomic<size_t> total_frames_processed_{0};
 
+    // Simple rendering synchronization
+    std::atomic<bool> rendering_active_{false};
+    std::atomic<uint64_t> active_training_frames_{0};
+
 public:
     // Constructors
     RasterizerMemoryArena();
@@ -123,34 +126,25 @@ public:
     RasterizerMemoryArena(RasterizerMemoryArena&&) noexcept;
     RasterizerMemoryArena& operator=(RasterizerMemoryArena&&) noexcept;
 
-    // Frame-based allocation
-    uint64_t begin_frame();
-    void end_frame(uint64_t frame_id);
-
-    // Get allocator for specific frame
+    uint64_t begin_frame(bool from_rendering = false);
+    void end_frame(uint64_t frame_id, bool from_rendering = false);
     std::function<char*(size_t)> get_allocator(uint64_t frame_id);
-
-    // Get existing buffers for backward pass
     std::vector<BufferHandle> get_frame_buffers(uint64_t frame_id) const;
-
-    // Reset frame for reuse (keeps allocation but resets offset)
-    void reset_frame(uint64_t frame_id);
-
-    // Cleanup old frames
+    void reset_frame(uint64_t frame_id);  // Keeps allocation, resets offset
     void cleanup_frames(int keep_recent = 3);
-
-    // Emergency cleanup
     void emergency_cleanup();
 
-    // Statistics
     Statistics get_statistics() const;
     MemoryInfo get_memory_info() const;
     void dump_statistics() const;
     void log_memory_status(uint64_t frame_id, bool force = false);
 
-    // Memory pressure management
     bool is_under_memory_pressure() const;
     float get_memory_pressure() const;
+
+    bool is_rendering_active() const { return rendering_active_.load(std::memory_order_acquire); }
+    void set_rendering_active(bool active) { rendering_active_.store(active, std::memory_order_release); }
+    void wait_for_training() const;
 
 private:
     Arena& get_or_create_arena(int device);
@@ -164,7 +158,6 @@ private:
     void empty_cuda_cache();
 };
 
-// Global singleton for arena access
 class GlobalArenaManager {
 public:
     static GlobalArenaManager& instance();

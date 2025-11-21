@@ -121,7 +121,6 @@ ForwardContext forward_raw(
     char* per_bucket_buffers_blob = nullptr;
     size_t per_instance_size = 0;
     size_t per_bucket_size = 0;
-    bool allocation_failed = false;
 
     std::function<char*(size_t)> per_instance_buffers_func =
         [&arena_allocator, &per_instance_buffers_blob, &per_instance_size](size_t size) -> char* {
