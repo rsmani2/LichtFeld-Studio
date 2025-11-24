@@ -57,6 +57,7 @@ class Viewport {
 
         glm::mat3 R = glm::mat3(1.0f);
         glm::vec3 t = glm::vec3(0.0f);
+        glm::vec3 pivot = glm::vec3(0.0f, 0.0f, 0.0f); // Pivot point for rotation and navigation (always y=0)
 
         CameraMotion() = default;
 
@@ -99,35 +100,116 @@ class Viewport {
         }
 
         void zoom(float delta) {
+            // Keep original zoom behavior - move along camera's view direction
             t += delta * zoomSpeed * R[2];
         }
 
         void advance_forward(float deltaTime) {
-            t += R * glm::vec3(0, 0, 1) * deltaTime * wasdSpeed;
+            // Move in camera's forward direction projected onto XZ plane
+            glm::vec3 forward = R * glm::vec3(0, 0, 1);
+            glm::vec3 forward_xz = glm::vec3(forward.x, 0.0f, forward.z);
+
+            // Handle edge case when looking straight up/down
+            float len_sq = glm::dot(forward_xz, forward_xz);
+            if (len_sq < 0.0001f) {
+                return; // Can't move forward on XZ plane when looking straight up/down
+            }
+
+            forward_xz = glm::normalize(forward_xz);
+            glm::vec3 movement = forward_xz * deltaTime * wasdSpeed;
+
+            pivot += movement;
+            pivot.y = 0.0f; // Ensure pivot stays on XZ plane
+            t += movement;
         }
 
         void advance_backward(float deltaTime) {
-            t += R * glm::vec3(0, 0, -1) * deltaTime * wasdSpeed;
+            // Move in camera's backward direction projected onto XZ plane
+            glm::vec3 forward = R * glm::vec3(0, 0, 1);
+            glm::vec3 forward_xz = glm::vec3(forward.x, 0.0f, forward.z);
+
+            // Handle edge case when looking straight up/down
+            float len_sq = glm::dot(forward_xz, forward_xz);
+            if (len_sq < 0.0001f) {
+                return; // Can't move backward on XZ plane when looking straight up/down
+            }
+
+            forward_xz = glm::normalize(forward_xz);
+            glm::vec3 movement = -forward_xz * deltaTime * wasdSpeed;
+
+            pivot += movement;
+            pivot.y = 0.0f;
+            t += movement;
         }
 
         void advance_left(float deltaTime) {
-            t += R * glm::vec3(-1, 0, 0) * deltaTime * wasdSpeed;
+            // Move in camera's left direction projected onto XZ plane
+            glm::vec3 right = R * glm::vec3(1, 0, 0);
+            glm::vec3 right_xz = glm::vec3(right.x, 0.0f, right.z);
+
+            // Handle edge case (though right vector should always be horizontal)
+            float len_sq = glm::dot(right_xz, right_xz);
+            if (len_sq < 0.0001f) {
+                return;
+            }
+
+            right_xz = glm::normalize(right_xz);
+            glm::vec3 movement = -right_xz * deltaTime * wasdSpeed;
+
+            pivot += movement;
+            pivot.y = 0.0f;
+            t += movement;
         }
 
         void advance_right(float deltaTime) {
-            t += R * glm::vec3(1, 0, 0) * deltaTime * wasdSpeed;
+            // Move in camera's right direction projected onto XZ plane
+            glm::vec3 right = R * glm::vec3(1, 0, 0);
+            glm::vec3 right_xz = glm::vec3(right.x, 0.0f, right.z);
+
+            // Handle edge case (though right vector should always be horizontal)
+            float len_sq = glm::dot(right_xz, right_xz);
+            if (len_sq < 0.0001f) {
+                return;
+            }
+
+            right_xz = glm::normalize(right_xz);
+            glm::vec3 movement = right_xz * deltaTime * wasdSpeed;
+
+            pivot += movement;
+            pivot.y = 0.0f;
+            t += movement;
         }
 
         void advance_up(float deltaTime) {
-            t += R * glm::vec3(0, -1, 0) * deltaTime * wasdSpeed;
+            // Move camera straight up in world space (not camera local space)
+            t.y += -deltaTime * wasdSpeed;
+            // Pivot doesn't move - it stays at y=0 on the ground
         }
 
         void advance_down(float deltaTime) {
-            t += R * glm::vec3(0, 1, 0) * deltaTime * wasdSpeed;
+            // Move camera straight down in world space (not camera local space)
+            t.y += deltaTime * wasdSpeed;
+            // Pivot doesn't move - it stays at y=0 on the ground
         }
 
         void initScreenPos(const glm::vec2& pos) {
             prePos = pos;
+        }
+
+        void setPivot(const glm::vec3& new_pivot) {
+            pivot = new_pivot;
+            pivot.y = 0.0f; // Enforce XZ plane constraint
+        }
+
+        glm::vec3 getPivot() const {
+            return pivot;
+        }
+
+        void updatePivotFromCamera(float distance_from_camera = 5.0f) {
+            // Set pivot to a point in front of the camera on the XZ plane
+            glm::vec3 forward = R * glm::vec3(0, 0, 1);
+            glm::vec3 target = t + forward * distance_from_camera;
+            pivot = glm::vec3(target.x, 0.0f, target.z);
         }
 
         // Simplified orbit methods - no velocity tracking
@@ -160,6 +242,7 @@ class Viewport {
 
     private:
         void applyRotationAroundCenter(float yaw, float pitch) {
+            // Rotate around the pivot point
             // Use world Y-axis for yaw rotation to maintain height
             // and camera's local right axis for pitch
             glm::vec3 worldUp(0.0f, 1.0f, 0.0f);
@@ -174,8 +257,12 @@ class Viewport {
             // This order maintains the horizon level during pure horizontal orbiting
             glm::mat3 U = Rp * Ry;
 
-            // Transform both position and orientation
-            t = U * t;
+            // Transform position relative to pivot
+            glm::vec3 relative_pos = t - pivot;
+            relative_pos = U * relative_pos;
+            t = pivot + relative_pos;
+
+            // Transform orientation
             R = U * R;
         }
     };

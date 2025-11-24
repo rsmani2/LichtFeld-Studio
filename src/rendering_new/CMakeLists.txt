@@ -15,6 +15,7 @@ set(RENDERING_SOURCES
         grid_renderer.cpp
         bbox_renderer.cpp
         axes_renderer.cpp
+        pivot_renderer.cpp
         text_renderer.cpp
         viewport_gizmo.cpp
         framebuffer_factory.cpp

@@ -8,6 +8,7 @@
 #include "bbox_renderer.hpp"
 #include "camera_frustum_renderer.hpp"
 #include "grid_renderer.hpp"
+#include "pivot_renderer.hpp"
 #include "rendering_new/rendering.hpp"
 #include "rendering_pipeline.hpp"
 #include "screen_renderer.hpp"
@@ -92,6 +93,11 @@ namespace lfs::rendering {
             float size,
             const std::array<bool, 3>& visible) override;
 
+        Result<void> renderPivot(
+            const ViewportData& viewport,
+            const glm::vec3& pivot_position,
+            float size = 0.15f) override;
+
         Result<void> renderViewportGizmo(
             const glm::mat3& camera_rotation,
             const glm::vec2& viewport_pos,
@@ -155,6 +161,7 @@ namespace lfs::rendering {
         ViewportGizmo viewport_gizmo_;
         TranslationGizmo translation_gizmo_;
         CameraFrustumRenderer camera_frustum_renderer_;
+        RenderPivotPoint pivot_renderer_;
 
         // Gizmo interaction adapter
         std::shared_ptr<GizmoInteractionAdapter> gizmo_interaction_;

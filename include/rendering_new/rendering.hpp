@@ -250,6 +250,11 @@ namespace lfs::rendering {
             float size = 2.0f,
             const std::array<bool, 3>& visible = {true, true, true}) = 0;
 
+        virtual Result<void> renderPivot(
+            const ViewportData& viewport,
+            const glm::vec3& pivot_position,
+            float size = 0.15f) = 0;
+
         // Viewport gizmo rendering
         virtual Result<void> renderViewportGizmo(
             const glm::mat3& camera_rotation,

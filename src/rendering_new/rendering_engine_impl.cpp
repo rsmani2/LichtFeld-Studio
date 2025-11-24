@@ -61,6 +61,13 @@ namespace lfs::rendering {
         }
         LOG_DEBUG("Axes renderer initialized");
 
+        if (auto result = pivot_renderer_.init(); !result) {
+            LOG_ERROR("Failed to initialize pivot renderer: {}", result.error());
+            shutdown();
+            return std::unexpected(result.error());
+        }
+        LOG_DEBUG("Pivot renderer initialized");
+
         if (auto result = viewport_gizmo_.initialize(); !result) {
             LOG_ERROR("Failed to initialize viewport gizmo: {}", result.error());
             shutdown();
@@ -309,6 +316,24 @@ namespace lfs::rendering {
         auto proj = createProjectionMatrix(viewport);
 
         return axes_renderer_.render(view, proj);
+    }
+
+    Result<void> RenderingEngineImpl::renderPivot(
+        const ViewportData& viewport,
+        const glm::vec3& pivot_position,
+        float size) {
+
+        if (!isInitialized() || !pivot_renderer_.isInitialized()) {
+            return std::unexpected("Pivot renderer not initialized");
+        }
+
+        pivot_renderer_.setPosition(pivot_position);
+        pivot_renderer_.setSize(size);
+
+        auto view = createViewMatrix(viewport);
+        auto proj = createProjectionMatrix(viewport);
+
+        return pivot_renderer_.render(view, proj);
     }
 
     Result<void> RenderingEngineImpl::renderViewportGizmo(

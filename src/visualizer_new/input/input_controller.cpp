@@ -789,6 +789,9 @@ namespace lfs::vis {
         viewport_.camera.R = cam_to_world_R;
         viewport_.camera.t = cam_to_world_T;
 
+        // Update pivot point to be in front of camera
+        viewport_.camera.updatePivotFromCamera();
+
         // Get camera intrinsics using the proper method
         auto [focal_x, focal_y, center_x, center_y] = cam_data->get_intrinsics();
         const float width = static_cast<float>(cam_data->image_width());

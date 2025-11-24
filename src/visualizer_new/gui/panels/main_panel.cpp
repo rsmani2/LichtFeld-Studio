@@ -170,6 +170,12 @@ namespace lfs::vis::gui::panels {
             ImGui::Unindent();
         }
 
+        // Pivot Point
+        ImGui::Separator();
+        if (ImGui::Checkbox("Show Pivot Point", &settings.show_pivot)) {
+            settings_changed = true;
+        }
+
         // Grid checkbox and settings
         ImGui::Separator();
         if (ImGui::Checkbox("Show Grid", &settings.show_grid)) {

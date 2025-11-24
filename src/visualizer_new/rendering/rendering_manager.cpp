@@ -991,6 +991,15 @@ namespace lfs::vis {
             }
         }
 
+        // Pivot point visualization (big red point)
+        if (settings_.show_pivot && engine_) {
+            glm::vec3 pivot_pos = context.viewport.camera.getPivot();
+            auto pivot_result = engine_->renderPivot(viewport, pivot_pos, 1.0f);
+            if (!pivot_result) {
+                LOG_WARN("Failed to render pivot point: {}", pivot_result.error());
+            }
+        }
+
         // Camera frustums section
         if (settings_.show_camera_frustums && engine_) {
             LOG_TRACE("Camera frustums enabled, checking for scene_manager...");
