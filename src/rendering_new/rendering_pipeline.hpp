@@ -40,6 +40,8 @@ namespace lfs::rendering {
             bool point_cloud_mode = false;
             float voxel_size = 0.01f;
             bool gut = false;
+            bool show_rings = false;
+            float ring_width = 0.002f;
         };
 
         struct RenderResult {

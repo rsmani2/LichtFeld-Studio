@@ -363,7 +363,9 @@ namespace lfs::rendering::kernels::forward {
         float* alpha_map,
         const uint width,
         const uint height,
-        const uint grid_width) {
+        const uint grid_width,
+        const bool show_rings,
+        const float ring_width) {
         auto block = cg::this_thread_block();
         const dim3 group_index = block.group_index();
         const dim3 thread_index = block.thread_index();
@@ -405,10 +407,23 @@ namespace lfs::rendering::kernels::forward {
                 const float sigma_over_2 = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) + conic.y * delta.x * delta.y;
                 if (sigma_over_2 < 0.0f)
                     continue;
-                const float gaussian = expf(-sigma_over_2);
-                const float alpha = fminf(opacity * gaussian, config::max_fragment_alpha);
+                float gaussian = expf(-sigma_over_2);
+
+                // Early alpha check before ring mode
+                float alpha = fminf(opacity * gaussian, config::max_fragment_alpha);
                 if (alpha < config::min_alpha_threshold)
                     continue;
+
+                // Ring mode: highlight the edge of gaussians
+                if (show_rings) {
+                    const float ring_upper = 0.025f;
+                    const float ring_lower = ring_upper - ring_width;
+                    if (gaussian < ring_upper && gaussian > ring_lower) {
+                        float opacity_adjusted = 1.0f;
+                        gaussian += 0.5f;
+                        alpha = fminf(opacity_adjusted * gaussian, config::max_fragment_alpha);
+                    }
+                }
                 const float next_transmittance = transmittance * (1.0f - alpha);
                 if (next_transmittance < config::transmittance_threshold) {
                     done = true;

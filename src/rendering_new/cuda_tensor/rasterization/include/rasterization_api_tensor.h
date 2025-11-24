@@ -32,6 +32,8 @@ namespace lfs::rendering {
      * @param center_y Principal point y coordinate
      * @param near_plane Near clipping plane
      * @param far_plane Far clipping plane
+     * @param show_rings Enable ring mode visualization
+     * @param ring_width Width of the ring band
      *
      * @return Tuple of (rendered_image [3, H, W], alpha_map [1, H, W])
      */
@@ -53,6 +55,8 @@ namespace lfs::rendering {
         const float center_x,
         const float center_y,
         const float near_plane,
-        const float far_plane);
+        const float far_plane,
+        const bool show_rings = false,
+        const float ring_width = 0.002f);
 
 } // namespace lfs::rendering

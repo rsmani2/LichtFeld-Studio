@@ -546,7 +546,9 @@ namespace lfs::vis {
             .crop_box = std::nullopt,
             .point_cloud_mode = settings_.point_cloud_mode,
             .voxel_size = settings_.voxel_size,
-            .gut = settings_.gut};
+            .gut = settings_.gut,
+            .show_rings = settings_.show_rings,
+            .ring_width = settings_.ring_width};
 
         // Add crop box if enabled
         if (settings_.use_crop_box) {
@@ -887,6 +889,8 @@ namespace lfs::vis {
                 .point_cloud_mode = settings_.point_cloud_mode,
                 .voxel_size = settings_.voxel_size,
                 .gut = settings_.gut,
+                .show_rings = settings_.show_rings,
+                .ring_width = settings_.ring_width,
                 .show_dividers = true,
                 .divider_color = glm::vec4(1.0f, 0.85f, 0.0f, 1.0f),
                 .show_labels = true};
@@ -930,6 +934,8 @@ namespace lfs::vis {
                 .point_cloud_mode = settings_.point_cloud_mode,
                 .voxel_size = settings_.voxel_size,
                 .gut = settings_.gut,
+                .show_rings = settings_.show_rings,
+                .ring_width = settings_.ring_width,
                 .show_dividers = true,
                 .divider_color = glm::vec4(1.0f, 0.85f, 0.0f, 1.0f),
                 .show_labels = true};

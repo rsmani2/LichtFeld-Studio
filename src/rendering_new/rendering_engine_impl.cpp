@@ -167,7 +167,9 @@ namespace lfs::rendering {
             .background_color = request.background_color,
             .point_cloud_mode = request.point_cloud_mode,
             .voxel_size = request.voxel_size,
-            .gut = request.gut};
+            .gut = request.gut,
+            .show_rings = request.show_rings,
+            .ring_width = request.ring_width};
 
         // Convert crop box if present
         std::unique_ptr<lfs::geometry::BoundingBox> temp_crop_box;
@@ -445,7 +447,9 @@ namespace lfs::rendering {
             .background_color = request.background_color,
             .point_cloud_mode = request.point_cloud_mode,
             .voxel_size = request.voxel_size,
-            .gut = request.gut};
+            .gut = request.gut,
+            .show_rings = request.show_rings,
+            .ring_width = request.ring_width};
 
         auto result = pipeline_.render(model, internal_request);
 

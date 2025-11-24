@@ -12,7 +12,9 @@ namespace lfs::rendering {
     Tensor rasterize_tensor(
         const lfs::core::Camera& viewpoint_camera,
         const lfs::core::SplatData& gaussian_model,
-        const Tensor& bg_color) {
+        const Tensor& bg_color,
+        bool show_rings,
+        float ring_width) {
 
         // Get camera parameters
         float fx = viewpoint_camera.focal_x();
@@ -88,7 +90,9 @@ namespace lfs::rendering {
             cx,
             cy,
             near_plane,
-            far_plane);
+            far_plane,
+            show_rings,
+            ring_width);
 
         // Manually blend the background since the forward pass does not support it
         // bg_color is [3], need to make it [3, 1, 1]

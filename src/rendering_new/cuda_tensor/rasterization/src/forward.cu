@@ -36,7 +36,10 @@ void lfs::rendering::forward(
     const float cx,
     const float cy,
     const float near_, // near and far are macros in windowns
-    const float far_) {
+    const float far_,
+    const bool show_rings,
+    const float ring_width) {
+
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
     const dim3 block(config::tile_width, config::tile_height, 1);
     const int n_tiles = grid.x * grid.y;
@@ -166,6 +169,8 @@ void lfs::rendering::forward(
         alpha,
         width,
         height,
-        grid.x);
+        grid.x,
+        show_rings,
+        ring_width);
     CHECK_CUDA(config::debug, "blend")
 }

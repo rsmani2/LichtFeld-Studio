@@ -51,7 +51,9 @@ namespace lfs::rendering {
         const float center_x,
         const float center_y,
         const float near_plane,
-        const float far_plane) {
+        const float far_plane,
+        const bool show_rings,
+        const float ring_width) {
 
         check_tensor_input(config::debug, means, "means");
         check_tensor_input(config::debug, scales_raw, "scales_raw");
@@ -106,7 +108,9 @@ namespace lfs::rendering {
             center_x,
             center_y,
             near_plane,
-            far_plane);
+            far_plane,
+            show_rings,
+            ring_width);
 
         arena.end_frame(frame_id, true);  // true = from_rendering
         arena.set_rendering_active(false);

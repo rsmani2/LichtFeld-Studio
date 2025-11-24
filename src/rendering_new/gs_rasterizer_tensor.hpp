@@ -19,11 +19,15 @@ namespace lfs::rendering {
      * @param viewpoint_camera Camera parameters
      * @param gaussian_model Gaussian splat data
      * @param bg_color Background color [3]
+     * @param show_rings Enable ring mode visualization
+     * @param ring_width Width of the ring band
      * @return Rendered image [3, H, W]
      */
     Tensor rasterize_tensor(
         const lfs::core::Camera& viewpoint_camera,
         const lfs::core::SplatData& gaussian_model,
-        const Tensor& bg_color);
+        const Tensor& bg_color,
+        bool show_rings = false,
+        float ring_width = 0.002f);
 
 } // namespace lfs::rendering

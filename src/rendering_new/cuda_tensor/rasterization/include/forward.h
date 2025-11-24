@@ -32,6 +32,8 @@ namespace lfs::rendering {
         const float cx,
         const float cy,
         const float near,
-        const float far);
+        const float far,
+        const bool show_rings = false,
+        const float ring_width = 0.002f);
 
 }

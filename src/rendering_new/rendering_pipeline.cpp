@@ -89,7 +89,8 @@ namespace lfs::rendering {
 
                 LOG_TRACE("Using TENSOR_NATIVE backend (sh_degree temporarily changed from {} to {})",
                          original_sh_degree, request.sh_degree);
-                result.image = rasterize_tensor(cam, const_cast<lfs::core::SplatData&>(model), background_);
+                result.image = rasterize_tensor(cam, const_cast<lfs::core::SplatData&>(model), background_,
+                                                request.show_rings, request.ring_width);
                 result.depth = Tensor::empty({0}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
 
                 // IMMEDIATELY restore original sh_degree
@@ -110,7 +111,8 @@ namespace lfs::rendering {
 
             // Use libtorch-free tensor-based rasterizer
             LOG_TRACE("Using TENSOR_NATIVE backend (libtorch-free rasterizer)");
-            result.image = rasterize_tensor(cam, mutable_model, background_);
+            result.image = rasterize_tensor(cam, mutable_model, background_,
+                                            request.show_rings, request.ring_width);
             result.depth = Tensor::empty({0}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
             result.valid = true;
 

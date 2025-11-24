@@ -90,6 +90,20 @@ namespace lfs::vis::gui::panels {
             }
         }
 
+        // Ring Mode checkbox (only enabled when NOT in point cloud mode)
+        ImGui::BeginDisabled(settings.point_cloud_mode);
+        if (ImGui::Checkbox("Show Gaussian Rings", &settings.show_rings)) {
+            settings_changed = true;
+        }
+        ImGui::EndDisabled();
+
+        // Show ring width slider only when ring mode is enabled and not in point cloud mode
+        if (settings.show_rings && !settings.point_cloud_mode) {
+            if (widgets::SliderWithReset("Ring Width", &settings.ring_width, 0.0005f, 0.01f, 0.002f)) {
+                settings_changed = true;
+            }
+        }
+
         // Background Color
         ImGui::Separator();
         ImGui::Text("Background");

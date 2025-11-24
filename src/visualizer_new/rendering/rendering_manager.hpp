@@ -66,6 +66,10 @@ namespace lfs::vis {
         bool point_cloud_mode = false;
         float voxel_size = 0.01f;
 
+        // Ring mode (only active in splat mode)
+        bool show_rings = false;
+        float ring_width = 0.002f; // Width of the ring band (0.001 to 0.01)
+
         // Translation gizmo
         bool show_translation_gizmo = false;
         float gizmo_scale = 1.0f;
