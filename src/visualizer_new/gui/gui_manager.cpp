@@ -537,12 +537,18 @@ namespace lfs::vis::gui {
         float bottom = main_viewport->WorkSize.y;
 
         // Find our docked windows and calculate the remaining space
-        ImGuiWindow* settings_window = ImGui::FindWindowByName("Rendering Settings");
+        ImGuiWindow* rendering_window = ImGui::FindWindowByName("Rendering");
+        ImGuiWindow* training_window = ImGui::FindWindowByName("Training");
         ImGuiWindow* scene_window = ImGui::FindWindowByName("Scene");
 
-        if (settings_window && settings_window->DockNode && settings_window->Active) {
-            // Settings panel is on the left
-            float panel_right = settings_window->Pos.x + settings_window->Size.x - main_viewport->WorkPos.x;
+        // Check both left-side panels
+        if (rendering_window && rendering_window->DockNode && rendering_window->Active) {
+            float panel_right = rendering_window->Pos.x + rendering_window->Size.x - main_viewport->WorkPos.x;
+            left = std::max(left, panel_right);
+        }
+
+        if (training_window && training_window->DockNode && training_window->Active) {
+            float panel_right = training_window->Pos.x + training_window->Size.x - main_viewport->WorkPos.x;
             left = std::max(left, panel_right);
         }
 
@@ -809,8 +815,13 @@ namespace lfs::vis::gui {
             }
         }
 
-        // Set drawlist to override BeginFrame's default
+        // Clip ImGuizmo rendering to viewport so it doesn't draw over GUI panels
         ImDrawList* overlay_drawlist = ImGui::GetForegroundDrawList();
+        ImVec2 clip_min(main_vp->WorkPos.x + viewport_pos_.x, main_vp->WorkPos.y + viewport_pos_.y);
+        ImVec2 clip_max(clip_min.x + viewport_size_.x, clip_min.y + viewport_size_.y);
+        overlay_drawlist->PushClipRect(clip_min, clip_max, true);
+
+        // Set drawlist after pushing clip rect
         ImGuizmo::SetDrawlist(overlay_drawlist);
 
         // Draw the gizmo - matrix is modified in-place by ImGuizmo
@@ -938,6 +949,9 @@ namespace lfs::vis::gui {
                     .emit();
             }
         }
+
+        // Restore clip rect after ImGuizmo rendering
+        overlay_drawlist->PopClipRect();
     }
 
 } // namespace lfs::vis::gui
