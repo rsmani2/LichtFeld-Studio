@@ -2450,9 +2450,7 @@ namespace lfs::core::tensor_ops {
             }
 
             CHECK_CUDA(cudaGetLastError());
-            if (stream == nullptr) {
-                CHECK_CUDA(cudaDeviceSynchronize());
-            }
+            // NOTE: No sync here - caller (Tensor::fill_) handles sync if needed
             return;
         }
 
@@ -2470,9 +2468,7 @@ namespace lfs::core::tensor_ops {
             }
 
             CHECK_CUDA(cudaGetLastError());
-            if (stream == nullptr) {
-                CHECK_CUDA(cudaDeviceSynchronize());
-            }
+            // NOTE: No sync here - caller (Tensor::fill_) handles sync if needed
             return;
         }
 
@@ -2496,9 +2492,7 @@ namespace lfs::core::tensor_ops {
             }
 
             CHECK_CUDA(cudaGetLastError());
-            if (stream == nullptr) {
-                CHECK_CUDA(cudaDeviceSynchronize());
-            }
+            // NOTE: No sync here - caller (Tensor::fill_) handles sync if needed
             return;
         }
 
@@ -2522,9 +2516,7 @@ namespace lfs::core::tensor_ops {
             }
 
             CHECK_CUDA(cudaGetLastError());
-            if (stream == nullptr) {
-                CHECK_CUDA(cudaDeviceSynchronize());
-            }
+            // NOTE: No sync here - caller (Tensor::fill_) handles sync if needed
             return;
         }
 
@@ -2548,9 +2540,7 @@ namespace lfs::core::tensor_ops {
             }
 
             CHECK_CUDA(cudaGetLastError());
-            if (stream == nullptr) {
-                CHECK_CUDA(cudaDeviceSynchronize());
-            }
+            // NOTE: No sync here - caller (Tensor::fill_) handles sync if needed
             return;
         }
 

@@ -20,11 +20,9 @@ namespace lfs::core::tensor_ops {
 
     template <typename Func>
     inline void run_with_thrust_policy(cudaStream_t stream, Func&& func) {
-        if (stream) {
-            func(thrust::cuda::par.on(stream));
-        } else {
-            func(thrust::cuda::par);
-        }
+        // Always use .on(stream) to avoid implicit sync after thrust operations
+        // When stream is nullptr/0, this uses the default stream without syncing
+        func(thrust::cuda::par.on(stream));
     }
 
     // ============================================================================

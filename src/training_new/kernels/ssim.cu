@@ -562,12 +562,12 @@ lfs::core::Tensor ssim_backward(
     auto dL_dmap = lfs::core::Tensor::zeros(ctx.img1.shape(), lfs::core::Device::CUDA);
 
     if (ctx.apply_valid_padding && ctx.original_h > 10 && ctx.original_w > 10) {
-        // Fill cropped region with gradient
+        // Fill cropped region with gradient (use stream-aware version to avoid sync)
         auto cropped_view = dL_dmap.slice(2, 5, ctx.original_h - 5).slice(3, 5, ctx.original_w - 5);
-        cropped_view.fill_(grad_per_pixel);
+        cropped_view.fill_(grad_per_pixel, nullptr);  // stream-aware version, no sync
     } else {
-        // No cropping - fill entire map
-        dL_dmap.fill_(grad_per_pixel);
+        // No cropping - fill entire map (use stream-aware version to avoid sync)
+        dL_dmap.fill_(grad_per_pixel, nullptr);
     }
 
     // Allocate output gradient
@@ -713,9 +713,9 @@ lfs::core::Tensor ssim_backward(
 
     if (ctx.apply_valid_padding && ctx.original_h > 10 && ctx.original_w > 10) {
         auto cropped_view = workspace.dL_dmap.slice(2, 5, ctx.original_h - 5).slice(3, 5, ctx.original_w - 5);
-        cropped_view.fill_(grad_per_pixel);
+        cropped_view.fill_(grad_per_pixel, nullptr);  // stream-aware version, no sync
     } else {
-        workspace.dL_dmap.fill_(grad_per_pixel);
+        workspace.dL_dmap.fill_(grad_per_pixel, nullptr);
     }
 
     // Use pre-allocated output buffer

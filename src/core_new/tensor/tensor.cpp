@@ -1154,6 +1154,8 @@ namespace lfs::core {
                     tensor_ops::launch_fill_strided<unsigned char>(
                         static_cast<unsigned char*>(data_), bool_val, shape_.dims(), strides_, storage_offset_, n, nullptr);
                 }
+                // Sync for the no-stream overload (maintains original behavior)
+                CHECK_CUDA(cudaDeviceSynchronize());
                 return *this;
             }
 
@@ -1221,6 +1223,61 @@ namespace lfs::core {
         } else {
             float* data = static_cast<float*>(dest);
             std::fill(data, data + numel(), value);
+        }
+
+        return *this;
+    }
+
+    Tensor& Tensor::fill_(float value, cudaStream_t stream) {
+        if (!is_valid() || numel() == 0) {
+            return *this;
+        }
+
+        // Only CUDA tensors benefit from stream-aware fill
+        if (device_ != Device::CUDA) {
+            return fill_(value);  // Fall back to sync version for CPU
+        }
+
+        const size_t n = numel();
+
+        // Non-contiguous tensors: use strided kernel with stream
+        if (!is_contiguous()) {
+            if (dtype_ == DataType::Float32) {
+                tensor_ops::launch_fill_strided<float>(
+                    static_cast<float*>(data_), value, shape_.dims(), strides_, storage_offset_, n, stream);
+            } else if (dtype_ == DataType::Int32) {
+                int int_val = static_cast<int>(value);
+                tensor_ops::launch_fill_strided<int>(
+                    static_cast<int*>(data_), int_val, shape_.dims(), strides_, storage_offset_, n, stream);
+            } else if (dtype_ == DataType::Bool) {
+                unsigned char bool_val = (value != 0.0f) ? 1 : 0;
+                tensor_ops::launch_fill_strided<unsigned char>(
+                    static_cast<unsigned char*>(data_), bool_val, shape_.dims(), strides_, storage_offset_, n, stream);
+            }
+            return *this;
+        }
+
+        // Contiguous tensors: use cudaMemsetAsync for zeros, or strided kernel for non-zero
+        void* dest = static_cast<char*>(data_) + storage_offset_ * dtype_size(dtype_);
+
+        if (value == 0.0f) {
+            // Fast path: use cudaMemsetAsync for zeros
+            CHECK_CUDA(cudaMemsetAsync(dest, 0, bytes(), stream));
+        } else {
+            // Non-zero fill: use kernel (treat as 1D strided with stride=1)
+            std::vector<size_t> shape_1d = {n};
+            std::vector<size_t> strides_1d = {1};
+            if (dtype_ == DataType::Float32) {
+                tensor_ops::launch_fill_strided<float>(
+                    static_cast<float*>(dest), value, shape_1d, strides_1d, 0, n, stream);
+            } else if (dtype_ == DataType::Int32) {
+                tensor_ops::launch_fill_strided<int>(
+                    static_cast<int*>(dest), static_cast<int>(value), shape_1d, strides_1d, 0, n, stream);
+            } else if (dtype_ == DataType::Bool) {
+                tensor_ops::launch_fill_strided<unsigned char>(
+                    static_cast<unsigned char*>(dest), (value != 0.0f) ? (unsigned char)1 : (unsigned char)0,
+                    shape_1d, strides_1d, 0, n, stream);
+            }
         }
 
         return *this;
@@ -2208,6 +2265,16 @@ namespace lfs::core {
         if (err != cudaSuccess) {
             throw TensorError("cudaMalloc failed in zeros_direct: " + std::string(cudaGetErrorString(err)));
         }
+
+        // Track direct allocations for memory profiling
+        static size_t total_zeros_direct_bytes = 0;
+        total_zeros_direct_bytes += total_bytes;
+        printf("[TRACKED-zeros_direct] cudaMalloc: %.2f MB (shape=[%zu",
+               total_bytes / (1024.0*1024.0), shape[0]);
+        for (size_t i = 1; i < shape.rank(); i++) {
+            printf(", %zu", shape[i]);
+        }
+        printf("], capacity=%zu) | Cumulative: %.2f MB\n", capacity, total_zeros_direct_bytes / (1024.0*1024.0));
 
         // Zero full capacity
         err = cudaMemset(data_ptr, 0, total_bytes);

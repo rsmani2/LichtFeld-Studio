@@ -2228,6 +2228,7 @@ namespace lfs::core {
         // Other in-place operations
         Tensor& zero_();
         Tensor& fill_(float value);
+        Tensor& fill_(float value, cudaStream_t stream);  // Stream-aware version (no sync)
         Tensor& copy_from(const Tensor& other);
         Tensor& copy_(const Tensor& src) { return copy_from(src); }
         Tensor& uniform_(float low = 0.0f, float high = 1.0f);
