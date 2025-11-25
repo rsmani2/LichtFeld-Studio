@@ -10,6 +10,7 @@
 
 // New
 #include "core_new/splat_data.hpp"
+#include "core_new/splat_data_export.hpp"
 #include "loader_new/formats/ply.hpp"
 
 TEST(PLYSaveTest, CompareSaveImplementations) {
@@ -33,7 +34,7 @@ TEST(PLYSaveTest, CompareSaveImplementations) {
 
     // Convert to PointCloud (what gets saved)
     auto legacy_pc = legacy_splat.to_point_cloud();
-    auto new_pc = new_splat.to_point_cloud();
+    auto new_pc = lfs::core::to_point_cloud(new_splat);
 
     // Get PointCloud tensors
     auto legacy_means = legacy_pc.means.cpu();

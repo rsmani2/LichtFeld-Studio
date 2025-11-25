@@ -4,6 +4,8 @@
 
 #include "scene/scene_manager.hpp"
 #include "core_new/logger.hpp"
+#include "core_new/splat_data_export.hpp"
+#include "core_new/splat_data_transform.hpp"
 #include "loader_new/loader.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "training/training_manager.hpp"
@@ -488,7 +490,7 @@ namespace lfs::vis {
                 }
 
                 // Perform the crop operation
-                auto cropped_splat = node_data->crop_by_cropbox(crop_box);
+                auto cropped_splat = lfs::core::crop_by_cropbox(*node_data, crop_box);
 
                 // Check if the number of splats changed after cropping
                 if (cropped_splat.size() == node_data->size()) {
@@ -521,7 +523,7 @@ namespace lfs::vis {
                 // Save the cropped splat data
                 // We need to save as PLY format - using iteration 0 as a placeholder
                 std::filesystem::path temp_dir = crop_path.parent_path();
-                cropped_splat.save_ply(temp_dir, 0, true, crop_name); // join_threads = true for synchronous save
+                lfs::core::save_ply(cropped_splat, temp_dir, 0, true, crop_name); // join_threads = true for synchronous save
 
                 std::filesystem::path actual_saved_path = temp_dir / (crop_name + ".ply");
 

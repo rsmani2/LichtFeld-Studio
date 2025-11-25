@@ -342,7 +342,7 @@ std::expected<NewInitializationResult, std::string> initialize_new() {
             }
 
             // Initialize model from point cloud
-            auto splat_result = lfs::core::SplatData::init_model_from_pointcloud(
+            auto splat_result = lfs::core::init_model_from_pointcloud(
                 params,
                 load_result->scene_center,
                 point_cloud_to_use);

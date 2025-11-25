@@ -431,7 +431,7 @@ TEST_F(LoaderComparisonTest, SplatDataInitialization) {
     auto old_splat_result = gs::SplatData::init_model_from_pointcloud(
         old_params, old_result->scene_center, *old_scene.point_cloud);
 
-    auto new_splat_result = lfs::core::SplatData::init_model_from_pointcloud(
+    auto new_splat_result = lfs::core::init_model_from_pointcloud(
         new_params, new_result->scene_center, *new_scene.point_cloud);
 
     ASSERT_TRUE(old_splat_result.has_value()) << "Old SplatData init failed: " << old_splat_result.error();
@@ -846,7 +846,7 @@ TEST_F(LoaderComparisonTest, BlenderDatasetComparison) {
 
     auto old_splat_result = gs::SplatData::init_model_from_pointcloud(
         old_params, old_result->scene_center, old_pc);
-    auto new_splat_result = lfs::core::SplatData::init_model_from_pointcloud(
+    auto new_splat_result = lfs::core::init_model_from_pointcloud(
         new_params, new_result->scene_center, new_pc);
 
     ASSERT_TRUE(old_splat_result.has_value()) << "Old SplatData init failed: " << old_splat_result.error();
@@ -991,7 +991,7 @@ TEST_F(LoaderComparisonTest, GardenLoadingBenchmark) {
                 new_params.optimization.init_num_pts = new_pc.size();
                 new_params.optimization.init_extent = 3.0f;
 
-                auto new_splat_result = lfs::core::SplatData::init_model_from_pointcloud(
+                auto new_splat_result = lfs::core::init_model_from_pointcloud(
                     new_params, new_result->scene_center, new_pc);
                 ASSERT_TRUE(new_splat_result.has_value());
 
@@ -1015,7 +1015,7 @@ TEST_F(LoaderComparisonTest, GardenLoadingBenchmark) {
                 new_params.optimization.init_num_pts = new_pc.size();
                 new_params.optimization.init_extent = 3.0f;
 
-                auto new_splat_result = lfs::core::SplatData::init_model_from_pointcloud(
+                auto new_splat_result = lfs::core::init_model_from_pointcloud(
                     new_params, new_result->scene_center, new_pc);
                 ASSERT_TRUE(new_splat_result.has_value());
 

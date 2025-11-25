@@ -11,6 +11,8 @@
 #include "core_new/events.hpp"
 #include "core_new/image_io.hpp"
 #include "core_new/logger.hpp"
+#include "core_new/splat_data_export.hpp"
+#include "core_new/splat_data_transform.hpp"
 #include "core_new/tensor/internal/memory_pool.hpp"
 #include "optimizer/adam_optimizer.hpp"
 // TODO: Fused SSIM kernels not needed - using lfs::training::losses::PhotometricLoss
@@ -342,7 +344,7 @@ namespace lfs::training {
             int max_cap = params.optimization.max_cap;
             if (max_cap < splat.size()) {
                 LOG_WARN("Max cap is less than to {} initial splats {}. Choosing randomly {} splats", max_cap, splat.size(), max_cap);
-                splat.random_choose(max_cap);
+                lfs::core::random_choose(splat, max_cap);
             }
 
             // Re-initialize strategy with new parameters
@@ -1151,14 +1153,14 @@ namespace lfs::training {
 
     void Trainer::save_ply(const std::filesystem::path& save_path, int iter_num, bool join_threads) {
         // Save PLY format - join_threads controls sync vs async
-        strategy_->get_model().save_ply(save_path, iter_num, join_threads);
+        lfs::core::save_ply(strategy_->get_model(), save_path, iter_num, join_threads);
 
         // Save SOG format if requested - ALWAYS synchronous
         std::filesystem::path sog_path;
         if (params_.optimization.save_sog) {
-            sog_path = strategy_->get_model().save_sog(save_path, iter_num,
-                                                       params_.optimization.sog_iterations,
-                                                       true); // Always synchronous
+            sog_path = lfs::core::save_sog(strategy_->get_model(), save_path, iter_num,
+                                           params_.optimization.sog_iterations,
+                                           true); // Always synchronous
         }
 
         // Update project with PLY info

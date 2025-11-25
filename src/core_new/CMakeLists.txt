@@ -20,6 +20,8 @@ set(CORE_SOURCES
         image_io.cpp
         parameters.cpp
         splat_data.cpp
+        splat_data_export.cpp
+        splat_data_transform.cpp
         sogs.cpp  # Full SOG implementation with kmeans and morton encoding
         tinyply.cpp
 )

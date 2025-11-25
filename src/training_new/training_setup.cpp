@@ -5,6 +5,7 @@
 #include "training_setup.hpp"
 #include "core_new/logger.hpp"
 #include "core_new/point_cloud.hpp"
+#include "core_new/splat_data_transform.hpp"
 #include "loader_new/loader.hpp"
 #include "strategies/default_strategy.hpp"
 #include "strategies/mcmc.hpp"
@@ -155,7 +156,7 @@ namespace lfs::training {
                         load_result->scene_center = lfs::core::Tensor(); // Clear original CUDA tensor
                     }
 
-                    splat_result = lfs::core::SplatData::init_model_from_pointcloud(
+                    splat_result = lfs::core::init_model_from_pointcloud(
                         params,
                         scene_center,
                         point_cloud_to_use,
@@ -168,7 +169,7 @@ namespace lfs::training {
                 }
                 if (max_cap < splat_result->size()) {
                     LOG_WARN("Max cap is less than to {} initial splats {}. Choosing randomly {} splats", max_cap, splat_result->size(), max_cap);
-                    splat_result->random_choose(max_cap);
+                    lfs::core::random_choose(*splat_result, max_cap);
                 }
 
                 // 5. Create strategy
