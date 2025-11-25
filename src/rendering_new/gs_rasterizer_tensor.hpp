@@ -7,6 +7,7 @@
 #include "core_new/camera.hpp"
 #include "core_new/splat_data.hpp"
 #include "core_new/tensor.hpp"
+#include <tuple>
 
 namespace lfs::rendering {
 
@@ -21,13 +22,27 @@ namespace lfs::rendering {
      * @param bg_color Background color [3]
      * @param show_rings Enable ring mode visualization
      * @param ring_width Width of the ring band
-     * @return Rendered image [3, H, W]
+     * @param model_transforms Optional array of 4x4 transforms [num_transforms, 4, 4] (row-major)
+     * @param transform_indices Optional per-Gaussian transform index [N]
+     * @param selection_mask Optional per-Gaussian selection mask [N] (uint8, 1=selected/yellow)
+     * @param screen_positions_out Optional output: screen positions [N, 2] for brush tool
+     * @return Tuple of (rendered_image [3, H, W], depth_map [1, H, W])
      */
-    Tensor rasterize_tensor(
+    std::tuple<Tensor, Tensor> rasterize_tensor(
         const lfs::core::Camera& viewpoint_camera,
         const lfs::core::SplatData& gaussian_model,
         const Tensor& bg_color,
         bool show_rings = false,
-        float ring_width = 0.002f);
+        float ring_width = 0.002f,
+        const Tensor* model_transforms = nullptr,
+        const Tensor* transform_indices = nullptr,
+        const Tensor* selection_mask = nullptr,
+        Tensor* screen_positions_out = nullptr,
+        // Brush selection (computed in preprocess for coordinate consistency)
+        bool brush_active = false,
+        float brush_x = 0.0f,
+        float brush_y = 0.0f,
+        float brush_radius = 0.0f,
+        Tensor* brush_selection_out = nullptr);
 
 } // namespace lfs::rendering

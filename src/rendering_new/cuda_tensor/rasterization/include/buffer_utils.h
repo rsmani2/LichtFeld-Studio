@@ -46,6 +46,7 @@ namespace lfs::rendering {
         float2* mean2d;
         float4* conic_opacity;
         float3* color;
+        float* depth;  // Camera-space depth of each Gaussian center
         uint* n_visible_primitives;
         uint* n_instances;
 
@@ -67,6 +68,7 @@ namespace lfs::rendering {
             obtain(blob, buffers.mean2d, n_primitives, 128);
             obtain(blob, buffers.conic_opacity, n_primitives, 128);
             obtain(blob, buffers.color, n_primitives, 128);
+            obtain(blob, buffers.depth, n_primitives, 128);
             cub::DeviceScan::ExclusiveSum(
                 nullptr, buffers.cub_workspace_size,
                 buffers.offset, buffers.offset,

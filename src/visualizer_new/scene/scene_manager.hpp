@@ -102,6 +102,23 @@ namespace lfs::vis {
         void removePLY(const std::string& name);
         void setPLYVisibility(const std::string& name, bool visible);
 
+        // Node selection for transforms
+        void selectNode(const std::string& name);
+        void clearSelection();
+        std::string getSelectedNodeName() const;
+        bool hasSelectedNode() const;
+
+        // Node transforms
+        void setNodeTransform(const std::string& name, const glm::mat4& transform);
+        glm::mat4 getNodeTransform(const std::string& name) const;
+        void setSelectedNodeTranslation(const glm::vec3& translation);
+        glm::vec3 getSelectedNodeTranslation() const;
+        glm::vec3 getSelectedNodeCentroid() const; // Get centroid of selected node's splat data
+
+        // Full transform for selected node (includes rotation and scale)
+        void setSelectedNodeTransform(const glm::mat4& transform);
+        glm::mat4 getSelectedNodeTransform() const;
+
         void loadDataset(const std::filesystem::path& path,
                          const lfs::core::param::TrainingParameters& params);
         void clear();
@@ -151,6 +168,9 @@ namespace lfs::vis {
         std::optional<lfs::core::param::TrainingParameters> cached_params_;
         // project
         std::shared_ptr<lfs::project::Project> lfs_project_ = nullptr;
+
+        // Selected node for transforms
+        std::string selected_node_;
     };
 
 } // namespace lfs::vis

@@ -169,7 +169,16 @@ namespace lfs::rendering {
             .voxel_size = request.voxel_size,
             .gut = request.gut,
             .show_rings = request.show_rings,
-            .ring_width = request.ring_width};
+            .ring_width = request.ring_width,
+            .model_transforms = request.model_transforms,
+            .transform_indices = request.transform_indices,
+            .selection_mask = request.selection_mask,
+            .output_screen_positions = request.output_screen_positions,
+            .brush_active = request.brush_active,
+            .brush_x = request.brush_x,
+            .brush_y = request.brush_y,
+            .brush_radius = request.brush_radius,
+            .brush_selection_tensor = request.brush_selection_tensor};
 
         // Convert crop box if present
         std::unique_ptr<lfs::geometry::BoundingBox> temp_crop_box;
@@ -195,6 +204,9 @@ namespace lfs::rendering {
         RenderResult result{
             .image = std::make_shared<Tensor>(pipeline_result->image),
             .depth = std::make_shared<Tensor>(pipeline_result->depth),
+            .screen_positions = pipeline_result->screen_positions.is_valid()
+                ? std::make_shared<Tensor>(pipeline_result->screen_positions)
+                : nullptr,
             .valid = true};
 
         return result;

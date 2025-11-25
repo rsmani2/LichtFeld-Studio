@@ -40,11 +40,30 @@ namespace lfs::vis::tools {
             return false;
         }
 
-        // Initialize transform from current world transform
-        auto settings = render_manager->getSettings();
-        current_transform_ = settings.world_transform;
+        // Initialize transform based on mode
+        if (apply_to_world_) {
+            auto settings = render_manager->getSettings();
+            current_transform_ = settings.world_transform;
+        } else {
+            // Sync from selected node
+            syncFromSelectedNode(ctx);
+        }
 
-        std::println("Translation Gizmo Tool initialized");
+        // Note: Node transform gizmo is now handled by ImGuizmo in gui_manager.cpp
+        // This old custom gizmo tool is deprecated for node transforms.
+        // The event listener below is disabled to prevent interference.
+        //
+        // ui::NodeSelected::when([this](const auto& event) {
+        //     if (event.type == "PLY" && !apply_to_world_ && tool_context_) {
+        //         if (!isEnabled()) {
+        //             setEnabled(true);
+        //         }
+        //         syncFromSelectedNode(*tool_context_);
+        //     }
+        // });
+
+        std::println("Translation Gizmo Tool initialized (mode: {})",
+                     apply_to_world_ ? "world" : "node");
         return true;
     }
 
@@ -65,19 +84,17 @@ namespace lfs::vis::tools {
                 gizmo_interaction_->endDrag();
             }
         }
-
-        // Don't emit events here - that would create circular dependency
+        // Gizmo rendering is now handled by ImGuizmo in gui_manager.cpp
     }
 
-    void TranslationGizmoTool::update([[maybe_unused]] const ToolContext& ctx) {
+    void TranslationGizmoTool::update(const ToolContext& ctx) {
         if (!isEnabled() || !gizmo_interaction_) {
             return;
         }
 
-        // Update hover state if not dragging
-        if (!is_dragging_) {
-            // This would be done by input controller passing mouse position
-            // For now, we'll handle it in handleMouseMove
+        // In node mode, sync with selected node when not dragging
+        if (!is_dragging_ && !apply_to_world_) {
+            syncFromSelectedNode(ctx);
         }
     }
 
@@ -119,7 +136,11 @@ namespace lfs::vis::tools {
                 gizmo_interaction_->endDrag();
 
                 // Apply the final transform
-                updateWorldTransform(ctx);
+                if (apply_to_world_) {
+                    updateWorldTransform(ctx);
+                } else {
+                    updateNodeTransform(ctx);
+                }
 
                 std::println("Ended gizmo drag. Final position: ({:.2f}, {:.2f}, {:.2f})",
                              current_transform_.getTranslation().x,
@@ -150,8 +171,12 @@ namespace lfs::vis::tools {
                 current_transform_.getRotationMat(),
                 new_position);
 
-            // Update world transform in real-time
-            updateWorldTransform(ctx);
+            // Update transform in real-time
+            if (apply_to_world_) {
+                updateWorldTransform(ctx);
+            } else {
+                updateNodeTransform(ctx);
+            }
 
             return true; // Consume the event
         } else {
@@ -184,8 +209,38 @@ namespace lfs::vis::tools {
             }
 
             if (enabled) {
-                ImGui::Checkbox("Show in Viewport", &show_in_viewport_);
-                ImGui::SliderFloat("Gizmo Scale", &gizmo_scale_, 0.5f, 3.0f);
+                // Mode selector
+                ImGui::Separator();
+                ImGui::Text("Mode:");
+                if (ImGui::RadioButton("World Transform", apply_to_world_)) {
+                    apply_to_world_ = true;
+                    if (tool_context_) {
+                        auto* rm = tool_context_->getRenderingManager();
+                        if (rm) {
+                            auto settings = rm->getSettings();
+                            current_transform_ = settings.world_transform;
+                        }
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::RadioButton("Node Transform", !apply_to_world_)) {
+                    apply_to_world_ = false;
+                    if (tool_context_) {
+                        syncFromSelectedNode(*tool_context_);
+                    }
+                }
+
+                // Show selected node info in node mode
+                if (!apply_to_world_) {
+                    auto* sm = tool_context_ ? tool_context_->getSceneManager() : nullptr;
+                    if (sm && sm->hasSelectedNode()) {
+                        ImGui::TextColored(ImVec4(0.4f, 1.0f, 0.4f, 1.0f), "Selected: %s",
+                                          sm->getSelectedNodeName().c_str());
+                    } else {
+                        ImGui::TextColored(ImVec4(1.0f, 0.6f, 0.2f, 1.0f), "No node selected");
+                        ImGui::TextWrapped("Select a node in the Scene panel to transform it.");
+                    }
+                }
 
                 ImGui::Separator();
                 ImGui::Text("Transform");
@@ -197,7 +252,11 @@ namespace lfs::vis::tools {
                         current_transform_.getRotationMat(),
                         position);
                     if (tool_context_) {
-                        updateWorldTransform(*tool_context_);
+                        if (apply_to_world_) {
+                            updateWorldTransform(*tool_context_);
+                        } else {
+                            updateNodeTransform(*tool_context_);
+                        }
                     }
                 }
 
@@ -205,7 +264,11 @@ namespace lfs::vis::tools {
                 if (ImGui::Button("Reset Transform")) {
                     current_transform_ = lfs::geometry::EuclideanTransform();
                     if (tool_context_) {
-                        updateWorldTransform(*tool_context_);
+                        if (apply_to_world_) {
+                            updateWorldTransform(*tool_context_);
+                        } else {
+                            updateNodeTransform(*tool_context_);
+                        }
                     }
                 }
 
@@ -260,6 +323,39 @@ namespace lfs::vis::tools {
 
         // Also emit event to update the world transform panel if it exists
         ui::RenderSettingsChanged{}.emit();
+    }
+
+    void TranslationGizmoTool::updateNodeTransform(const ToolContext& ctx) {
+        auto* scene_manager = ctx.getSceneManager();
+        if (!scene_manager) {
+            return;
+        }
+
+        if (!scene_manager->hasSelectedNode()) {
+            std::println("No node selected for transform");
+            return;
+        }
+
+        // Update the selected node's translation
+        glm::vec3 translation = current_transform_.getTranslation();
+        scene_manager->setSelectedNodeTranslation(translation);
+        // Gizmo rendering is now handled by ImGuizmo in gui_manager.cpp
+    }
+
+    void TranslationGizmoTool::syncFromSelectedNode(const ToolContext& ctx) {
+        auto* scene_manager = ctx.getSceneManager();
+
+        if (!scene_manager || !scene_manager->hasSelectedNode()) {
+            // No node selected - reset to identity
+            current_transform_ = lfs::geometry::EuclideanTransform();
+        } else {
+            // Get the current translation offset of the selected node
+            glm::vec3 translation = scene_manager->getSelectedNodeTranslation();
+            current_transform_ = lfs::geometry::EuclideanTransform(
+                glm::mat3(1.0f),
+                translation);
+        }
+        // Gizmo rendering is now handled by ImGuizmo in gui_manager.cpp
     }
 
 } // namespace lfs::vis::tools

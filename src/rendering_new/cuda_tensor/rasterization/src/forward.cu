@@ -11,6 +11,82 @@
 #include <cub/cub.cuh>
 #include <functional>
 
+// Initialize mean2d buffer with invalid marker values
+__global__ void init_mean2d_kernel(float2* data, int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx < n) {
+        data[idx] = make_float2(-10000.0f, -10000.0f);
+    }
+}
+
+// Copy mean2d to screen positions, flipping Y to match window coordinates
+// The rasterizer's mean2d has Y increasing upward (OpenGL convention),
+// but window coordinates have Y increasing downward
+__global__ void copy_screen_positions_kernel(
+    const float2* __restrict__ mean2d,
+    float2* __restrict__ screen_positions_out,
+    float height,
+    int n) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    float2 pos = mean2d[idx];
+    // Flip Y: window_y = height - rasterizer_y
+    // Keep invalid markers as-is (they have large negative values)
+    if (pos.y > -1000.0f) {
+        pos.y = height - pos.y;
+    }
+    screen_positions_out[idx] = pos;
+}
+
+// Simple kernel to select Gaussians within brush radius
+__global__ void brush_select_kernel(
+    const float2* __restrict__ screen_positions,
+    float mouse_x,
+    float mouse_y,
+    float radius_sq,
+    uint8_t* __restrict__ selection_out,
+    int n_primitives) {
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n_primitives) return;
+
+    float2 pos = screen_positions[idx];
+
+    // Skip invalid/off-screen positions (marked with large negative values)
+    if (pos.x < -1000.0f || pos.y < -1000.0f) return;
+
+    float dx = pos.x - mouse_x;
+    float dy = pos.y - mouse_y;
+    float dist_sq = dx * dx + dy * dy;
+
+    if (dist_sq <= radius_sq) {
+        selection_out[idx] = 1;
+    }
+}
+
+void lfs::rendering::brush_select(
+    const float2* screen_positions,
+    float mouse_x,
+    float mouse_y,
+    float radius,
+    uint8_t* selection_out,
+    int n_primitives) {
+
+    if (n_primitives <= 0) return;
+
+    constexpr int block_size = 256;
+    int grid_size = (n_primitives + block_size - 1) / block_size;
+
+    brush_select_kernel<<<grid_size, block_size>>>(
+        screen_positions,
+        mouse_x,
+        mouse_y,
+        radius * radius,  // Pass squared radius to avoid sqrt in kernel
+        selection_out,
+        n_primitives);
+}
+
 // sorting is done separately for depth and tile as proposed in https://github.com/m-schuetz/Splatshop
 void lfs::rendering::forward(
     std::function<char*(size_t)> per_primitive_buffers_func,
@@ -26,6 +102,7 @@ void lfs::rendering::forward(
     const float3* cam_position,
     float* image,
     float* alpha,
+    float* depth,
     const int n_primitives,
     const int active_sh_bases,
     const int total_bases_sh_rest,
@@ -38,7 +115,17 @@ void lfs::rendering::forward(
     const float near_, // near and far are macros in windowns
     const float far_,
     const bool show_rings,
-    const float ring_width) {
+    const float ring_width,
+    const float* model_transforms,
+    const int* transform_indices,
+    const int num_transforms,
+    const uint8_t* selection_mask,
+    float2* screen_positions_out,
+    bool brush_active,
+    float brush_x,
+    float brush_y,
+    float brush_radius,
+    bool* brush_selection_out) {
 
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
     const dim3 block(config::tile_width, config::tile_height, 1);
@@ -64,6 +151,14 @@ void lfs::rendering::forward(
     cudaMemset(per_primitive_buffers.n_visible_primitives, 0, sizeof(uint));
     cudaMemset(per_primitive_buffers.n_instances, 0, sizeof(uint));
 
+    // Initialize mean2d with invalid marker values for brush selection
+    // Only visible Gaussians will have their mean2d updated by preprocess kernel
+    if (screen_positions_out != nullptr) {
+        constexpr int init_block = 256;
+        int init_grid = (n_primitives + init_block - 1) / init_block;
+        init_mean2d_kernel<<<init_grid, init_block>>>(per_primitive_buffers.mean2d, n_primitives);
+    }
+
     kernels::forward::preprocess_cu<<<div_round_up(n_primitives, config::block_size_preprocess), config::block_size_preprocess>>>(
         means,
         scales_raw,
@@ -80,6 +175,7 @@ void lfs::rendering::forward(
         per_primitive_buffers.mean2d,
         per_primitive_buffers.conic_opacity,
         per_primitive_buffers.color,
+        per_primitive_buffers.depth,
         per_primitive_buffers.n_visible_primitives,
         per_primitive_buffers.n_instances,
         n_primitives,
@@ -94,8 +190,24 @@ void lfs::rendering::forward(
         cx,
         cy,
         near_,
-        far_);
+        far_,
+        model_transforms,
+        transform_indices,
+        num_transforms,
+        selection_mask,
+        brush_active,
+        brush_x,
+        brush_y,
+        brush_radius * brush_radius,  // Pass squared radius for efficient comparison
+        brush_selection_out);
     CHECK_CUDA(config::debug, "preprocess")
+
+
+    // Copy screen positions if requested (for brush tool selection)
+    if (screen_positions_out != nullptr) {
+        cudaMemcpy(screen_positions_out, per_primitive_buffers.mean2d,
+                   sizeof(float2) * n_primitives, cudaMemcpyDeviceToDevice);
+    }
 
     int n_visible_primitives;
     cudaMemcpy(&n_visible_primitives, per_primitive_buffers.n_visible_primitives, sizeof(uint), cudaMemcpyDeviceToHost);
@@ -165,8 +277,10 @@ void lfs::rendering::forward(
         per_primitive_buffers.mean2d,
         per_primitive_buffers.conic_opacity,
         per_primitive_buffers.color,
+        per_primitive_buffers.depth,
         image,
         alpha,
+        depth,
         width,
         height,
         grid.x,

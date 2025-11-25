@@ -32,6 +32,11 @@ namespace lfs::vis {
     // Forward declarations
     class ToolContext;
 
+    // Viewport bounds for coordinate transformations
+    struct ViewportBounds {
+        float x = 0, y = 0, width = 1920, height = 1080;
+    };
+
     // C++23 concept defining what a tool must provide
     template <typename T>
     concept Tool = requires(T t, const ToolContext& ctx, const lfs::vis::gui::UIContext& ui_ctx, bool* p_open) {
@@ -59,9 +64,15 @@ namespace lfs::vis {
         SceneManager* getSceneManager() const { return scene_manager; }
         const Viewport& getViewport() const { return *viewport; }
         GLFWwindow* getWindow() const { return window; }
+        const ViewportBounds& getViewportBounds() const { return viewport_bounds_; }
+
+        // Update viewport bounds (called by GUI manager)
+        void updateViewportBounds(float x, float y, float w, float h) {
+            viewport_bounds_ = {x, y, w, h};
+        }
 
         // Helper methods
-        void requestRender() {
+        void requestRender() const {
             if (rendering_manager) {
                 rendering_manager->markDirty();
             }
@@ -74,6 +85,7 @@ namespace lfs::vis {
         SceneManager* scene_manager;
         const Viewport* viewport;
         GLFWwindow* window;
+        ViewportBounds viewport_bounds_;
     };
 
     // Base class providing default implementations

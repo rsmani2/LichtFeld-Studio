@@ -32,7 +32,9 @@ namespace lfs::vis {
 
     namespace tools {
         class TranslationGizmoTool;
-    }
+        class BrushTool;
+        class AlignTool;
+    } // namespace tools
 
     class VisualizerImpl : public Visualizer {
     public:
@@ -86,6 +88,22 @@ namespace lfs::vis {
             return translation_gizmo_tool_.get();
         }
 
+        tools::BrushTool* getBrushTool() {
+            return brush_tool_.get();
+        }
+
+        const tools::BrushTool* getBrushTool() const {
+            return brush_tool_.get();
+        }
+
+        tools::AlignTool* getAlignTool() {
+            return align_tool_.get();
+        }
+
+        const tools::AlignTool* getAlignTool() const {
+            return align_tool_.get();
+        }
+
         std::shared_ptr<TrainerManager> trainer_manager_;
 
         // GUI manager
@@ -128,6 +146,8 @@ namespace lfs::vis {
 
         // Tools
         std::shared_ptr<tools::TranslationGizmoTool> translation_gizmo_tool_;
+        std::shared_ptr<tools::BrushTool> brush_tool_;
+        std::shared_ptr<tools::AlignTool> align_tool_;
         std::unique_ptr<ToolContext> tool_context_;
 
         // State tracking

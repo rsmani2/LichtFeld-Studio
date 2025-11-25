@@ -55,7 +55,9 @@ namespace lfs::vis::tools {
         // Settings
         float gizmo_scale_ = 1.0f;
         bool show_in_viewport_ = true;
-        bool apply_to_world_ = true; // Apply to world transform vs object transform
+
+        // Transform mode: true = world transform, false = selected node transform
+        bool apply_to_world_ = false; // Default to node transform mode
 
         // Store context for UI updates
         const ToolContext* tool_context_ = nullptr;
@@ -64,6 +66,8 @@ namespace lfs::vis::tools {
         glm::mat4 getViewMatrix(const ToolContext& ctx) const;
         glm::mat4 getProjectionMatrix(const ToolContext& ctx) const;
         void updateWorldTransform(const ToolContext& ctx);
+        void updateNodeTransform(const ToolContext& ctx);
+        void syncFromSelectedNode(const ToolContext& ctx);
     };
 
 } // namespace lfs::vis::tools

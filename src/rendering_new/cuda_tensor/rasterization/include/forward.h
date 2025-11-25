@@ -5,9 +5,23 @@
 #pragma once
 
 #include "helper_math.h"
+#include <cstdint>
 #include <functional>
 
 namespace lfs::rendering {
+
+    // Brush selection: mark Gaussians within radius of mouse position
+    // screen_positions: [N, 2] from previous render
+    // mouse_x, mouse_y: mouse position in image coords (0 to width, 0 to height)
+    // radius: brush radius in pixels
+    // selection_out: [N] uint8_t, 1 = selected
+    void brush_select(
+        const float2* screen_positions,
+        float mouse_x,
+        float mouse_y,
+        float radius,
+        uint8_t* selection_out,
+        int n_primitives);
 
     void forward(
         std::function<char*(size_t)> per_primitive_buffers_func,
@@ -22,6 +36,7 @@ namespace lfs::rendering {
         const float3* cam_position,
         float* image,
         float* alpha,
+        float* depth,
         const int n_primitives,
         const int active_sh_bases,
         const int total_bases_sh_rest,
@@ -34,6 +49,17 @@ namespace lfs::rendering {
         const float near,
         const float far,
         const bool show_rings = false,
-        const float ring_width = 0.002f);
+        const float ring_width = 0.002f,
+        const float* model_transforms = nullptr,    // Array of 4x4 transforms (row-major), one per node
+        const int* transform_indices = nullptr,     // Per-Gaussian index into transforms array [N]
+        const int num_transforms = 0,               // Number of transforms in array
+        const uint8_t* selection_mask = nullptr,    // Per-Gaussian selection mask [N], 1=selected (yellow)
+        float2* screen_positions_out = nullptr,     // Optional output: screen positions [N, 2] for brush tool
+        // Brush selection (computed in preprocess for coordinate consistency)
+        bool brush_active = false,                  // Whether brush selection is active this frame
+        float brush_x = 0.0f,                       // Brush center X in screen coords
+        float brush_y = 0.0f,                       // Brush center Y in screen coords
+        float brush_radius = 0.0f,                  // Brush radius in pixels
+        bool* brush_selection_out = nullptr);       // Output: Gaussians within brush radius [N]
 
 }

@@ -76,6 +76,50 @@ namespace lfs::rendering {
             LOG_TRACE("Using crop box for rendering");
         }
 
+        // Create model transforms tensor if provided
+        std::unique_ptr<Tensor> model_transforms_tensor;
+        if (!request.model_transforms.empty()) {
+            // Convert vector of glm::mat4 to row-major float array for CUDA kernel
+            // GLM is column-major, kernel expects row-major
+            std::vector<float> transform_data(request.model_transforms.size() * 16);
+            for (size_t i = 0; i < request.model_transforms.size(); ++i) {
+                const auto& mat = request.model_transforms[i];
+                for (int row = 0; row < 4; ++row) {
+                    for (int col = 0; col < 4; ++col) {
+                        transform_data[i * 16 + row * 4 + col] = mat[col][row];  // Transpose column to row major
+                    }
+                }
+            }
+            model_transforms_tensor = std::make_unique<Tensor>(
+                Tensor::from_vector(transform_data,
+                                   {request.model_transforms.size(), 4, 4},
+                                   lfs::core::Device::CPU).cuda());
+        }
+
+        // Get transform indices pointer (already a tensor, just need to ensure it's on CUDA)
+        std::unique_ptr<Tensor> transform_indices_cuda;
+        Tensor* transform_indices_ptr = nullptr;
+        if (request.transform_indices && request.transform_indices->is_valid()) {
+            if (request.transform_indices->device() == lfs::core::Device::CUDA) {
+                transform_indices_ptr = request.transform_indices.get();
+            } else {
+                transform_indices_cuda = std::make_unique<Tensor>(request.transform_indices->cuda());
+                transform_indices_ptr = transform_indices_cuda.get();
+            }
+        }
+
+        // Get selection mask pointer (already a tensor, just need to ensure it's on CUDA)
+        std::unique_ptr<Tensor> selection_mask_cuda;
+        Tensor* selection_mask_ptr = nullptr;
+        if (request.selection_mask && request.selection_mask->is_valid()) {
+            if (request.selection_mask->device() == lfs::core::Device::CUDA) {
+                selection_mask_ptr = request.selection_mask.get();
+            } else {
+                selection_mask_cuda = std::make_unique<Tensor>(request.selection_mask->cuda());
+                selection_mask_ptr = selection_mask_cuda.get();
+            }
+        }
+
         try {
             if (request.sh_degree != model.get_active_sh_degree()) {
                 // Temporarily set sh_degree for rendering, then immediately restore
@@ -89,9 +133,19 @@ namespace lfs::rendering {
 
                 LOG_TRACE("Using TENSOR_NATIVE backend (sh_degree temporarily changed from {} to {})",
                          original_sh_degree, request.sh_degree);
-                result.image = rasterize_tensor(cam, const_cast<lfs::core::SplatData&>(model), background_,
-                                                request.show_rings, request.ring_width);
-                result.depth = Tensor::empty({0}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
+                Tensor screen_positions;
+                auto [image, depth] = rasterize_tensor(cam, const_cast<lfs::core::SplatData&>(model), background_,
+                                                request.show_rings, request.ring_width,
+                                                model_transforms_tensor.get(), transform_indices_ptr,
+                                                selection_mask_ptr,
+                                                request.output_screen_positions ? &screen_positions : nullptr,
+                                                request.brush_active, request.brush_x, request.brush_y, request.brush_radius,
+                                                request.brush_selection_tensor);
+                result.image = std::move(image);
+                result.depth = std::move(depth);
+                if (request.output_screen_positions) {
+                    result.screen_positions = std::move(screen_positions);
+                }
 
                 // IMMEDIATELY restore original sh_degree
                 const_cast<lfs::core::SplatData&>(model).set_active_sh_degree(original_sh_degree);
@@ -111,9 +165,19 @@ namespace lfs::rendering {
 
             // Use libtorch-free tensor-based rasterizer
             LOG_TRACE("Using TENSOR_NATIVE backend (libtorch-free rasterizer)");
-            result.image = rasterize_tensor(cam, mutable_model, background_,
-                                            request.show_rings, request.ring_width);
-            result.depth = Tensor::empty({0}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
+            Tensor screen_positions;
+            auto [image, depth] = rasterize_tensor(cam, mutable_model, background_,
+                                            request.show_rings, request.ring_width,
+                                            model_transforms_tensor.get(), transform_indices_ptr,
+                                            selection_mask_ptr,
+                                            request.output_screen_positions ? &screen_positions : nullptr,
+                                            request.brush_active, request.brush_x, request.brush_y, request.brush_radius,
+                                            request.brush_selection_tensor);
+            result.image = std::move(image);
+            result.depth = std::move(depth);
+            if (request.output_screen_positions) {
+                result.screen_positions = std::move(screen_positions);
+            }
             result.valid = true;
 
             LOG_TRACE("Rasterization completed successfully");

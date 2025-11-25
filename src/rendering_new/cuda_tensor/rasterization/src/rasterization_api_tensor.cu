@@ -33,7 +33,7 @@ namespace lfs::rendering {
         }
     }
 
-    std::tuple<Tensor, Tensor>
+    std::tuple<Tensor, Tensor, Tensor>
     forward_wrapper_tensor(
         const Tensor& means,
         const Tensor& scales_raw,
@@ -53,7 +53,16 @@ namespace lfs::rendering {
         const float near_plane,
         const float far_plane,
         const bool show_rings,
-        const float ring_width) {
+        const float ring_width,
+        const Tensor* model_transforms,
+        const Tensor* transform_indices,
+        const Tensor* selection_mask,
+        Tensor* screen_positions_out,
+        bool brush_active,
+        float brush_x,
+        float brush_y,
+        float brush_radius,
+        Tensor* brush_selection_out) {
 
         check_tensor_input(config::debug, means, "means");
         check_tensor_input(config::debug, scales_raw, "scales_raw");
@@ -68,6 +77,8 @@ namespace lfs::rendering {
         Tensor image = Tensor::empty({3, static_cast<size_t>(height), static_cast<size_t>(width)},
                                      lfs::core::Device::CUDA, lfs::core::DataType::Float32);
         Tensor alpha = Tensor::empty({1, static_cast<size_t>(height), static_cast<size_t>(width)},
+                                     lfs::core::Device::CUDA, lfs::core::DataType::Float32);
+        Tensor depth = Tensor::empty({1, static_cast<size_t>(height), static_cast<size_t>(width)},
                                      lfs::core::Device::CUDA, lfs::core::DataType::Float32);
 
         // Coordinate with training: wait for training, use shared arena
@@ -84,6 +95,47 @@ namespace lfs::rendering {
         Tensor w2c_contig = w2c.is_contiguous() ? w2c : w2c.contiguous();
         Tensor cam_pos_contig = cam_position.is_contiguous() ? cam_position : cam_position.contiguous();
 
+        // Prepare model transforms array pointer
+        const float* model_transforms_ptr = nullptr;
+        Tensor model_transforms_contig;
+        int num_transforms = 0;
+        if (model_transforms != nullptr && model_transforms->is_valid() && model_transforms->numel() > 0) {
+            model_transforms_contig = model_transforms->is_contiguous() ? *model_transforms : model_transforms->contiguous();
+            model_transforms_ptr = model_transforms_contig.ptr<float>();
+            // Transforms are stored as [num_transforms, 4, 4] or flat [num_transforms * 16]
+            num_transforms = static_cast<int>(model_transforms_contig.numel() / 16);
+        }
+
+        // Prepare transform indices pointer
+        const int* transform_indices_ptr = nullptr;
+        Tensor transform_indices_contig;
+        if (transform_indices != nullptr && transform_indices->is_valid() && transform_indices->numel() > 0) {
+            transform_indices_contig = transform_indices->is_contiguous() ? *transform_indices : transform_indices->contiguous();
+            transform_indices_ptr = transform_indices_contig.ptr<int>();
+        }
+
+        // Prepare selection mask pointer
+        const uint8_t* selection_mask_ptr = nullptr;
+        Tensor selection_mask_contig;
+        if (selection_mask != nullptr && selection_mask->is_valid() && selection_mask->numel() > 0) {
+            selection_mask_contig = selection_mask->is_contiguous() ? *selection_mask : selection_mask->contiguous();
+            selection_mask_ptr = selection_mask_contig.ptr<uint8_t>();
+        }
+
+        // Prepare screen positions output buffer if requested
+        float2* screen_positions_ptr = nullptr;
+        if (screen_positions_out != nullptr) {
+            *screen_positions_out = Tensor::empty({static_cast<size_t>(n_primitives), 2},
+                                                   lfs::core::Device::CUDA, lfs::core::DataType::Float32);
+            screen_positions_ptr = reinterpret_cast<float2*>(screen_positions_out->ptr<float>());
+        }
+
+        // Get brush selection buffer pointer (tensor owned by caller)
+        bool* brush_selection_ptr = nullptr;
+        if (brush_active && brush_selection_out != nullptr && brush_selection_out->is_valid()) {
+            brush_selection_ptr = brush_selection_out->ptr<bool>();
+        }
+
         forward(
             per_primitive_buffers_func,
             per_tile_buffers_func,
@@ -98,6 +150,7 @@ namespace lfs::rendering {
             reinterpret_cast<const float3*>(cam_pos_contig.ptr<float>()),
             image.ptr<float>(),
             alpha.ptr<float>(),
+            depth.ptr<float>(),
             n_primitives,
             active_sh_bases,
             total_bases_sh_rest,
@@ -110,12 +163,42 @@ namespace lfs::rendering {
             near_plane,
             far_plane,
             show_rings,
-            ring_width);
+            ring_width,
+            model_transforms_ptr,
+            transform_indices_ptr,
+            num_transforms,
+            selection_mask_ptr,
+            screen_positions_ptr,
+            brush_active,
+            brush_x,
+            brush_y,
+            brush_radius,
+            brush_selection_ptr);
 
         arena.end_frame(frame_id, true);  // true = from_rendering
         arena.set_rendering_active(false);
 
-        return {std::move(image), std::move(alpha)};
+        return {std::move(image), std::move(alpha), std::move(depth)};
+    }
+
+    void brush_select_tensor(
+        const Tensor& screen_positions,
+        float mouse_x,
+        float mouse_y,
+        float radius,
+        Tensor& selection_out) {
+
+        if (!screen_positions.is_valid() || screen_positions.size(0) == 0) return;
+
+        int n_primitives = static_cast<int>(screen_positions.size(0));
+
+        brush_select(
+            reinterpret_cast<const float2*>(screen_positions.ptr<float>()),
+            mouse_x,
+            mouse_y,
+            radius,
+            selection_out.ptr<uint8_t>(),
+            n_primitives);
     }
 
 } // namespace lfs::rendering

@@ -18,7 +18,9 @@ namespace lfs::vis {
     // Forward declarations
     namespace tools {
         class TranslationGizmoTool;
-    }
+        class BrushTool;
+        class AlignTool;
+    } // namespace tools
     class ToolContext;
     class RenderingManager;
 
@@ -38,6 +40,16 @@ namespace lfs::vis {
         // Set translation gizmo tool
         void setTranslationGizmoTool(std::shared_ptr<tools::TranslationGizmoTool> tool) {
             translation_gizmo_ = tool;
+        }
+
+        // Set brush tool
+        void setBrushTool(std::shared_ptr<tools::BrushTool> tool) {
+            brush_tool_ = tool;
+        }
+
+        // Set align tool
+        void setAlignTool(std::shared_ptr<tools::AlignTool> tool) {
+            align_tool_ = tool;
         }
 
         // Set tool context for gizmo
@@ -113,6 +125,8 @@ namespace lfs::vis {
 
         // Tool support
         std::shared_ptr<tools::TranslationGizmoTool> translation_gizmo_;
+        std::shared_ptr<tools::BrushTool> brush_tool_;
+        std::shared_ptr<tools::AlignTool> align_tool_;
         ToolContext* tool_context_ = nullptr;
 
         // Viewport bounds for focus detection
@@ -127,7 +141,8 @@ namespace lfs::vis {
             Rotate,
             Orbit,
             Gizmo,
-            Splitter
+            Splitter,
+            Brush
         };
         DragMode drag_mode_ = DragMode::None;
         glm::dvec2 last_mouse_pos_{0, 0};

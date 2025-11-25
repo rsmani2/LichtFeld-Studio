@@ -70,10 +70,6 @@ namespace lfs::vis {
         bool show_rings = false;
         float ring_width = 0.002f; // Width of the ring band (0.001 to 0.01)
 
-        // Translation gizmo
-        bool show_translation_gizmo = false;
-        float gizmo_scale = 1.0f;
-
         // Camera frustums
         bool show_camera_frustums = false;
         float camera_frustum_scale = 0.25f;
@@ -188,6 +184,23 @@ namespace lfs::vis {
         void setHoveredCameraId(int cam_id) { hovered_camera_id_ = cam_id; }
         int getHoveredCameraId() const { return hovered_camera_id_; }
 
+        // Depth buffer access for tools (returns camera-space depth at pixel, or -1 if invalid)
+        float getDepthAtPixel(int x, int y) const;
+        const lfs::rendering::RenderResult& getCachedResult() const { return cached_result_; }
+
+        // Screen positions output for brush tool
+        void setOutputScreenPositions(bool enable) { output_screen_positions_ = enable; }
+        bool getOutputScreenPositions() const { return output_screen_positions_; }
+        std::shared_ptr<lfs::core::Tensor> getScreenPositions() const { return cached_result_.screen_positions; }
+
+        // Brush selection on GPU - mouse_x/y in image coords (not window coords!)
+        void brushSelect(float mouse_x, float mouse_y, float radius, lfs::core::Tensor& selection_out);
+
+        // Brush selection state (computed during preprocess for coordinate consistency)
+        // selection_tensor is the cumulative selection that the kernel writes into
+        void setBrushState(bool active, float x, float y, float radius, lfs::core::Tensor* selection_tensor = nullptr);
+        void clearBrushState();
+
     private:
         void doFullRender(const RenderContext& context, SceneManager* scene_manager, const lfs::core::SplatData* model);
         void renderOverlays(const RenderContext& context);
@@ -241,6 +254,16 @@ namespace lfs::vis {
         // Debug tracking
         uint64_t render_count_ = 0;
         uint64_t pick_count_ = 0;
+
+        // Screen positions output flag
+        bool output_screen_positions_ = false;
+
+        // Brush state for preprocess-based selection
+        bool brush_active_ = false;
+        float brush_x_ = 0.0f;
+        float brush_y_ = 0.0f;
+        float brush_radius_ = 0.0f;
+        lfs::core::Tensor* brush_selection_tensor_ = nullptr;  // Cumulative selection tensor (owned by BrushTool)
     };
 
 } // namespace lfs::vis

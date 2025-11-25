@@ -78,6 +78,14 @@ namespace lfs::vis {
         cmd::RenamePLY::when([this](const auto& cmd) {
             handleRenamePly(cmd);
         });
+
+        // Handle node selection from scene panel
+        ui::NodeSelected::when([this](const auto& event) {
+            if (event.type == "PLY") {
+                // Select the node for transforms
+                selectNode(event.path);
+            }
+        });
     }
 
     void SceneManager::changeContentType(const ContentType& type) {
@@ -270,6 +278,132 @@ namespace lfs::vis {
         LOG_TRACE("Setting '{}' visibility to: {}", name, visible);
         scene_.setNodeVisibility(name, visible);
         emitSceneChanged();
+    }
+
+    // ========== Node Selection ==========
+
+    void SceneManager::selectNode(const std::string& name) {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (scene_.getNode(name) != nullptr) {
+            selected_node_ = name;
+            LOG_INFO("Selected node: '{}'", name);
+        } else {
+            LOG_WARN("Cannot select node '{}' - not found", name);
+        }
+    }
+
+    void SceneManager::clearSelection() {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        selected_node_.clear();
+        LOG_TRACE("Cleared node selection");
+    }
+
+    std::string SceneManager::getSelectedNodeName() const {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        return selected_node_;
+    }
+
+    bool SceneManager::hasSelectedNode() const {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        return !selected_node_.empty() && scene_.getNode(selected_node_) != nullptr;
+    }
+
+    // ========== Node Transforms ==========
+
+    void SceneManager::setNodeTransform(const std::string& name, const glm::mat4& transform) {
+        scene_.setNodeTransform(name, transform);
+        emitSceneChanged();
+    }
+
+    glm::mat4 SceneManager::getNodeTransform(const std::string& name) const {
+        return scene_.getNodeTransform(name);
+    }
+
+    void SceneManager::setSelectedNodeTranslation(const glm::vec3& translation) {
+        std::string node_name;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            node_name = selected_node_;
+        }
+
+        if (node_name.empty()) {
+            LOG_TRACE("No node selected for translation");
+            return;
+        }
+
+        // Create translation matrix
+        glm::mat4 transform = glm::mat4(1.0f);
+        transform[3][0] = translation.x;
+        transform[3][1] = translation.y;
+        transform[3][2] = translation.z;
+
+        scene_.setNodeTransform(node_name, transform);
+        emitSceneChanged();
+    }
+
+    glm::vec3 SceneManager::getSelectedNodeTranslation() const {
+        std::string node_name;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            node_name = selected_node_;
+        }
+
+        if (node_name.empty()) {
+            return glm::vec3(0.0f);
+        }
+
+        glm::mat4 transform = scene_.getNodeTransform(node_name);
+        return glm::vec3(transform[3][0], transform[3][1], transform[3][2]);
+    }
+
+    glm::vec3 SceneManager::getSelectedNodeCentroid() const {
+        std::string node_name;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            node_name = selected_node_;
+        }
+
+        if (node_name.empty()) {
+            return glm::vec3(0.0f);
+        }
+
+        // Get the node - centroid is pre-cached when model was loaded
+        const auto* node = scene_.getNode(node_name);
+        if (!node || !node->model) {
+            return glm::vec3(0.0f);
+        }
+
+        return node->centroid;
+    }
+
+    void SceneManager::setSelectedNodeTransform(const glm::mat4& transform) {
+        std::string node_name;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            node_name = selected_node_;
+        }
+
+        if (node_name.empty()) {
+            LOG_TRACE("No node selected for transform");
+            return;
+        }
+
+        scene_.setNodeTransform(node_name, transform);
+        emitSceneChanged();
+    }
+
+    glm::mat4 SceneManager::getSelectedNodeTransform() const {
+        std::string node_name;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            node_name = selected_node_;
+        }
+
+        if (node_name.empty()) {
+            return glm::mat4(1.0f);
+        }
+
+        return scene_.getNodeTransform(node_name);
     }
 
     void SceneManager::loadDataset(const std::filesystem::path& path,

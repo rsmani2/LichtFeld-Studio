@@ -9,12 +9,21 @@
 
 namespace lfs::rendering {
 
-    Tensor rasterize_tensor(
+    std::tuple<Tensor, Tensor> rasterize_tensor(
         const lfs::core::Camera& viewpoint_camera,
         const lfs::core::SplatData& gaussian_model,
         const Tensor& bg_color,
         bool show_rings,
-        float ring_width) {
+        float ring_width,
+        const Tensor* model_transforms,
+        const Tensor* transform_indices,
+        const Tensor* selection_mask,
+        Tensor* screen_positions_out,
+        bool brush_active,
+        float brush_x,
+        float brush_y,
+        float brush_radius,
+        Tensor* brush_selection_out) {
 
         // Get camera parameters
         float fx = viewpoint_camera.focal_x();
@@ -73,7 +82,7 @@ namespace lfs::rendering {
         const auto& shN = gaussian_model.shN_raw();
 
         // Call the tensor-based forward wrapper
-        auto [image, alpha] = forward_wrapper_tensor(
+        auto [image, alpha, depth] = forward_wrapper_tensor(
             means,
             scales_raw,
             rotations_raw,
@@ -92,7 +101,16 @@ namespace lfs::rendering {
             near_plane,
             far_plane,
             show_rings,
-            ring_width);
+            ring_width,
+            model_transforms,
+            transform_indices,
+            selection_mask,
+            screen_positions_out,
+            brush_active,
+            brush_x,
+            brush_y,
+            brush_radius,
+            brush_selection_out);
 
         // Manually blend the background since the forward pass does not support it
         // bg_color is [3], need to make it [3, 1, 1]
@@ -111,7 +129,7 @@ namespace lfs::rendering {
                   viewpoint_camera.camera_width(),
                   viewpoint_camera.camera_height());
 
-        return blended_image;
+        return {std::move(blended_image), std::move(depth)};
     }
 
 } // namespace lfs::rendering

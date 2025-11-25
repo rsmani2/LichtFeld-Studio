@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core_new/events.hpp"
+#include "gui/panels/gizmo_toolbar.hpp"
 #include "gui/panels/menu_bar.hpp"
 #include "gui/ui_context.hpp"
 #include "gui/windows/save_project_browser.hpp"
@@ -103,9 +104,17 @@ namespace lfs::vis {
             void renderSpeedOverlay();
             void showSpeedOverlay(float current_speed, float max_speed);
             void renderCropBoxGizmo(const UIContext& ctx);
+            void renderNodeTransformGizmo(const UIContext& ctx);
 
             std::unique_ptr<SaveProjectBrowser> save_project_browser_;
             std::unique_ptr<MenuBar> menu_bar_;
+
+            // Node transform gizmo state
+            bool show_node_gizmo_ = true;
+            ImGuizmo::OPERATION node_gizmo_operation_ = ImGuizmo::TRANSLATE;
+
+            // Gizmo toolbar state
+            panels::GizmoToolbarState gizmo_toolbar_state_;
         };
     } // namespace gui
 } // namespace lfs::vis

@@ -34,10 +34,14 @@ namespace lfs::rendering {
      * @param far_plane Far clipping plane
      * @param show_rings Enable ring mode visualization
      * @param ring_width Width of the ring band
+     * @param model_transforms Array of 4x4 transforms [num_transforms, 4, 4]
+     * @param transform_indices Per-Gaussian transform index [N]
+     * @param selection_mask Per-Gaussian selection mask [N] (uint8, 1=selected/yellow)
+     * @param screen_positions_out Optional output: screen positions [N, 2] for brush tool
      *
-     * @return Tuple of (rendered_image [3, H, W], alpha_map [1, H, W])
+     * @return Tuple of (rendered_image [3, H, W], alpha_map [1, H, W], depth_map [1, H, W])
      */
-    std::tuple<Tensor, Tensor>
+    std::tuple<Tensor, Tensor, Tensor>
     forward_wrapper_tensor(
         const Tensor& means,
         const Tensor& scales_raw,
@@ -57,6 +61,32 @@ namespace lfs::rendering {
         const float near_plane,
         const float far_plane,
         const bool show_rings = false,
-        const float ring_width = 0.002f);
+        const float ring_width = 0.002f,
+        const Tensor* model_transforms = nullptr,
+        const Tensor* transform_indices = nullptr,
+        const Tensor* selection_mask = nullptr,
+        Tensor* screen_positions_out = nullptr,      // Optional output: screen positions [N, 2] for brush tool
+        // Brush selection (computed in preprocess for coordinate consistency)
+        bool brush_active = false,                   // Whether brush selection is active this frame
+        float brush_x = 0.0f,                        // Brush center X in screen coords
+        float brush_y = 0.0f,                        // Brush center Y in screen coords
+        float brush_radius = 0.0f,                   // Brush radius in pixels
+        Tensor* brush_selection_out = nullptr);      // Output: Gaussians within brush radius [N]
+
+    /**
+     * @brief Select Gaussians within brush radius using GPU
+     *
+     * @param screen_positions Screen positions [N, 2] from render
+     * @param mouse_x Mouse X in image coords
+     * @param mouse_y Mouse Y in image coords
+     * @param radius Brush radius in pixels
+     * @param selection_out Output selection mask [N] uint8
+     */
+    void brush_select_tensor(
+        const Tensor& screen_positions,
+        float mouse_x,
+        float mouse_y,
+        float radius,
+        Tensor& selection_out);
 
 } // namespace lfs::rendering

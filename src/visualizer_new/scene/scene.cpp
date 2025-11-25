@@ -6,15 +6,36 @@
 #include "core_new/logger.hpp"
 
 #include <algorithm>
+#include <cmath>
+#include <functional>
+#include <glm/gtc/quaternion.hpp>
+#include <numeric>
 #include <print>
 #include <ranges>
-#include <numeric> //accumulate
 
 namespace lfs::vis {
 
+    // Helper to compute centroid from model (GPU computation, single copy)
+    static glm::vec3 computeCentroid(const lfs::core::SplatData* model) {
+        if (!model || model->size() == 0) {
+            return glm::vec3(0.0f);
+        }
+        const auto& means = model->means_raw();
+        if (!means.is_valid() || means.size(0) == 0) {
+            return glm::vec3(0.0f);
+        }
+        // Compute mean on GPU, copy only 3 floats back
+        auto centroid_tensor = means.mean({0}, false);
+        return glm::vec3(
+            centroid_tensor.slice(0, 0, 1).item<float>(),
+            centroid_tensor.slice(0, 1, 2).item<float>(),
+            centroid_tensor.slice(0, 2, 3).item<float>());
+    }
+
     void Scene::addNode(const std::string& name, std::unique_ptr<lfs::core::SplatData> model) {
-        // Calculate gaussian count before moving
+        // Calculate gaussian count and centroid before moving
         size_t gaussian_count = static_cast<size_t>(model->size());
+        glm::vec3 centroid = computeCentroid(model.get());
 
         // Check if name already exists
         auto it = std::find_if(nodes_.begin(), nodes_.end(),
@@ -24,6 +45,7 @@ namespace lfs::vis {
             // Replace existing
             it->model = std::move(model);
             it->gaussian_count = gaussian_count;
+            it->centroid = centroid;
         } else {
             // Add new node
             Node node{
@@ -31,12 +53,14 @@ namespace lfs::vis {
                 .model = std::move(model),
                 .transform = glm::mat4(1.0f),
                 .visible = true,
-                .gaussian_count = gaussian_count};
+                .gaussian_count = gaussian_count,
+                .centroid = centroid};
             nodes_.push_back(std::move(node));
         }
 
         invalidateCache();
-        std::println("Scene: Added node '{}' with {} gaussians", name, gaussian_count);
+        std::println("Scene: Added node '{}' with {} gaussians, centroid ({:.2f}, {:.2f}, {:.2f})",
+                     name, gaussian_count, centroid.x, centroid.y, centroid.z);
     }
 
     void Scene::removeNode(const std::string& name) {
@@ -58,6 +82,26 @@ namespace lfs::vis {
             it->visible = visible;
             invalidateCache();
         }
+    }
+
+    void Scene::setNodeTransform(const std::string& name, const glm::mat4& transform) {
+        auto it = std::find_if(nodes_.begin(), nodes_.end(),
+                               [&name](const Node& node) { return node.name == name; });
+
+        if (it != nodes_.end()) {
+            it->transform = transform;
+            invalidateCache();
+        }
+    }
+
+    glm::mat4 Scene::getNodeTransform(const std::string& name) const {
+        auto it = std::find_if(nodes_.begin(), nodes_.end(),
+                               [&name](const Node& node) { return node.name == name; });
+
+        if (it != nodes_.end()) {
+            return it->transform;
+        }
+        return glm::mat4(1.0f); // Identity if not found
     }
 
     void Scene::clear() {
@@ -152,20 +196,22 @@ namespace lfs::vis {
         if (cache_valid_)
             return;
 
-        // Collect visible models using ranges
-        auto visible_models = nodes_ | std::views::filter([](const auto& node) {
-                                  return node.visible && node.model;
-                              }) |
-                              std::views::transform([](const auto& node) {
-                                  return node.model.get();
-                              }) |
-                              std::ranges::to<std::vector>();
+        // Collect visible nodes (we need both model and transform)
+        auto visible_nodes = nodes_ | std::views::filter([](const auto& node) {
+                                 return node.visible && node.model;
+                             }) |
+                             std::ranges::to<std::vector<std::reference_wrapper<const Node>>>();
 
-        if (visible_models.empty()) {
+        if (visible_nodes.empty()) {
             cached_combined_.reset();
+            cached_transform_indices_.reset();
+            cached_transforms_.clear();
             cache_valid_ = true;
             return;
         }
+
+        // All transforms are now handled by the kernel for proper covariance transformation.
+        // We just combine the raw Gaussian data and create transform indices.
 
         // Calculate totals and find max SH degree in one pass
         struct ModelStats {
@@ -176,8 +222,9 @@ namespace lfs::vis {
         };
 
         auto stats = std::accumulate(
-            visible_models.begin(), visible_models.end(), ModelStats{},
-            [](ModelStats acc, const lfs::core::SplatData* model) {
+            visible_nodes.begin(), visible_nodes.end(), ModelStats{},
+            [](ModelStats acc, const std::reference_wrapper<const Node>& node_ref) {
+                const auto* model = node_ref.get().model.get();
                 acc.total_gaussians += model->size();
 
                 // Calculate SH degree from shN dimensions
@@ -196,7 +243,7 @@ namespace lfs::vis {
             });
 
         // Get device from first model (all should be on CUDA)
-        lfs::core::Device device = visible_models[0]->means_raw().device();
+        lfs::core::Device device = visible_nodes[0].get().model->means_raw().device();
 
         // Calculate SH dimensions
         int sh0_coeffs = 1;
@@ -211,17 +258,35 @@ namespace lfs::vis {
         Tensor scaling = Tensor::empty({static_cast<size_t>(stats.total_gaussians), 3}, device);
         Tensor rotation = Tensor::empty({static_cast<size_t>(stats.total_gaussians), 4}, device);
 
-        // Copy data from each model
+        // Create transform indices tensor on CPU first (will be moved to CUDA later)
+        std::vector<int> transform_indices_data(stats.total_gaussians);
+
+        // Collect transforms for visible nodes
+        cached_transforms_.clear();
+        cached_transforms_.reserve(visible_nodes.size());
+
+        // Copy data from each node (no CPU-side transforms - kernel handles them)
         size_t offset = 0;
-        for (const auto* model : visible_models) {
+        int node_index = 0;
+        for (const auto& node_ref : visible_nodes) {
+            const auto& node = node_ref.get();
+            const auto* model = node.model.get();
             const auto size = model->size();
 
-            // Copy each tensor using slice assignment (operator= now properly handles views)
+            // Store this node's transform
+            cached_transforms_.push_back(node.transform);
+
+            // Fill transform indices for this node's Gaussians
+            std::fill(transform_indices_data.begin() + offset,
+                     transform_indices_data.begin() + offset + size,
+                     node_index);
+
+            // Direct copy of all Gaussian data (no CPU-side transform)
             means.slice(0, offset, offset + size) = model->means_raw();
-            sh0.slice(0, offset, offset + size) = model->sh0_raw();
-            opacity.slice(0, offset, offset + size) = model->opacity_raw();
             scaling.slice(0, offset, offset + size) = model->scaling_raw();
             rotation.slice(0, offset, offset + size) = model->rotation_raw();
+            sh0.slice(0, offset, offset + size) = model->sh0_raw();
+            opacity.slice(0, offset, offset + size) = model->opacity_raw();
 
             // Copy shN if we have coefficients
             if (shN_coeffs > 0) {
@@ -238,7 +303,13 @@ namespace lfs::vis {
             }
 
             offset += size;
+            node_index++;
         }
+
+        // Create transform indices tensor on CUDA
+        // from_vector for int automatically creates Int32 tensor
+        cached_transform_indices_ = std::make_shared<Tensor>(
+            Tensor::from_vector(transform_indices_data, {stats.total_gaussians}, lfs::core::Device::CPU).cuda());
 
         // Create the combined model
         cached_combined_ = std::make_unique<lfs::core::SplatData>(
@@ -249,9 +320,75 @@ namespace lfs::vis {
             std::move(scaling),
             std::move(rotation),
             std::move(opacity),
-            stats.total_scene_scale / visible_models.size());
+            stats.total_scene_scale / visible_nodes.size());
 
         cache_valid_ = true;
+    }
+
+    std::vector<glm::mat4> Scene::getVisibleNodeTransforms() const {
+        rebuildCacheIfNeeded();
+        return cached_transforms_;
+    }
+
+    std::shared_ptr<lfs::core::Tensor> Scene::getTransformIndices() const {
+        rebuildCacheIfNeeded();
+        return cached_transform_indices_;
+    }
+
+    std::shared_ptr<lfs::core::Tensor> Scene::getSelectionMask() const {
+        if (!has_selection_) {
+            return nullptr;
+        }
+        return selection_mask_;
+    }
+
+    void Scene::setSelection(const std::vector<size_t>& selected_indices) {
+        // Get total gaussian count
+        size_t total = getTotalGaussianCount();
+        if (total == 0) {
+            clearSelection();
+            return;
+        }
+
+        // Create or resize selection mask
+        if (!selection_mask_ || selection_mask_->size(0) != total) {
+            // Create new mask (all zeros on CPU first, then move to GPU)
+            selection_mask_ = std::make_shared<lfs::core::Tensor>(
+                lfs::core::Tensor::zeros({total}, lfs::core::Device::CPU, lfs::core::DataType::UInt8));
+        } else {
+            // Clear existing mask (set all to 0)
+            auto mask_cpu = selection_mask_->cpu();
+            std::memset(mask_cpu.ptr<uint8_t>(), 0, total);
+            *selection_mask_ = mask_cpu;
+        }
+
+        if (!selected_indices.empty()) {
+            auto mask_cpu = selection_mask_->cpu();
+            uint8_t* mask_data = mask_cpu.ptr<uint8_t>();
+            for (size_t idx : selected_indices) {
+                if (idx < total) {
+                    mask_data[idx] = 1;
+                }
+            }
+            *selection_mask_ = mask_cpu.cuda();
+            has_selection_ = true;
+        } else {
+            has_selection_ = false;
+        }
+    }
+
+    void Scene::setSelectionMask(std::shared_ptr<lfs::core::Tensor> mask) {
+        selection_mask_ = std::move(mask);
+        has_selection_ = selection_mask_ && selection_mask_->is_valid() && selection_mask_->numel() > 0;
+    }
+
+    void Scene::clearSelection() {
+        selection_mask_.reset();
+        has_selection_ = false;
+    }
+
+    bool Scene::hasSelection() const {
+        return has_selection_;
     }
 
     bool Scene::renameNode(const std::string& old_name, const std::string& new_name) {

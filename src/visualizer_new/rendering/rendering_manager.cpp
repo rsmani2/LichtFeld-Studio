@@ -8,6 +8,7 @@
 #include "core_new/logger.hpp"
 #include "core_new/splat_data.hpp"
 #include "geometry_new/euclidean_transform.hpp"
+#include "rendering_new/cuda_tensor/rasterization/include/rasterization_api_tensor.h"
 #include "rendering_new/rendering.hpp"
 #include "scene/scene_manager.hpp"
 #include "training/training_manager.hpp"
@@ -537,6 +538,16 @@ namespace lfs::vis {
             viewport_data.translation = glm::transpose(world_rot) * (viewport_data.translation - world_trans);
         }
 
+        // Get transforms and indices from scene for kernel-based transform
+        std::vector<glm::mat4> model_transforms;
+        std::shared_ptr<lfs::core::Tensor> transform_indices;
+        std::shared_ptr<lfs::core::Tensor> selection_mask;
+        if (scene_manager) {
+            model_transforms = scene_manager->getScene().getVisibleNodeTransforms();
+            transform_indices = scene_manager->getScene().getTransformIndices();
+            selection_mask = scene_manager->getScene().getSelectionMask();
+        }
+
         lfs::rendering::RenderRequest request{
             .viewport = viewport_data,
             .scaling_modifier = settings_.scaling_modifier,
@@ -548,7 +559,16 @@ namespace lfs::vis {
             .voxel_size = settings_.voxel_size,
             .gut = settings_.gut,
             .show_rings = settings_.show_rings,
-            .ring_width = settings_.ring_width};
+            .ring_width = settings_.ring_width,
+            .model_transforms = std::move(model_transforms),
+            .transform_indices = transform_indices,
+            .selection_mask = selection_mask,
+            .output_screen_positions = output_screen_positions_,
+            .brush_active = brush_active_,
+            .brush_x = brush_x_,
+            .brush_y = brush_y_,
+            .brush_radius = brush_radius_,
+            .brush_selection_tensor = brush_selection_tensor_};
 
         // Add crop box if enabled
         if (settings_.use_crop_box) {
@@ -679,10 +699,15 @@ namespace lfs::vis {
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Set viewport region for rendering
+        // Note: OpenGL Y=0 is at bottom, ImGui Y=0 is at top, so we need to flip
+        // This glViewport affects the rasterizer's coordinate system for brush selection
         if (context.viewport_region) {
+            GLint gl_y = context.viewport.frameBufferSize.y
+                         - static_cast<GLint>(context.viewport_region->y)
+                         - static_cast<GLint>(context.viewport_region->height);
             glViewport(
                 static_cast<GLint>(context.viewport_region->x),
-                static_cast<GLint>(context.viewport_region->y),
+                gl_y,
                 static_cast<GLsizei>(context.viewport_region->width),
                 static_cast<GLsizei>(context.viewport_region->height));
         }
@@ -694,9 +719,13 @@ namespace lfs::vis {
             glm::ivec2 render_size = current_size;
 
             if (context.viewport_region) {
+                // Convert ImGui Y (top=0) to OpenGL Y (bottom=0)
+                int gl_y = context.viewport.frameBufferSize.y
+                           - static_cast<int>(context.viewport_region->y)
+                           - static_cast<int>(context.viewport_region->height);
                 viewport_pos = glm::ivec2(
                     static_cast<int>(context.viewport_region->x),
-                    static_cast<int>(context.viewport_region->y));
+                    gl_y);
             }
 
             engine_->presentToScreen(cached_result_, viewport_pos, render_size);
@@ -758,9 +787,13 @@ namespace lfs::vis {
                 // Blit the texture to screen
                 glm::ivec2 viewport_pos(0, 0);
                 if (context.viewport_region) {
+                    // Convert ImGui Y (top=0) to OpenGL Y (bottom=0)
+                    int gl_y = context.viewport.frameBufferSize.y
+                               - static_cast<int>(context.viewport_region->y)
+                               - static_cast<int>(context.viewport_region->height);
                     viewport_pos = glm::ivec2(
                         static_cast<int>(context.viewport_region->x),
-                        static_cast<int>(context.viewport_region->y));
+                        gl_y);
                 }
 
                 auto present_result = engine_->presentToScreen(
@@ -1096,13 +1129,62 @@ namespace lfs::vis {
             }
         }
 
-        // Translation gizmo (render last so it's on top)
-        if (settings_.show_translation_gizmo && engine_) {
-            glm::vec3 gizmo_pos = settings_.world_transform.getTranslation();
-            auto gizmo_result = engine_->renderTranslationGizmo(gizmo_pos, viewport, settings_.gizmo_scale);
-            if (!gizmo_result) {
-                LOG_WARN("Failed to render translation gizmo: {}", gizmo_result.error());
-            }
-        }
     }
+
+    float RenderingManager::getDepthAtPixel(int x, int y) const {
+        if (!cached_result_.valid || !cached_result_.depth || !cached_result_.depth->is_valid()) {
+            return -1.0f;
+        }
+
+        const auto& depth = *cached_result_.depth;
+        // depth is [1, H, W]
+        if (depth.ndim() != 3) {
+            return -1.0f;
+        }
+
+        int height = static_cast<int>(depth.size(1));
+        int width = static_cast<int>(depth.size(2));
+
+        if (x < 0 || x >= width || y < 0 || y >= height) {
+            return -1.0f;
+        }
+
+        // Copy single pixel from GPU to CPU
+        auto depth_cpu = depth.cpu();
+        const float* data = depth_cpu.ptr<float>();
+        float d = data[y * width + x];
+
+        // Check for invalid depth (large value means no hit)
+        if (d > 1e9f) {
+            return -1.0f;
+        }
+
+        return d;
+    }
+
+    void RenderingManager::brushSelect(float mouse_x, float mouse_y, float radius, lfs::core::Tensor& selection_out) {
+        if (!cached_result_.screen_positions || !cached_result_.screen_positions->is_valid()) {
+            return;
+        }
+        lfs::rendering::brush_select_tensor(*cached_result_.screen_positions, mouse_x, mouse_y, radius, selection_out);
+    }
+
+    void RenderingManager::setBrushState(bool active, float x, float y, float radius, lfs::core::Tensor* selection_tensor) {
+        brush_active_ = active;
+        brush_x_ = x;
+        brush_y_ = y;
+        brush_radius_ = radius;
+        brush_selection_tensor_ = selection_tensor;
+        markDirty();  // Need to re-render with brush selection
+    }
+
+    void RenderingManager::clearBrushState() {
+        brush_active_ = false;
+        brush_x_ = 0.0f;
+        brush_y_ = 0.0f;
+        brush_radius_ = 0.0f;
+        brush_selection_tensor_ = nullptr;
+        // Don't mark dirty - clearing brush doesn't need immediate re-render
+    }
+
 } // namespace lfs::vis

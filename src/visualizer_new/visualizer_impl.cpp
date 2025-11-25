@@ -6,6 +6,8 @@
 #include "core/data_loading_service.hpp"
 #include "core_new/logger.hpp"
 #include "scene/scene_manager.hpp"
+#include "tools/align_tool.hpp"
+#include "tools/brush_tool.hpp"
 #include "tools/translation_gizmo_tool.hpp"
 #include <stdexcept>
 #ifdef WIN32
@@ -60,6 +62,7 @@ namespace lfs::vis {
     VisualizerImpl::~VisualizerImpl() {
         trainer_manager_.reset();
         translation_gizmo_tool_.reset();
+        brush_tool_.reset();
         tool_context_.reset();
         if (gui_manager_) {
             gui_manager_->shutdown();
@@ -94,6 +97,22 @@ namespace lfs::vis {
                 input_controller_->setToolContext(tool_context_.get());
             }
             LOG_DEBUG("Translation gizmo tool initialized successfully");
+        }
+
+        brush_tool_ = std::make_shared<tools::BrushTool>();
+        if (!brush_tool_->initialize(*tool_context_)) {
+            LOG_ERROR("Failed to initialize brush tool");
+            brush_tool_.reset();
+        } else if (input_controller_) {
+            input_controller_->setBrushTool(brush_tool_);
+        }
+
+        align_tool_ = std::make_shared<tools::AlignTool>();
+        if (!align_tool_->initialize(*tool_context_)) {
+            LOG_ERROR("Failed to initialize align tool");
+            align_tool_.reset();
+        } else if (input_controller_) {
+            input_controller_->setAlignTool(align_tool_);
         }
 
         tools_initialized_ = true;
@@ -295,6 +314,10 @@ namespace lfs::vis {
         if (translation_gizmo_tool_ && translation_gizmo_tool_->isEnabled() && tool_context_) {
             translation_gizmo_tool_->update(*tool_context_);
         }
+
+        if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
+            brush_tool_->update(*tool_context_);
+        }
     }
 
     void VisualizerImpl::render() {
@@ -312,6 +335,9 @@ namespace lfs::vis {
             auto pos = gui_manager_->getViewportPos();
             auto size = gui_manager_->getViewportSize();
             input_controller_->updateViewportBounds(pos.x, pos.y, size.x, size.y);
+            if (tool_context_) {
+                tool_context_->updateViewportBounds(pos.x, pos.y, size.x, size.y);
+            }
         }
 
         // Update point cloud mode in input controller
@@ -404,6 +430,11 @@ namespace lfs::vis {
         if (translation_gizmo_tool_) {
             translation_gizmo_tool_->shutdown();
             translation_gizmo_tool_.reset();
+        }
+
+        if (brush_tool_) {
+            brush_tool_->shutdown();
+            brush_tool_.reset();
         }
 
         // Clean up tool context

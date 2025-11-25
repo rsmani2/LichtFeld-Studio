@@ -21,6 +21,9 @@
 #include "gui/windows/project_changed_dialog_box.hpp"
 
 #include "internal/resource_paths.hpp"
+#include "tools/align_tool.hpp"
+#include "tools/brush_tool.hpp"
+#include "tools/translation_gizmo_tool.hpp"
 #include "visualizer_impl.hpp"
 
 #include <chrono>
@@ -193,6 +196,9 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::shutdown() {
+        // Cleanup toolbar textures
+        panels::ShutdownGizmoToolbar(gizmo_toolbar_state_);
+
         if (ImGui::GetCurrentContext()) {
             ImGui_ImplOpenGL3_Shutdown();
             ImGui_ImplGlfw_Shutdown();
@@ -376,8 +382,43 @@ namespace lfs::vis::gui {
             menu_bar_->setIsProjectTemp(project ? project->getIsTempProject() : false);
         }
 
+        // Render gizmo toolbar (only when a node is selected)
+        auto* scene_manager = ctx.viewer->getSceneManager();
+        if (scene_manager && scene_manager->hasSelectedNode()) {
+            panels::DrawGizmoToolbar(ctx, gizmo_toolbar_state_, viewport_pos_, viewport_size_);
+            node_gizmo_operation_ = gizmo_toolbar_state_.current_operation;
+
+            auto* gizmo_tool = ctx.viewer->getTranslationGizmoTool();
+            auto* brush_tool = ctx.viewer->getBrushTool();
+            auto* align_tool = ctx.viewer->getAlignTool();
+            bool is_brush_mode = (gizmo_toolbar_state_.current_tool == panels::ToolMode::Brush);
+            bool is_align_mode = (gizmo_toolbar_state_.current_tool == panels::ToolMode::Align);
+
+            if (brush_tool) brush_tool->setEnabled(is_brush_mode);
+            if (align_tool) align_tool->setEnabled(is_align_mode);
+            if (gizmo_tool) gizmo_tool->setEnabled(!is_brush_mode && !is_align_mode);
+        } else {
+            auto* brush_tool = ctx.viewer->getBrushTool();
+            auto* align_tool = ctx.viewer->getAlignTool();
+            if (brush_tool) brush_tool->setEnabled(false);
+            if (align_tool) align_tool->setEnabled(false);
+        }
+
+        auto* brush_tool = ctx.viewer->getBrushTool();
+        if (brush_tool && brush_tool->isEnabled()) {
+            brush_tool->renderUI(ctx, nullptr);
+        }
+
+        auto* align_tool = ctx.viewer->getAlignTool();
+        if (align_tool && align_tool->isEnabled()) {
+            align_tool->renderUI(ctx, nullptr);
+        }
+
         // Render crop box gizmo over viewport
         renderCropBoxGizmo(ctx);
+
+        // Render node transform gizmo (for translating selected PLY nodes)
+        renderNodeTransformGizmo(ctx);
 
         // Render speed overlay if visible
         renderSpeedOverlay();
@@ -463,44 +504,6 @@ namespace lfs::vis::gui {
             }
         }
 
-        // Draw viewport focus indicator AFTER gizmo
-        // DISABLE in point cloud mode
-        bool draw_focus = viewport_has_focus_ && viewport_size_.x > 0 && viewport_size_.y > 0;
-        if (rendering_manager) {
-            const auto& settings = rendering_manager->getSettings();
-            if (settings.point_cloud_mode) {
-                draw_focus = false;
-            }
-        }
-
-        if (draw_focus) {
-            ImDrawList* draw_list = ImGui::GetForegroundDrawList();
-
-            // The viewport_pos_ is already relative to the window, so we just need to add the window position
-            const ImGuiViewport* main_vp = ImGui::GetMainViewport();
-            ImVec2 screen_pos = ImVec2(
-                main_vp->WorkPos.x + viewport_pos_.x,
-                main_vp->WorkPos.y + viewport_pos_.y);
-
-            // Animated glow
-            float time = static_cast<float>(ImGui::GetTime());
-            float pulse = (sin(time * 3.0f) + 1.0f) * 0.5f;
-
-            // Outer glow
-            draw_list->AddRect(
-                screen_pos,
-                ImVec2(screen_pos.x + viewport_size_.x, screen_pos.y + viewport_size_.y),
-                IM_COL32(51, 153, 255, 127 + (int)(pulse * 76)), // Blue with pulsing alpha
-                0.0f, 0, 3.0f);
-
-            // Inner highlight
-            draw_list->AddRect(
-                ImVec2(screen_pos.x + 1, screen_pos.y + 1),
-                ImVec2(screen_pos.x + viewport_size_.x - 1, screen_pos.y + viewport_size_.y - 1),
-                IM_COL32(102, 204, 255, 76 + (int)(pulse * 50)),
-                0.0f, 0, 1.0f);
-        }
-
         // End frame
         ImGui::Render();
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
@@ -558,8 +561,9 @@ namespace lfs::vis::gui {
             right = std::min(right, panel_left);
         }
 
-        // Store relative to window
-        viewport_pos_ = ImVec2(left, top);
+        // Store in actual window coordinates (not relative to work area)
+        // WorkPos accounts for the menu bar offset
+        viewport_pos_ = ImVec2(left + main_viewport->WorkPos.x, top + main_viewport->WorkPos.y);
         viewport_size_ = ImVec2(right - left, bottom - top);
     }
 
@@ -948,6 +952,105 @@ namespace lfs::vis::gui {
                     .enabled = settings.use_crop_box}
                     .emit();
             }
+        }
+
+        // Restore clip rect after ImGuizmo rendering
+        overlay_drawlist->PopClipRect();
+    }
+
+    void GuiManager::renderNodeTransformGizmo(const UIContext& ctx) {
+        // Only show gizmo if enabled
+        if (!show_node_gizmo_)
+            return;
+
+        auto* scene_manager = ctx.viewer->getSceneManager();
+        if (!scene_manager || !scene_manager->hasSelectedNode())
+            return;
+
+        auto* render_manager = ctx.viewer->getRenderingManager();
+        if (!render_manager)
+            return;
+
+        auto settings = render_manager->getSettings();
+
+        // Get camera matrices
+        auto& viewport = ctx.viewer->getViewport();
+        glm::mat4 view = viewport.getViewMatrix();
+        glm::mat4 projection = viewport.getProjectionMatrix(settings.fov);
+
+        // Get current node transform and centroid
+        glm::vec3 centroid = scene_manager->getSelectedNodeCentroid();
+        glm::mat4 node_transform = scene_manager->getSelectedNodeTransform();
+
+        // The gizmo should be positioned at centroid, with the node's rotation/scale applied
+        // Node transform stores: T * R * S relative to origin
+        // We need gizmo at: centroid + translation, with rotation/scale from node_transform
+
+        // Extract translation from node transform
+        glm::vec3 translation(node_transform[3]);
+
+        // Extract rotation and scale (upper 3x3)
+        glm::mat3 rotation_scale(node_transform);
+
+        // Build gizmo matrix: translate to centroid + node_translation, apply rotation/scale
+        glm::mat4 gizmo_matrix = glm::mat4(1.0f);
+
+        // Set position at centroid + translation
+        glm::vec3 gizmo_position = centroid + translation;
+        gizmo_matrix[3] = glm::vec4(gizmo_position, 1.0f);
+
+        // Apply rotation/scale to the gizmo
+        gizmo_matrix[0] = glm::vec4(rotation_scale[0], 0.0f);
+        gizmo_matrix[1] = glm::vec4(rotation_scale[1], 0.0f);
+        gizmo_matrix[2] = glm::vec4(rotation_scale[2], 0.0f);
+
+        ImGuizmo::SetOrthographic(false);
+
+        // Convert viewport position to absolute screen coordinates
+        const ImGuiViewport* main_vp = ImGui::GetMainViewport();
+        float screen_x = main_vp->WorkPos.x + viewport_pos_.x;
+        float screen_y = main_vp->WorkPos.y + viewport_pos_.y;
+
+        ImGuizmo::SetRect(screen_x, screen_y, viewport_size_.x, viewport_size_.y);
+
+        // Clip ImGuizmo rendering to viewport so it doesn't draw over GUI panels
+        ImDrawList* overlay_drawlist = ImGui::GetForegroundDrawList();
+        ImVec2 clip_min(main_vp->WorkPos.x + viewport_pos_.x, main_vp->WorkPos.y + viewport_pos_.y);
+        ImVec2 clip_max(clip_min.x + viewport_size_.x, clip_min.y + viewport_size_.y);
+        overlay_drawlist->PushClipRect(clip_min, clip_max, true);
+
+        // Set drawlist after pushing clip rect
+        ImGuizmo::SetDrawlist(overlay_drawlist);
+
+        // Use LOCAL mode for rotation/scale so they rotate around the gizmo center
+        ImGuizmo::MODE gizmo_mode = (node_gizmo_operation_ == ImGuizmo::TRANSLATE)
+                                        ? ImGuizmo::WORLD
+                                        : ImGuizmo::LOCAL;
+
+        // Draw the gizmo
+        glm::mat4 deltaMatrix;
+        bool gizmo_changed = ImGuizmo::Manipulate(
+            glm::value_ptr(view),
+            glm::value_ptr(projection),
+            node_gizmo_operation_,
+            gizmo_mode,
+            glm::value_ptr(gizmo_matrix),
+            glm::value_ptr(deltaMatrix),
+            nullptr);  // snap
+
+        if (gizmo_changed) {
+            // Extract new position
+            glm::vec3 new_gizmo_position = glm::vec3(gizmo_matrix[3]);
+
+            // The node's translation offset is new_gizmo_position - centroid
+            glm::vec3 new_translation = new_gizmo_position - centroid;
+
+            // Build new node transform with the updated values
+            glm::mat4 new_transform = gizmo_matrix;
+            new_transform[3] = glm::vec4(new_translation, 1.0f);
+
+            // Update the node's full transform
+            scene_manager->setSelectedNodeTransform(new_transform);
         }
 
         // Restore clip rect after ImGuizmo rendering

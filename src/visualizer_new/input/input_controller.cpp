@@ -6,12 +6,15 @@
 #include "core_new/logger.hpp"
 #include "loader_new/loader.hpp"
 #include "rendering/rendering_manager.hpp"
+#include "tools/align_tool.hpp"
+#include "tools/brush_tool.hpp"
 #include "tools/tool_base.hpp"
 #include "tools/translation_gizmo_tool.hpp"
 #include <GLFW/glfw3.h>
 #include <algorithm>
 #include <format>
 #include <imgui.h>
+#include <ImGuizmo.h>
 
 namespace lfs::vis {
 
@@ -248,6 +251,26 @@ namespace lfs::vis {
             return;
         }
 
+        // Block brush/align tools when mouse is over any ImGui window (panels, toolbar)
+        const bool over_gui = ImGui::GetIO().WantCaptureMouse;
+
+        if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
+            if (!over_gui && brush_tool_->handleMouseButton(button, action, x, y, *tool_context_)) {
+                if (action == GLFW_PRESS) {
+                    drag_mode_ = DragMode::Brush;
+                } else if (action == GLFW_RELEASE && drag_mode_ == DragMode::Brush) {
+                    drag_mode_ = DragMode::None;
+                }
+                return;
+            }
+        }
+
+        if (align_tool_ && align_tool_->isEnabled() && tool_context_) {
+            if (!over_gui && align_tool_->handleMouseButton(button, action, x, y, *tool_context_)) {
+                return;
+            }
+        }
+
         // CHECK GIZMO NEXT - before any other input handling
         if (translation_gizmo_ && translation_gizmo_->isEnabled() && tool_context_) {
             if (translation_gizmo_->handleMouseButton(button, action, x, y, *tool_context_)) {
@@ -266,6 +289,11 @@ namespace lfs::vis {
         if (action == GLFW_PRESS) {
             // Block if hovering over GUI window
             if (ImGui::IsWindowHovered(ImGuiHoveredFlags_AnyWindow)) {
+                return;
+            }
+
+            // Block if ImGuizmo is being used or hovered
+            if (ImGuizmo::IsOver() || ImGuizmo::IsUsing()) {
                 return;
             }
 
@@ -416,6 +444,17 @@ namespace lfs::vis {
             current_cursor_ = CursorType::Default;
         }
 
+        if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
+            if (drag_mode_ == DragMode::Brush) {
+                brush_tool_->handleMouseMove(x, y, *tool_context_);
+                last_mouse_pos_ = {x, y};
+                return;
+            } else if (brush_tool_->handleMouseMove(x, y, *tool_context_)) {
+                last_mouse_pos_ = {x, y};
+                return;
+            }
+        }
+
         // Check gizmo if not already in gizmo drag mode
         if (translation_gizmo_ && translation_gizmo_->isEnabled() && tool_context_) {
             if (drag_mode_ == DragMode::Gizmo ||
@@ -427,6 +466,11 @@ namespace lfs::vis {
 
         glm::vec2 pos(x, y);
         last_mouse_pos_ = current_pos;
+
+        // Block camera dragging if ImGuizmo is being used
+        if (ImGuizmo::IsUsing()) {
+            return;
+        }
 
         // Handle camera dragging
         if (drag_mode_ != DragMode::None &&
@@ -455,7 +499,12 @@ namespace lfs::vis {
     }
 
     void InputController::handleScroll([[maybe_unused]] double xoff, double yoff) {
-        // Don't scroll if gizmo or splitter is active
+        if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
+            if (brush_tool_->handleScroll(xoff, yoff, *tool_context_)) {
+                return;
+            }
+        }
+
         if (drag_mode_ == DragMode::Gizmo || drag_mode_ == DragMode::Splitter) {
             return;
         }
@@ -635,6 +684,11 @@ namespace lfs::vis {
             drag_mode_ = DragMode::None;
             glfwSetCursor(window_, nullptr); // Reset cursor
             LOG_TRACE("Splitter drag stopped - button released outside window");
+        }
+
+        if (drag_mode_ == DragMode::Brush &&
+            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) != GLFW_PRESS) {
+            drag_mode_ = DragMode::None;
         }
 
         // Prevent stuck keys by syncing with actual keyboard state

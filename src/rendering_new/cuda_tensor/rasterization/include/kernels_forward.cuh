@@ -31,6 +31,7 @@ namespace lfs::rendering::kernels::forward {
         float2* primitive_mean2d,
         float4* primitive_conic_opacity,
         float3* primitive_color,
+        float* primitive_depth,
         uint* n_visible_primitives,
         uint* n_instances,
         const uint n_primitives,
@@ -45,7 +46,17 @@ namespace lfs::rendering::kernels::forward {
         const float cx,
         const float cy,
         const float near_, // near and far are macros in windowns
-        const float far_) {
+        const float far_,
+        const float* model_transforms,      // Array of 4x4 transforms (row-major), one per node
+        const int* transform_indices,       // Per-Gaussian index into transforms array [N]
+        const int num_transforms,           // Number of transforms in array
+        const uint8_t* selection_mask,      // Per-Gaussian selection mask [N], 1=selected (yellow)
+        // Brush selection parameters (computed in same pass for coordinate consistency)
+        const bool brush_active,            // Whether brush selection is active
+        const float brush_x,                // Brush center X in screen coords
+        const float brush_y,                // Brush center Y in screen coords
+        const float brush_radius_sq,        // Brush radius squared (for efficient distance check)
+        bool* brush_selection_out) {        // Output: Gaussians within brush radius get marked
         auto primitive_idx = cg::this_grid().thread_rank();
         bool active = true;
         if (primitive_idx >= n_primitives) {
@@ -57,7 +68,50 @@ namespace lfs::rendering::kernels::forward {
             primitive_n_touched_tiles[primitive_idx] = 0;
 
         // load 3d mean
-        const float3 mean3d = means[primitive_idx];
+        float3 mean3d = means[primitive_idx];
+
+        // Apply model transform to mean if provided
+        // Supports per-Gaussian transform lookup via transform_indices
+        mat3x3 model_rot = {1, 0, 0, 0, 1, 0, 0, 0, 1};  // identity by default
+        bool has_transform = false;
+
+        if (model_transforms != nullptr && num_transforms > 0) {
+            // Get transform index for this Gaussian
+            int transform_idx = 0;
+            if (transform_indices != nullptr) {
+                transform_idx = transform_indices[primitive_idx];
+                // Clamp to valid range
+                transform_idx = min(max(transform_idx, 0), num_transforms - 1);
+            }
+
+            // Get pointer to this Gaussian's 4x4 transform (row-major)
+            const float* model_transform = model_transforms + transform_idx * 16;
+
+            // Check if transform is not identity (optimization: skip if identity)
+            // Simple check: if any diagonal != 1 or any off-diagonal != 0, it's not identity
+            bool is_identity = (model_transform[0] == 1.0f && model_transform[5] == 1.0f &&
+                               model_transform[10] == 1.0f && model_transform[15] == 1.0f &&
+                               model_transform[1] == 0.0f && model_transform[2] == 0.0f && model_transform[3] == 0.0f &&
+                               model_transform[4] == 0.0f && model_transform[6] == 0.0f && model_transform[7] == 0.0f &&
+                               model_transform[8] == 0.0f && model_transform[9] == 0.0f && model_transform[11] == 0.0f);
+
+            if (!is_identity) {
+                has_transform = true;
+                // Extract 3x3 rotation/scale part (row-major)
+                model_rot = {
+                    model_transform[0], model_transform[1], model_transform[2],
+                    model_transform[4], model_transform[5], model_transform[6],
+                    model_transform[8], model_transform[9], model_transform[10]
+                };
+                // Transform position: p' = R*p + t
+                const float3 t = make_float3(model_transform[3], model_transform[7], model_transform[11]);
+                mean3d = make_float3(
+                    model_rot.m11 * mean3d.x + model_rot.m12 * mean3d.y + model_rot.m13 * mean3d.z + t.x,
+                    model_rot.m21 * mean3d.x + model_rot.m22 * mean3d.y + model_rot.m23 * mean3d.z + t.y,
+                    model_rot.m31 * mean3d.x + model_rot.m32 * mean3d.y + model_rot.m33 * mean3d.z + t.z
+                );
+            }
+        }
 
         // z culling
         const float4 w2c_r3 = w2c[2];
@@ -94,7 +148,9 @@ namespace lfs::rendering::kernels::forward {
             rotation.m11 * variance.x, rotation.m12 * variance.y, rotation.m13 * variance.z,
             rotation.m21 * variance.x, rotation.m22 * variance.y, rotation.m23 * variance.z,
             rotation.m31 * variance.x, rotation.m32 * variance.y, rotation.m33 * variance.z};
-        const mat3x3_triu cov3d{
+
+        // Compute cov3d = R * S^2 * R^T (symmetric, store upper triangle)
+        mat3x3_triu cov3d{
             rotation_scaled.m11 * rotation.m11 + rotation_scaled.m12 * rotation.m12 + rotation_scaled.m13 * rotation.m13,
             rotation_scaled.m11 * rotation.m21 + rotation_scaled.m12 * rotation.m22 + rotation_scaled.m13 * rotation.m23,
             rotation_scaled.m11 * rotation.m31 + rotation_scaled.m12 * rotation.m32 + rotation_scaled.m13 * rotation.m33,
@@ -102,6 +158,39 @@ namespace lfs::rendering::kernels::forward {
             rotation_scaled.m21 * rotation.m31 + rotation_scaled.m22 * rotation.m32 + rotation_scaled.m23 * rotation.m33,
             rotation_scaled.m31 * rotation.m31 + rotation_scaled.m32 * rotation.m32 + rotation_scaled.m33 * rotation.m33,
         };
+
+        // Apply model transform to covariance: cov' = M * cov * M^T
+        if (has_transform) {
+            // Expand cov3d to full 3x3 symmetric matrix
+            const mat3x3 cov_full = {
+                cov3d.m11, cov3d.m12, cov3d.m13,
+                cov3d.m12, cov3d.m22, cov3d.m23,
+                cov3d.m13, cov3d.m23, cov3d.m33
+            };
+
+            // Compute M * cov (3x3 * 3x3)
+            const mat3x3 m_cov = {
+                model_rot.m11 * cov_full.m11 + model_rot.m12 * cov_full.m21 + model_rot.m13 * cov_full.m31,
+                model_rot.m11 * cov_full.m12 + model_rot.m12 * cov_full.m22 + model_rot.m13 * cov_full.m32,
+                model_rot.m11 * cov_full.m13 + model_rot.m12 * cov_full.m23 + model_rot.m13 * cov_full.m33,
+                model_rot.m21 * cov_full.m11 + model_rot.m22 * cov_full.m21 + model_rot.m23 * cov_full.m31,
+                model_rot.m21 * cov_full.m12 + model_rot.m22 * cov_full.m22 + model_rot.m23 * cov_full.m32,
+                model_rot.m21 * cov_full.m13 + model_rot.m22 * cov_full.m23 + model_rot.m23 * cov_full.m33,
+                model_rot.m31 * cov_full.m11 + model_rot.m32 * cov_full.m21 + model_rot.m33 * cov_full.m31,
+                model_rot.m31 * cov_full.m12 + model_rot.m32 * cov_full.m22 + model_rot.m33 * cov_full.m32,
+                model_rot.m31 * cov_full.m13 + model_rot.m32 * cov_full.m23 + model_rot.m33 * cov_full.m33
+            };
+
+            // Compute (M * cov) * M^T - result is symmetric, only compute upper triangle
+            cov3d = {
+                m_cov.m11 * model_rot.m11 + m_cov.m12 * model_rot.m12 + m_cov.m13 * model_rot.m13,
+                m_cov.m11 * model_rot.m21 + m_cov.m12 * model_rot.m22 + m_cov.m13 * model_rot.m23,
+                m_cov.m11 * model_rot.m31 + m_cov.m12 * model_rot.m32 + m_cov.m13 * model_rot.m33,
+                m_cov.m21 * model_rot.m21 + m_cov.m22 * model_rot.m22 + m_cov.m23 * model_rot.m23,
+                m_cov.m21 * model_rot.m31 + m_cov.m22 * model_rot.m32 + m_cov.m23 * model_rot.m33,
+                m_cov.m31 * model_rot.m31 + m_cov.m32 * model_rot.m32 + m_cov.m33 * model_rot.m33
+            };
+        }
 
         // compute 2d mean in normalized image coordinates
         const float4 w2c_r1 = w2c[0];
@@ -192,10 +281,31 @@ namespace lfs::rendering::kernels::forward {
             static_cast<ushort>(screen_bounds.w));
         primitive_mean2d[primitive_idx] = mean2d;
         primitive_conic_opacity[primitive_idx] = make_float4(conic, opacity);
-        primitive_color[primitive_idx] = convert_sh_to_color(
+        // Compute color from SH coefficients
+        float3 color = convert_sh_to_color(
             sh_coefficients_0, sh_coefficients_rest,
             mean3d, cam_position[0],
             primitive_idx, active_sh_bases, total_bases_sh_rest);
+
+        // Check if this Gaussian is within the brush radius and accumulate selection
+        if (brush_active && brush_selection_out != nullptr) {
+            const float dx = mean2d.x - brush_x;
+            const float dy = mean2d.y - brush_y;
+            const float dist_sq = dx * dx + dy * dy;
+            if (dist_sq <= brush_radius_sq) {
+                brush_selection_out[primitive_idx] = true;
+            }
+        }
+
+        // Boost red channel if Gaussian is selected (existing selection mask OR cumulative brush selection)
+        const bool is_selected = (selection_mask != nullptr && selection_mask[primitive_idx]) ||
+                                 (brush_selection_out != nullptr && brush_selection_out[primitive_idx]);
+        if (is_selected) {
+            color.x = fminf(color.x * 2.0f + 0.4f, 1.0f);  // Boost red
+        }
+
+        primitive_color[primitive_idx] = color;
+        primitive_depth[primitive_idx] = depth;
 
         const uint offset = atomicAdd(n_visible_primitives, 1);
         const uint depth_key = __float_as_uint(depth);
@@ -359,8 +469,10 @@ namespace lfs::rendering::kernels::forward {
         const float2* primitive_mean2d,
         const float4* primitive_conic_opacity,
         const float3* primitive_color,
+        const float* primitive_depth,
         float* image,
         float* alpha_map,
+        float* depth_map,
         const uint width,
         const uint height,
         const uint grid_width,
@@ -382,8 +494,11 @@ namespace lfs::rendering::kernels::forward {
         __shared__ float2 collected_mean2d[config::block_size_blend];
         __shared__ float4 collected_conic_opacity[config::block_size_blend];
         __shared__ float3 collected_color[config::block_size_blend];
+        __shared__ float collected_depth[config::block_size_blend];
         // initialize local storage
         float3 color_pixel = make_float3(0.0f);
+        float depth_pixel = 1e10f;  // Median depth (at 50% accumulated alpha)
+        float accumulated_alpha = 0.0f;
         float transmittance = 1.0f;
         bool done = !inside;
         // collaborative loading and processing
@@ -396,6 +511,7 @@ namespace lfs::rendering::kernels::forward {
                 collected_conic_opacity[thread_rank] = primitive_conic_opacity[primitive_idx];
                 const float3 color = fmaxf(primitive_color[primitive_idx], 0.0f);
                 collected_color[thread_rank] = color;
+                collected_depth[thread_rank] = primitive_depth[primitive_idx];
             }
             block.sync();
             const int current_batch_size = min(config::block_size_blend, n_points_remaining);
@@ -430,6 +546,14 @@ namespace lfs::rendering::kernels::forward {
                     continue;
                 }
                 color_pixel += transmittance * alpha * collected_color[j];
+                // Median depth: pick depth when accumulated alpha crosses 50%
+                // This gives the depth at the "middle" of the opacity distribution
+                float contribution = transmittance * alpha;
+                float new_accumulated = accumulated_alpha + contribution;
+                if (accumulated_alpha < 0.5f && new_accumulated >= 0.5f) {
+                    depth_pixel = collected_depth[j];
+                }
+                accumulated_alpha = new_accumulated;
                 transmittance = next_transmittance;
             }
         }
@@ -441,6 +565,7 @@ namespace lfs::rendering::kernels::forward {
             image[pixel_idx + n_pixels] = color_pixel.y;
             image[pixel_idx + n_pixels * 2] = color_pixel.z;
             alpha_map[pixel_idx] = 1.0f - transmittance;
+            depth_map[pixel_idx] = depth_pixel;
         }
     }
 

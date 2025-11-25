@@ -22,6 +22,7 @@ add_library(lfs_visualizer STATIC
         gui/panels/main_panel.cpp
         gui/panels/training_panel.cpp
         gui/panels/crop_box_panel.cpp
+        gui/panels/gizmo_toolbar.cpp
         gui/panels/scene_panel.cpp
         gui/panels/tools_panel.cpp
         gui/panels/world_transform_panel.cpp
@@ -42,6 +43,8 @@ add_library(lfs_visualizer STATIC
 
         # Tools
         tools/translation_gizmo_tool.cpp
+        tools/brush_tool.cpp
+        tools/align_tool.cpp
         gui/panels/menu_bar.cpp
         gui/panels/menu_bar.hpp
         gui/utils/windows_utils.cpp
@@ -123,6 +126,14 @@ foreach (GUI_ASSET_FILE ${GUI_ASSET_FILES})
         get_filename_component(ASSET_NAME ${GUI_ASSET_FILE} NAME)
         configure_file(${GUI_ASSET_FILE} "${VISUALIZER_BUILD_RESOURCE_DIR}/assets/${ASSET_NAME}" COPYONLY)
     endif ()
+endforeach ()
+
+# Copy icon files
+file(MAKE_DIRECTORY "${VISUALIZER_BUILD_RESOURCE_DIR}/assets/icon")
+file(GLOB ICON_FILES "${CMAKE_CURRENT_SOURCE_DIR}/gui/assets/icon/*.png")
+foreach (ICON_FILE ${ICON_FILES})
+    get_filename_component(ICON_NAME ${ICON_FILE} NAME)
+    configure_file(${ICON_FILE} "${VISUALIZER_BUILD_RESOURCE_DIR}/assets/icon/${ICON_NAME}" COPYONLY)
 endforeach ()
 
 # Compile definitions

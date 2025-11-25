@@ -13,6 +13,7 @@
 #include "rendering_new/rendering.hpp"
 #include "screen_renderer.hpp"
 #include <glm/glm.hpp>
+#include <optional>
 
 #ifdef CUDA_GL_INTEROP_ENABLED
 #include "cuda_gl_interop.hpp"
@@ -42,11 +43,25 @@ namespace lfs::rendering {
             bool gut = false;
             bool show_rings = false;
             float ring_width = 0.002f;
+            // Per-node transforms: array of 4x4 matrices and per-Gaussian indices
+            std::vector<glm::mat4> model_transforms;          // Array of transforms, one per node
+            std::shared_ptr<lfs::core::Tensor> transform_indices;  // Per-Gaussian index [N], nullable
+            // Selection mask for highlighting selected Gaussians
+            std::shared_ptr<lfs::core::Tensor> selection_mask;  // Per-Gaussian uint8 [N], nullable (1 = selected, 0 = not)
+            // Request screen positions output for brush tool
+            bool output_screen_positions = false;
+            // Brush selection (computed in preprocess for coordinate consistency)
+            bool brush_active = false;              // Whether brush selection is active this frame
+            float brush_x = 0.0f;                   // Brush center X in screen coords
+            float brush_y = 0.0f;                   // Brush center Y in screen coords
+            float brush_radius = 0.0f;              // Brush radius in pixels
+            lfs::core::Tensor* brush_selection_tensor = nullptr;  // Cumulative selection tensor (kernel accumulates into this)
         };
 
         struct RenderResult {
             Tensor image;
             Tensor depth;
+            Tensor screen_positions;  // Optional: screen positions [N, 2] for brush tool
             bool valid = false;
         };
 
