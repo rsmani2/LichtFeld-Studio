@@ -77,7 +77,7 @@ namespace lfs::vis {
         glm::vec3 eval_camera_color = glm::vec3(1.0f, 0.0f, 0.0f);
 
         // Pivot point visualization
-        bool show_pivot = true;
+        bool show_pivot = false;
 
         // Split view
         SplitViewMode split_view_mode = SplitViewMode::Disabled;
