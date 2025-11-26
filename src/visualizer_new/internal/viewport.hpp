@@ -15,45 +15,25 @@ class Viewport {
     class CameraMotion {
     public:
         glm::vec2 prePos;
-        float zoomSpeed = 1.0f;
+        float zoomSpeed = 5.0f;
+        float maxZoomSpeed = 10.0f;
         float rotateSpeed = 0.001f;
         float rotateCenterSpeed = 0.002f;
         float rotateRollSpeed = 0.01f;
         float translateSpeed = 0.001f;
-        float wasdSpeed = 10.0f;
-        float maxWasdSpeed = 1000.0f;
-        float wasdSpeedChangePercentage = 10.0f;
-
-        // REMOVED: Orbit velocity and inertia - we don't want spinning to continue
-        // glm::vec2 orbitVelocity = glm::vec2(0.0f);
-        // float preTime = 0.0f;
+        float wasdSpeed = 50.0f;
+        float maxWasdSpeed = 100.0f;
         bool isOrbiting = false;
-        // float orbitFriction = 3.0f;
 
-        void increaseWasdSpeed() {
-            wasdSpeed = std::min(wasdSpeed * 1.5f, maxWasdSpeed);
-        }
+        void increaseWasdSpeed() { wasdSpeed = std::min(wasdSpeed + 1.0f, maxWasdSpeed); }
+        void decreaseWasdSpeed() { wasdSpeed = std::max(wasdSpeed - 1.0f, 1.0f); }
+        float getWasdSpeed() const { return wasdSpeed; }
+        float getMaxWasdSpeed() const { return maxWasdSpeed; }
 
-        void decreaseWasdSpeed() {
-            wasdSpeed = std::max(wasdSpeed / 1.5f, 0.1f);
-        }
-
-        void setMaxWasdSpeed(float maxSpeed) {
-            maxWasdSpeed = maxSpeed;
-            wasdSpeed = std::min(wasdSpeed, maxWasdSpeed);
-        }
-
-        float getWasdSpeed() const {
-            return wasdSpeed;
-        }
-
-        float getMaxWasdSpeed() const {
-            return maxWasdSpeed;
-        }
-
-        void setWasdSpeedChangePercentage(float percentage) {
-            wasdSpeedChangePercentage = std::max(1.0f, std::min(percentage, 100.0f));
-        }
+        void increaseZoomSpeed() { zoomSpeed = std::min(zoomSpeed + 0.1f, maxZoomSpeed); }
+        void decreaseZoomSpeed() { zoomSpeed = std::max(zoomSpeed - 0.1f, 0.1f); }
+        float getZoomSpeed() const { return zoomSpeed; }
+        float getMaxZoomSpeed() const { return maxZoomSpeed; }
 
         // Camera state
         glm::mat3 R = glm::mat3(1.0f);
@@ -123,7 +103,9 @@ class Viewport {
 
         void zoom(float delta) {
             const glm::vec3 forward = R[2];
-            glm::vec3 movement = delta * zoomSpeed * forward;
+            const float distToPivot = glm::length(pivot - t);
+            const float adaptiveSpeed = zoomSpeed * 0.01f * distToPivot;
+            glm::vec3 movement = delta * adaptiveSpeed * forward;
 
             // Prevent zooming past pivot
             if (delta > 0.0f) {

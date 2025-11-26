@@ -90,6 +90,12 @@ namespace lfs::vis {
             float current_speed_;
             float max_speed_;
 
+            // Zoom speed overlay state
+            bool zoom_speed_overlay_visible_ = false;
+            std::chrono::steady_clock::time_point zoom_speed_overlay_start_time_;
+            float zoom_speed_ = 5.0f;
+            float max_zoom_speed_ = 10.0f;
+
             // Viewport region tracking
             ImVec2 viewport_pos_;
             ImVec2 viewport_size_;
@@ -103,6 +109,8 @@ namespace lfs::vis {
             // Method declarations
             void renderSpeedOverlay();
             void showSpeedOverlay(float current_speed, float max_speed);
+            void renderZoomSpeedOverlay();
+            void showZoomSpeedOverlay(float zoom_speed, float max_zoom_speed);
             void renderCropBoxGizmo(const UIContext& ctx);
             void renderNodeTransformGizmo(const UIContext& ctx);
 

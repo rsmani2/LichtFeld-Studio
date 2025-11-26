@@ -604,12 +604,22 @@ namespace lfs::vis {
 
         // Speed control works even when GUI has focus
         if (key_ctrl_pressed_ && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
+            const bool shift_pressed = glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                                       glfwGetKey(window_, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
             if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD) {
-                updateCameraSpeed(true);
+                if (shift_pressed) {
+                    updateZoomSpeed(true);
+                } else {
+                    updateCameraSpeed(true);
+                }
                 return;
             }
             if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT) {
-                updateCameraSpeed(false);
+                if (shift_pressed) {
+                    updateZoomSpeed(false);
+                } else {
+                    updateCameraSpeed(false);
+                }
                 return;
             }
         }
@@ -928,22 +938,20 @@ namespace lfs::vis {
         return !ImGui::IsAnyItemActive();
     }
 
-    void InputController::updateCameraSpeed(bool increase) {
-        if (increase) {
-            viewport_.camera.increaseWasdSpeed();
-        } else {
-            viewport_.camera.decreaseWasdSpeed();
-        }
-
-        const float new_speed = viewport_.camera.getWasdSpeed();
-        const float max_speed = viewport_.camera.getMaxWasdSpeed();
-
-        LOG_DEBUG("Camera speed changed to: {:.3f} (max: {:.3f})", new_speed, max_speed);
-
+    void InputController::updateCameraSpeed(const bool increase) {
+        increase ? viewport_.camera.increaseWasdSpeed() : viewport_.camera.decreaseWasdSpeed();
         ui::SpeedChanged{
-            .current_speed = new_speed,
-            .max_speed = max_speed}
-            .emit();
+            .current_speed = viewport_.camera.getWasdSpeed(),
+            .max_speed = viewport_.camera.getMaxWasdSpeed()
+        }.emit();
+    }
+
+    void InputController::updateZoomSpeed(const bool increase) {
+        increase ? viewport_.camera.increaseZoomSpeed() : viewport_.camera.decreaseZoomSpeed();
+        ui::ZoomSpeedChanged{
+            .zoom_speed = viewport_.camera.getZoomSpeed(),
+            .max_zoom_speed = viewport_.camera.getMaxZoomSpeed()
+        }.emit();
     }
 
     void InputController::publishCameraMove() {

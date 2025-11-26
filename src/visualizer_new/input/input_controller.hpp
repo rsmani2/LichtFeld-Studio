@@ -103,6 +103,7 @@ namespace lfs::vis {
         bool isInViewport(double x, double y) const;
         bool shouldCameraHandleInput() const;
         void updateCameraSpeed(bool increase);
+        void updateZoomSpeed(bool increase);
         void publishCameraMove();
         bool isNearSplitter(double x) const;
         int getModifierKeys() const;

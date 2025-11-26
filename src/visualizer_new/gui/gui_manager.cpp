@@ -426,8 +426,9 @@ namespace lfs::vis::gui {
         // Render node transform gizmo (for translating selected PLY nodes)
         renderNodeTransformGizmo(ctx);
 
-        // Render speed overlay if visible
+        // Render speed overlays if visible
         renderSpeedOverlay();
+        renderZoomSpeedOverlay();
 
         // Render split view indicator if enabled
         if (rendering_manager) {
@@ -674,7 +675,7 @@ namespace lfs::vis::gui {
             ImVec2 window_size = ImGui::GetWindowSize();
 
             // Speed text
-            std::string speed_text = std::format("WASD Speed: {:.2f}", current_speed_);
+            std::string speed_text = std::format("WASD Speed: {:.0f}", current_speed_);
             ImVec2 speed_text_size = ImGui::CalcTextSize(speed_text.c_str());
             ImGui::SetCursorPos(ImVec2(
                 (window_size.x - speed_text_size.x) * 0.5f,
@@ -685,7 +686,7 @@ namespace lfs::vis::gui {
             ImGui::PopStyleColor();
 
             // Max speed text
-            std::string max_text = std::format("Max: {:.3f}", max_speed_);
+            std::string max_text = std::format("Max: {:.0f}", max_speed_);
             ImVec2 max_text_size = ImGui::CalcTextSize(max_text.c_str());
             ImGui::SetCursorPos(ImVec2(
                 (window_size.x - max_text_size.x) * 0.5f,
@@ -708,6 +709,82 @@ namespace lfs::vis::gui {
         speed_overlay_start_time_ = std::chrono::steady_clock::now();
     }
 
+    void GuiManager::showZoomSpeedOverlay(const float zoom_speed, const float max_zoom_speed) {
+        zoom_speed_ = zoom_speed;
+        max_zoom_speed_ = max_zoom_speed;
+        zoom_speed_overlay_visible_ = true;
+        zoom_speed_overlay_start_time_ = std::chrono::steady_clock::now();
+    }
+
+    void GuiManager::renderZoomSpeedOverlay() {
+        if (zoom_speed_overlay_visible_) {
+            const auto now = std::chrono::steady_clock::now();
+            if (now - zoom_speed_overlay_start_time_ >= speed_overlay_duration_) {
+                zoom_speed_overlay_visible_ = false;
+            }
+        } else {
+            return;
+        }
+
+        const auto* viewport = ImGui::GetMainViewport();
+        constexpr float kOverlayWidth = 300.0f;
+        constexpr float kOverlayHeight = 80.0f;
+        constexpr float kPadding = 20.0f;
+        constexpr float kFadeDuration = 500.0f;
+
+        const float y_offset = speed_overlay_visible_ ? 110.0f : kPadding;
+        const ImVec2 overlay_pos(
+            viewport->WorkPos.x + (viewport->WorkSize.x - kOverlayWidth) * 0.5f,
+            viewport->WorkPos.y + y_offset);
+
+        ImGui::SetNextWindowPos(overlay_pos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(kOverlayWidth, kOverlayHeight), ImGuiCond_Always);
+
+        constexpr ImGuiWindowFlags kOverlayFlags =
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoFocusOnAppearing |
+            ImGuiWindowFlags_NoBringToFrontOnFocus;
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.0f, 0.0f, 0.0f, 0.7f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(1.0f, 1.0f, 1.0f, 0.3f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+
+        if (ImGui::Begin("##ZoomSpeedOverlay", nullptr, kOverlayFlags)) {
+            const auto now = std::chrono::steady_clock::now();
+            const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - zoom_speed_overlay_start_time_);
+            const auto remaining = speed_overlay_duration_ - elapsed;
+
+            float fade_alpha = 1.0f;
+            if (remaining < std::chrono::milliseconds(500)) {
+                fade_alpha = static_cast<float>(remaining.count()) / kFadeDuration;
+            }
+
+            const ImVec2 window_size = ImGui::GetWindowSize();
+
+            // Display as 1-100 scale (internal is 0.1-10)
+            const std::string speed_text = std::format("Zoom Speed: {:.0f}", zoom_speed_ * 10.0f);
+            const ImVec2 speed_text_size = ImGui::CalcTextSize(speed_text.c_str());
+            ImGui::SetCursorPos(ImVec2((window_size.x - speed_text_size.x) * 0.5f, window_size.y * 0.3f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 1.0f, 1.0f, fade_alpha));
+            ImGui::Text("%s", speed_text.c_str());
+            ImGui::PopStyleColor();
+
+            const std::string max_text = std::format("Max: {:.0f}", max_zoom_speed_ * 10.0f);
+            const ImVec2 max_text_size = ImGui::CalcTextSize(max_text.c_str());
+            ImGui::SetCursorPos(ImVec2((window_size.x - max_text_size.x) * 0.5f, window_size.y * 0.6f));
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.8f, 0.8f, 0.8f, fade_alpha * 0.8f));
+            ImGui::Text("%s", max_text.c_str());
+            ImGui::PopStyleColor();
+        }
+        ImGui::End();
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+    }
+
     void GuiManager::setupEventHandlers() {
         using namespace lfs::core::events;
 
@@ -725,6 +802,10 @@ namespace lfs::vis::gui {
         // Handle speed change events
         ui::SpeedChanged::when([this](const auto& e) {
             showSpeedOverlay(e.current_speed, e.max_speed);
+        });
+
+        ui::ZoomSpeedChanged::when([this](const auto& e) {
+            showZoomSpeedOverlay(e.zoom_speed, e.max_zoom_speed);
         });
     }
 
