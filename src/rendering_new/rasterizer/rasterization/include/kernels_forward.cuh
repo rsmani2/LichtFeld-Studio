@@ -288,19 +288,23 @@ namespace lfs::rendering::kernels::forward {
             mean3d, cam_position[0],
             primitive_idx, active_sh_bases, total_bases_sh_rest);
 
-        // Brush selection: mark Gaussians within brush radius
-        if (brush_active && brush_selection_out != nullptr) {
+        // Compute if Gaussian is under brush (used for both selection and preview)
+        bool under_brush = false;
+        if (brush_active) {
             const float dx = mean2d.x - brush_x;
             const float dy = mean2d.y - brush_y;
-            if (dx * dx + dy * dy <= brush_radius_sq) {
-                brush_selection_out[primitive_idx] = brush_add_mode;
-            }
+            under_brush = (dx * dx + dy * dy <= brush_radius_sq);
         }
 
-        // Highlight selected Gaussians (use brush selection during painting, scene mask otherwise)
-        const bool is_selected = (brush_active && brush_selection_out != nullptr)
-            ? brush_selection_out[primitive_idx]
-            : (selection_mask != nullptr && selection_mask[primitive_idx]);
+        // Brush selection: mark Gaussians within brush radius (only when output buffer provided)
+        if (under_brush && brush_selection_out != nullptr) {
+            brush_selection_out[primitive_idx] = brush_add_mode;
+        }
+
+        // Highlight: show preview (under brush) OR cumulative brush selection OR existing selection mask
+        const bool in_cumulative = (brush_selection_out != nullptr && brush_selection_out[primitive_idx]);
+        const bool in_scene_selection = (selection_mask != nullptr && selection_mask[primitive_idx]);
+        const bool is_selected = under_brush || in_cumulative || in_scene_selection;
         if (is_selected) {
             color.x = fminf(color.x * 2.0f + 0.4f, 1.0f);
         }

@@ -87,6 +87,10 @@ namespace lfs::vis::tools {
             ctx.requestRender();
             return true;
         }
+
+        // Update brush preview state for highlighting (without selection tensor)
+        updateBrushPreview(x, y, ctx);
+        ctx.requestRender();
         return false;
     }
 
@@ -218,6 +222,30 @@ namespace lfs::vis::tools {
         const bool add_mode = (current_action_ == BrushAction::Add);
 
         rm->setBrushState(true, image_x, image_y, scaled_radius, add_mode, &cumulative_selection_);
+    }
+
+    void BrushTool::updateBrushPreview(double x, double y, const ToolContext& ctx) {
+        auto* const rm = ctx.getRenderingManager();
+        if (!rm) return;
+
+        const auto& bounds = ctx.getViewportBounds();
+        const auto& viewport = ctx.getViewport();
+        const auto& cached = rm->getCachedResult();
+
+        const int render_w = cached.image ? static_cast<int>(cached.image->size(2)) : viewport.windowSize.x;
+        const int render_h = cached.image ? static_cast<int>(cached.image->size(1)) : viewport.windowSize.y;
+
+        const float rel_x = static_cast<float>(x) - bounds.x;
+        const float rel_y = static_cast<float>(y) - bounds.y;
+        const float scale_x = static_cast<float>(render_w) / bounds.width;
+        const float scale_y = static_cast<float>(render_h) / bounds.height;
+
+        const float image_x = rel_x * scale_x;
+        const float image_y = rel_y * scale_y;
+        const float scaled_radius = brush_radius_ * scale_x;
+
+        // Set brush state for preview only (no selection tensor)
+        rm->setBrushState(true, image_x, image_y, scaled_radius, true, nullptr);
     }
 
 } // namespace lfs::vis::tools

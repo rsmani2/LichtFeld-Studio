@@ -50,6 +50,7 @@ namespace lfs::vis::tools {
         void endStroke();
         void clearSelection(const ToolContext& ctx);
         void updateSelectionAtPoint(double x, double y, const ToolContext& ctx);
+        void updateBrushPreview(double x, double y, const ToolContext& ctx);
     };
 
 } // namespace lfs::vis::tools
