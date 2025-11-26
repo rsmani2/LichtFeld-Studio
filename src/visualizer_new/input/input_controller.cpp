@@ -288,16 +288,25 @@ namespace lfs::vis {
             viewport_.camera.initScreenPos(glm::vec2(x, y));
 
             if (button == GLFW_MOUSE_BUTTON_LEFT) {
+                // Double-click sets pivot from depth
+                const auto now = std::chrono::steady_clock::now();
+                const double time_since_last = std::chrono::duration<double>(now - last_pivot_click_time_).count();
+                const double dist = glm::length(glm::dvec2(x, y) - last_pivot_click_pos_);
+
+                if (time_since_last < DOUBLE_CLICK_TIME && dist < DOUBLE_CLICK_DISTANCE) {
+                    const glm::vec3 pivot = unprojectScreenPoint(x, y);
+                    viewport_.camera.setPivot(pivot);
+                }
+
+                last_pivot_click_time_ = now;
+                last_pivot_click_pos_ = {x, y};
                 drag_mode_ = DragMode::Pan;
-                LOG_TRACE("Started camera pan");
             } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
                 drag_mode_ = DragMode::Rotate;
-                LOG_TRACE("Started camera rotate");
             } else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
                 drag_mode_ = DragMode::Orbit;
-                float current_time = static_cast<float>(glfwGetTime());
+                const float current_time = static_cast<float>(glfwGetTime());
                 viewport_.camera.startRotateAroundCenter(glm::vec2(x, y), current_time);
-                LOG_TRACE("Started camera orbit");
             }
         } else if (action == GLFW_RELEASE) {
             // Always handle our own releases if we were dragging
@@ -528,6 +537,13 @@ namespace lfs::vis {
         if (key == GLFW_KEY_G && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             cmd::ToggleGTComparison{}.emit();
             LOG_DEBUG("Toggled GT comparison mode");
+            return;
+        }
+
+        // H - reset camera to home position
+        if (key == GLFW_KEY_H && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
+            viewport_.camera.resetToHome();
+            publishCameraMove();
             return;
         }
 
@@ -839,6 +855,12 @@ namespace lfs::vis {
         // Update pivot point to be in front of camera
         viewport_.camera.updatePivotFromCamera();
 
+        // Save as home position if this is the first camera view
+        if (!viewport_.camera.home_saved) {
+            viewport_.camera.saveHomePosition();
+            LOG_DEBUG("Saved home position");
+        }
+
         // Get camera intrinsics using the proper method
         auto [focal_x, focal_y, center_x, center_y] = cam_data->get_intrinsics();
         const float width = static_cast<float>(cam_data->image_width());
@@ -982,6 +1004,65 @@ namespace lfs::vis {
             mods |= GLFW_MOD_SHIFT;
         }
         return mods;
+    }
+
+    glm::vec3 InputController::unprojectScreenPoint(double x, double y, float fallback_distance) const {
+        if (!rendering_manager_) {
+            glm::vec3 forward = viewport_.camera.R * glm::vec3(0, 0, 1);
+            return viewport_.camera.t + forward * fallback_distance;
+        }
+
+        // Convert window coordinates to viewport-local coordinates
+        const float local_x = static_cast<float>(x) - viewport_bounds_.x;
+        const float local_y = static_cast<float>(y) - viewport_bounds_.y;
+
+        // Try to get depth from rendering manager using viewport-local coordinates
+        const float depth = rendering_manager_->getDepthAtPixel(
+            static_cast<int>(local_x), static_cast<int>(local_y));
+
+        // If no valid depth, use fallback distance along view direction
+        if (depth < 0.0f) {
+            glm::vec3 forward = viewport_.camera.R * glm::vec3(0, 0, 1);
+            return viewport_.camera.t + forward * fallback_distance;
+        }
+
+        // Use viewport dimensions for unprojection
+        const float width = viewport_bounds_.width;
+        const float height = viewport_bounds_.height;
+
+        // Pinhole camera unprojection matching the rasterizer
+        const float fov_y = glm::radians(rendering_manager_->getFovDegrees());
+        const float aspect = width / height;
+        const float fov_x = 2.0f * std::atan(std::tan(fov_y / 2.0f) * aspect);
+
+        const float fx = width / (2.0f * std::tan(fov_x / 2.0f));
+        const float fy = height / (2.0f * std::tan(fov_y / 2.0f));
+        const float cx = width / 2.0f;
+        const float cy = height / 2.0f;
+
+        // Point in camera space (using viewport-local coordinates)
+        const glm::vec4 view_pos(
+            (local_x - cx) * depth / fx,
+            (local_y - cy) * depth / fy,
+            depth,
+            1.0f);
+
+        // Build world-to-camera matrix matching rasterizer: w2c = [R^T | -R^T*t]
+        const glm::mat3 R = viewport_.getRotationMatrix();
+        const glm::vec3 t = viewport_.getTranslation();
+        const glm::mat3 R_inv = glm::transpose(R);
+        const glm::vec3 t_inv = -R_inv * t;
+
+        glm::mat4 w2c(1.0f);
+        for (int i = 0; i < 3; ++i)
+            for (int j = 0; j < 3; ++j)
+                w2c[i][j] = R_inv[i][j];
+        w2c[3][0] = t_inv.x;
+        w2c[3][1] = t_inv.y;
+        w2c[3][2] = t_inv.z;
+
+        // Transform from camera space to world space
+        return glm::vec3(glm::inverse(w2c) * view_pos);
     }
 
 } // namespace lfs::vis

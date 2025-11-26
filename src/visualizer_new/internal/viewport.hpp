@@ -55,11 +55,31 @@ class Viewport {
             wasdSpeedChangePercentage = std::max(1.0f, std::min(percentage, 100.0f));
         }
 
+        // Camera state
         glm::mat3 R = glm::mat3(1.0f);
-        glm::vec3 t = glm::vec3(0.0f);
-        glm::vec3 pivot = glm::vec3(0.0f, 0.0f, 0.0f); // Pivot point for rotation and navigation (always y=0)
+        glm::vec3 t = glm::vec3(0.0f, 0.0f, -8.0f);
+        glm::vec3 pivot = glm::vec3(0.0f);
+
+        // Home position
+        glm::mat3 home_R = glm::mat3(1.0f);
+        glm::vec3 home_t = glm::vec3(0.0f, 0.0f, -8.0f);
+        glm::vec3 home_pivot = glm::vec3(0.0f);
+        bool home_saved = true;
 
         CameraMotion() = default;
+
+        void saveHomePosition() {
+            home_R = R;
+            home_t = t;
+            home_pivot = pivot;
+            home_saved = true;
+        }
+
+        void resetToHome() {
+            R = home_R;
+            t = home_t;
+            pivot = home_pivot;
+        }
 
         void rotate(const glm::vec2& pos, bool enforceUpright = false) {
             glm::vec2 delta = pos - prePos;
@@ -94,92 +114,79 @@ class Viewport {
         }
 
         void translate(const glm::vec2& pos) {
-            glm::vec2 delta = pos - prePos;
-            t -= (delta.x * translateSpeed) * R[0] + (delta.y * translateSpeed) * R[1];
+            const glm::vec2 delta = pos - prePos;
+            const glm::vec3 movement = -(delta.x * translateSpeed) * R[0] - (delta.y * translateSpeed) * R[1];
+            t += movement;
+            pivot += movement;
             prePos = pos;
         }
 
         void zoom(float delta) {
-            // Keep original zoom behavior - move along camera's view direction
-            t += delta * zoomSpeed * R[2];
+            const glm::vec3 forward = R[2];
+            glm::vec3 movement = delta * zoomSpeed * forward;
+
+            // Prevent zooming past pivot
+            if (delta > 0.0f) {
+                const float current_dist = glm::length(pivot - t);
+                const float move_dist = glm::length(movement);
+                constexpr float kMinDistance = 0.1f;
+                if (current_dist - move_dist < kMinDistance) {
+                    const float allowed = std::max(0.0f, current_dist - kMinDistance);
+                    movement = glm::normalize(forward) * allowed;
+                }
+            }
+            t += movement;
         }
 
         void advance_forward(float deltaTime) {
-            // Camera moves in view direction, pivot stays on XZ plane
-            glm::vec3 forward = glm::normalize(R * glm::vec3(0, 0, 1));
-            glm::vec3 movement = forward * deltaTime * wasdSpeed;
-
-            // Move camera in full 3D
+            const glm::vec3 forward = glm::normalize(R * glm::vec3(0, 0, 1));
+            const glm::vec3 movement = forward * deltaTime * wasdSpeed;
             t += movement;
-
-            // Move pivot only horizontally (keeps orbit center at same height)
-            glm::vec3 movement_xz = glm::vec3(movement.x, 0.0f, movement.z);
-            pivot += movement_xz;
+            pivot += movement;
         }
 
         void advance_backward(float deltaTime) {
-            // Camera moves in view direction, pivot stays on XZ plane
-            glm::vec3 forward = glm::normalize(R * glm::vec3(0, 0, 1));
-            glm::vec3 movement = -forward * deltaTime * wasdSpeed;
-
+            const glm::vec3 forward = glm::normalize(R * glm::vec3(0, 0, 1));
+            const glm::vec3 movement = -forward * deltaTime * wasdSpeed;
             t += movement;
-
-            glm::vec3 movement_xz = glm::vec3(movement.x, 0.0f, movement.z);
-            pivot += movement_xz;
+            pivot += movement;
         }
 
         void advance_left(float deltaTime) {
-            // Camera moves left, pivot stays on XZ plane
-            glm::vec3 right = glm::normalize(R * glm::vec3(1, 0, 0));
-            glm::vec3 movement = -right * deltaTime * wasdSpeed;
-
+            const glm::vec3 right = glm::normalize(R * glm::vec3(1, 0, 0));
+            const glm::vec3 movement = -right * deltaTime * wasdSpeed;
             t += movement;
-
-            glm::vec3 movement_xz = glm::vec3(movement.x, 0.0f, movement.z);
-            pivot += movement_xz;
+            pivot += movement;
         }
 
         void advance_right(float deltaTime) {
-            // Camera moves right, pivot stays on XZ plane
-            glm::vec3 right = glm::normalize(R * glm::vec3(1, 0, 0));
-            glm::vec3 movement = right * deltaTime * wasdSpeed;
-
+            const glm::vec3 right = glm::normalize(R * glm::vec3(1, 0, 0));
+            const glm::vec3 movement = right * deltaTime * wasdSpeed;
             t += movement;
-
-            glm::vec3 movement_xz = glm::vec3(movement.x, 0.0f, movement.z);
-            pivot += movement_xz;
+            pivot += movement;
         }
 
         void advance_up(float deltaTime) {
-            // Move camera straight up in world space (not camera local space)
-            t.y += -deltaTime * wasdSpeed;
-            // Pivot doesn't move - it stays at y=0 on the ground
+            const glm::vec3 movement = glm::vec3(0.0f, -deltaTime * wasdSpeed, 0.0f);
+            t += movement;
+            pivot += movement;
         }
 
         void advance_down(float deltaTime) {
-            // Move camera straight down in world space (not camera local space)
-            t.y += deltaTime * wasdSpeed;
-            // Pivot doesn't move - it stays at y=0 on the ground
+            const glm::vec3 movement = glm::vec3(0.0f, deltaTime * wasdSpeed, 0.0f);
+            t += movement;
+            pivot += movement;
         }
 
-        void initScreenPos(const glm::vec2& pos) {
-            prePos = pos;
-        }
+        void initScreenPos(const glm::vec2& pos) { prePos = pos; }
 
-        void setPivot(const glm::vec3& new_pivot) {
-            pivot = new_pivot;
-            pivot.y = 0.0f; // Enforce XZ plane constraint
-        }
+        void setPivot(const glm::vec3& new_pivot) { pivot = new_pivot; }
 
-        glm::vec3 getPivot() const {
-            return pivot;
-        }
+        glm::vec3 getPivot() const { return pivot; }
 
-        void updatePivotFromCamera(float distance_from_camera = 5.0f) {
-            // Set pivot to a point in front of the camera on the XZ plane
-            glm::vec3 forward = R * glm::vec3(0, 0, 1);
-            glm::vec3 target = t + forward * distance_from_camera;
-            pivot = glm::vec3(target.x, 0.0f, target.z);
+        void updatePivotFromCamera(float distance = 5.0f) {
+            const glm::vec3 forward = R * glm::vec3(0, 0, 1);
+            pivot = t + forward * distance;
         }
 
         // Simplified orbit methods - no velocity tracking

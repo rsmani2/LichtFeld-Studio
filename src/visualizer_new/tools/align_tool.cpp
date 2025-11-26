@@ -204,12 +204,12 @@ namespace lfs::vis::tools {
         const float height = viewport.windowSize.y;
 
         // Pinhole camera unprojection matching the rasterizer
-        constexpr float kFovY = glm::radians(60.0f);
+        const float fov_y = glm::radians(rendering_manager->getFovDegrees());
         const float aspect = width / height;
-        const float fov_x = 2.0f * atan(tan(kFovY / 2.0f) * aspect);
+        const float fov_x = 2.0f * atan(tan(fov_y / 2.0f) * aspect);
 
         const float fx = width / (2.0f * tan(fov_x / 2.0f));
-        const float fy = height / (2.0f * tan(kFovY / 2.0f));
+        const float fy = height / (2.0f * tan(fov_y / 2.0f));
         const float cx = width / 2.0f;
         const float cy = height / 2.0f;
 

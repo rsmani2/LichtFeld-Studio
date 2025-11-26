@@ -106,6 +106,7 @@ namespace lfs::vis {
         void publishCameraMove();
         bool isNearSplitter(double x) const;
         int getModifierKeys() const;
+        glm::vec3 unprojectScreenPoint(double x, double y, float fallback_distance = 5.0f) const;
 
         // Training pause/resume helpers
         void onCameraMovementStart();
@@ -183,6 +184,10 @@ namespace lfs::vis {
         glm::dvec2 last_click_pos_{0, 0};
         static constexpr double DOUBLE_CLICK_TIME = 0.3;     // seconds
         static constexpr double DOUBLE_CLICK_DISTANCE = 5.0; // pixels
+
+        // Pivot point double-click tracking
+        std::chrono::steady_clock::time_point last_pivot_click_time_;
+        glm::dvec2 last_pivot_click_pos_{0, 0};
 
         // Static instance for callbacks
         static InputController* instance_;

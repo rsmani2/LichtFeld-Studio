@@ -84,7 +84,6 @@ namespace lfs::vis::gui::panels {
             // Get current gizmo state from GUI manager
             auto* gui_manager = ctx.viewer->gui_manager_.get();
             ImGuizmo::OPERATION currentGizmoOperation = gui_manager->getCropGizmoOperation();
-            ImGuizmo::MODE currentGizmoMode = gui_manager->getCropGizmoMode();
 
             // Operation selection
             if (ImGui::RadioButton("Translate##CropGizmo", currentGizmoOperation == ImGuizmo::TRANSLATE)) {
