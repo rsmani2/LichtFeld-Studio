@@ -27,10 +27,12 @@ namespace lfs::core {
      * @brief Crop SplatData by a bounding box
      * @param splat_data The splat data to crop
      * @param bounding_box The bounding box to crop by
-     * @return New SplatData containing only points inside the bounding box
+     * @param inverse If true, keep points outside the box instead of inside
+     * @return New SplatData containing the selected points
      */
     SplatData crop_by_cropbox(const SplatData& splat_data,
-                              const lfs::geometry::BoundingBox& bounding_box);
+                              const lfs::geometry::BoundingBox& bounding_box,
+                              bool inverse = false);
 
     /**
      * @brief Randomly select a subset of splats

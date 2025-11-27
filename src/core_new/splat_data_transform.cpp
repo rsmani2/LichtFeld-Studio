@@ -109,7 +109,8 @@ namespace lfs::core {
     }
 
     SplatData crop_by_cropbox(const SplatData& splat_data,
-                              const lfs::geometry::BoundingBox& bounding_box) {
+                              const lfs::geometry::BoundingBox& bounding_box,
+                              const bool inverse) {
         LOG_TIMER("crop_by_cropbox");
 
         if (!splat_data._means.is_valid() || splat_data._means.size(0) == 0) {
@@ -157,20 +158,20 @@ namespace lfs::core {
         auto inside_min = local_points.ge(bbox_min_tensor.unsqueeze(0));
         auto inside_max = local_points.le(bbox_max_tensor.unsqueeze(0));
 
-
         auto inside_both = inside_min && inside_max;
         std::vector<int> reduce_dims = {1};
         auto inside_mask = inside_both.all(std::span<const int>(reduce_dims), false);
 
-        int points_inside = inside_mask.sum_scalar();
+        // Invert mask if inverse mode
+        auto selection_mask = inverse ? inside_mask.logical_not() : inside_mask;
+        const int points_selected = selection_mask.sum_scalar();
 
-        if (points_inside == 0) {
-            LOG_WARN("No points found inside bounding box, returning empty SplatData");
+        if (points_selected == 0) {
+            LOG_WARN("No points selected, returning empty SplatData");
             return SplatData();
         }
 
-        auto indices = inside_mask.nonzero();
-
+        auto indices = selection_mask.nonzero();
         if (indices.ndim() == 2) {
             indices = indices.squeeze(1);
         }
@@ -186,9 +187,9 @@ namespace lfs::core {
         Tensor dists = cropped_means.sub(scene_center).norm(2.0f, {1}, false);
 
         float new_scene_scale = splat_data._scene_scale;
-        if (points_inside > 1) {
+        if (points_selected > 1) {
             auto sorted_dists = dists.sort(0, false);
-            new_scene_scale = sorted_dists.first[points_inside / 2].item();
+            new_scene_scale = sorted_dists.first[points_selected / 2].item();
         }
 
         SplatData cropped_splat(
@@ -208,9 +209,7 @@ namespace lfs::core {
                 splat_data._densification_info.index_select(0, indices).contiguous();
         }
 
-        LOG_DEBUG("Successfully cropped SplatData: {} -> {} points (scale: {:.4f} -> {:.4f})",
-                  num_points, points_inside, splat_data._scene_scale, new_scene_scale);
-
+        LOG_DEBUG("Cropped SplatData: {} -> {} points (inverse={})", num_points, points_selected, inverse);
         return cropped_splat;
     }
 

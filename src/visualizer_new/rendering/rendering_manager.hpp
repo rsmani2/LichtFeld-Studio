@@ -37,6 +37,7 @@ namespace lfs::vis {
         // Crop box
         bool show_crop_box = false;
         bool use_crop_box = false;
+        bool crop_inverse = false;  // If true, crop removes inside instead of outside
         glm::vec3 crop_min = glm::vec3(-1.0f, -1.0f, -1.0f);
         glm::vec3 crop_max = glm::vec3(1.0f, 1.0f, 1.0f);
         glm::vec3 crop_color = glm::vec3(1.0f, 1.0f, 0.0f);

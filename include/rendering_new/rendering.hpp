@@ -71,6 +71,7 @@ namespace lfs::rendering {
         lfs::core::Tensor* brush_selection_tensor = nullptr;
         bool brush_saturation_mode = false;
         float brush_saturation_amount = 0.0f;
+        bool crop_inverse = false;  // If true, cull inside crop box instead of outside
     };
 
     struct RenderResult {

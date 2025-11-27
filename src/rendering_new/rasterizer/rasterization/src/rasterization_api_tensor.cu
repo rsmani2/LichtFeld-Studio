@@ -68,7 +68,8 @@ namespace lfs::rendering {
         float brush_saturation_amount,
         const Tensor* crop_box_transform,
         const Tensor* crop_box_min,
-        const Tensor* crop_box_max) {
+        const Tensor* crop_box_max,
+        bool crop_inverse) {
 
         check_tensor_input(config::debug, means, "means");
         check_tensor_input(config::debug, scales_raw, "scales_raw");
@@ -201,7 +202,8 @@ namespace lfs::rendering {
             brush_saturation_amount,
             crop_box_transform_ptr,
             crop_box_min_ptr,
-            crop_box_max_ptr);
+            crop_box_max_ptr,
+            crop_inverse);
 
         arena.end_frame(frame_id, true);  // true = from_rendering
         arena.set_rendering_active(false);

@@ -61,6 +61,7 @@ namespace lfs::rendering {
             const Tensor* crop_box_transform = nullptr;  // 4x4 world-to-box transform
             const Tensor* crop_box_min = nullptr;        // Box min bounds
             const Tensor* crop_box_max = nullptr;        // Box max bounds
+            bool crop_inverse = false;                   // If true, cull inside instead of outside
         };
 
         struct RenderResult {

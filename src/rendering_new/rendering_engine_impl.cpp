@@ -204,6 +204,7 @@ namespace lfs::rendering {
             pipeline_req.crop_box_transform = &crop_box_transform_tensor;
             pipeline_req.crop_box_min = &crop_box_min_tensor;
             pipeline_req.crop_box_max = &crop_box_max_tensor;
+            pipeline_req.crop_inverse = request.crop_inverse;
         }
 
         auto pipeline_result = pipeline_.render(splat_data, pipeline_req);

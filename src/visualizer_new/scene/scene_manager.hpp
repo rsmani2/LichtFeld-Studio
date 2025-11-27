@@ -147,7 +147,7 @@ namespace lfs::vis {
     private:
         void setupEventHandlers();
         void emitSceneChanged();
-        void handleCropActivePly(const lfs::geometry::BoundingBox& crop_box);
+        void handleCropActivePly(const lfs::geometry::BoundingBox& crop_box, bool inverse);
         void handleRenamePly(const lfs::core::events::cmd::RenamePLY& event);
         void updateCropBoxToFitScene(bool use_percentile);
 

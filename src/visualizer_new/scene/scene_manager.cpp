@@ -75,7 +75,7 @@ namespace lfs::vis {
         });
 
         cmd::CropPLY::when([this](const auto& cmd) {
-            handleCropActivePly(cmd.crop_box);
+            handleCropActivePly(cmd.crop_box, cmd.inverse);
         });
 
         cmd::RenamePLY::when([this](const auto& cmd) {
@@ -612,23 +612,19 @@ namespace lfs::vis {
         rendering_manager_ = rm;
     }
 
-    void SceneManager::handleCropActivePly(const lfs::geometry::BoundingBox& crop_box) {
-        LOG_INFO("handleCropActivePly: Starting crop operation");
-
+    void SceneManager::handleCropActivePly(const lfs::geometry::BoundingBox& crop_box, const bool inverse) {
         changeContentType(ContentType::SplatFiles);
 
-        // Collect node names first to avoid iterator invalidation
         std::vector<std::string> node_names;
         for (const auto* node : scene_.getVisibleNodes()) {
             node_names.push_back(node->name);
         }
 
         if (node_names.empty()) {
-            LOG_DEBUG("No visible nodes to crop");
             return;
         }
 
-        LOG_INFO("Cropping {} visible splat files", node_names.size());
+        LOG_INFO("Cropping {} visible splat files (inverse={})", node_names.size(), inverse);
 
         for (const auto& node_name : node_names) {
             const auto* node = scene_.getNode(node_name);
@@ -638,19 +634,16 @@ namespace lfs::vis {
 
             try {
                 const size_t original_count = node->model->size();
-                auto cropped_splat = lfs::core::crop_by_cropbox(*node->model, crop_box);
+                auto cropped_splat = lfs::core::crop_by_cropbox(*node->model, crop_box, inverse);
                 const size_t cropped_count = cropped_splat.size();
 
                 if (cropped_count == original_count) {
-                    LOG_DEBUG("No splats removed for '{}', skipping", node_name);
                     continue;
                 }
 
-                LOG_INFO("Cropped '{}': {} -> {} gaussians (removed {})",
-                         node_name, original_count, cropped_count, original_count - cropped_count);
+                LOG_INFO("Cropped '{}': {} -> {} gaussians", node_name, original_count, cropped_count);
 
                 scene_.replaceNodeModel(node_name, std::make_unique<lfs::core::SplatData>(std::move(cropped_splat)));
-                LOG_INFO("Model replaced in scene for '{}'", node_name);
 
                 state::PLYAdded{
                     .name = node_name,
@@ -666,7 +659,6 @@ namespace lfs::vis {
 
         emitSceneChanged();
         updateCropBoxToFitScene(false);
-        LOG_INFO("Crop operation completed");
     }
 
     void SceneManager::updatePlyPath(const std::string& ply_name, const std::filesystem::path& ply_path) {

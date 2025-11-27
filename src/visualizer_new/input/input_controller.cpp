@@ -528,10 +528,18 @@ namespace lfs::vis {
             key_r_pressed_ = (action != GLFW_RELEASE);
         }
 
+        // T - cycle PLY, Ctrl+T - toggle crop inverse mode
         if (key == GLFW_KEY_T && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
+            const bool ctrl_pressed = glfwGetKey(window_, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
+                                      glfwGetKey(window_, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+            if (ctrl_pressed) {
+                cmd::ToggleCropInverse{}.emit();
+                return;
+            }
             cmd::CyclePLY{}.emit();
             return;
         }
+
 
         if (key == GLFW_KEY_V && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             cmd::ToggleSplitView{}.emit();

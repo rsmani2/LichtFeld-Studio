@@ -34,6 +34,7 @@ namespace lfs::rendering {
         float brush_saturation_amount = 0.0f,
         const Tensor* crop_box_transform = nullptr,
         const Tensor* crop_box_min = nullptr,
-        const Tensor* crop_box_max = nullptr);
+        const Tensor* crop_box_max = nullptr,
+        bool crop_inverse = false);
 
 } // namespace lfs::rendering

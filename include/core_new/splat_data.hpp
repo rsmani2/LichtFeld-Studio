@@ -147,7 +147,7 @@ namespace lfs::core {
         friend PointCloud to_point_cloud(const SplatData&);
         friend std::vector<std::string> get_attribute_names(const SplatData&);
         friend SplatData& transform(SplatData&, const glm::mat4&);
-        friend SplatData crop_by_cropbox(const SplatData&, const lfs::geometry::BoundingBox&);
+        friend SplatData crop_by_cropbox(const SplatData&, const lfs::geometry::BoundingBox&, bool);
         friend void random_choose(SplatData&, int, int);
     };
 

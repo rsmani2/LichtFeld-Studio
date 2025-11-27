@@ -131,7 +131,8 @@ void lfs::rendering::forward(
     float brush_saturation_amount,
     const float* crop_box_transform,
     const float3* crop_box_min,
-    const float3* crop_box_max) {
+    const float3* crop_box_max,
+    bool crop_inverse) {
 
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
     const dim3 block(config::tile_width, config::tile_height, 1);
@@ -211,7 +212,8 @@ void lfs::rendering::forward(
         brush_saturation_amount,
         crop_box_transform,
         crop_box_min,
-        crop_box_max);
+        crop_box_max,
+        crop_inverse);
     CHECK_CUDA(config::debug, "preprocess")
 
 

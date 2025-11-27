@@ -581,6 +581,7 @@ namespace lfs::vis {
                 .min = settings_.crop_min,
                 .max = settings_.crop_max,
                 .transform = transform.inv().toMat4()};
+            request.crop_inverse = settings_.crop_inverse;
         }
 
         // Render the gaussians
@@ -1021,7 +1022,12 @@ namespace lfs::vis {
                 .max = settings_.crop_max,
                 .transform = transform.inv().toMat4()};
 
-            auto bbox_result = engine_->renderBoundingBox(box, viewport, settings_.crop_color, settings_.crop_line_width);
+            // Red color when inverse mode active, otherwise use configured color
+            const glm::vec3 color = settings_.crop_inverse
+                ? glm::vec3(1.0f, 0.2f, 0.2f)
+                : settings_.crop_color;
+
+            auto bbox_result = engine_->renderBoundingBox(box, viewport, color, settings_.crop_line_width);
             if (!bbox_result) {
                 LOG_WARN("Failed to render bounding box: {}", bbox_result.error());
             }

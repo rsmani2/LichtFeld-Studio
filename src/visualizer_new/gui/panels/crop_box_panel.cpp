@@ -69,9 +69,9 @@ namespace lfs::vis::gui::panels {
             crop_box.setBounds(settings.crop_min, settings.crop_max);
             lfs::geometry::EuclideanTransform transform(settings.crop_transform.inv());
             crop_box.setworld2BBox(transform);
-            // Emit event for bounds change
             lfs::core::events::cmd::CropPLY{
-                .crop_box = crop_box}
+                .crop_box = crop_box,
+                .inverse = settings.crop_inverse}
                 .emit();
         }
         ImGui::PopStyleColor(1); // pop orange color

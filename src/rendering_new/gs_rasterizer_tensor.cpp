@@ -29,7 +29,8 @@ namespace lfs::rendering {
         float brush_saturation_amount,
         const Tensor* crop_box_transform,
         const Tensor* crop_box_min,
-        const Tensor* crop_box_max) {
+        const Tensor* crop_box_max,
+        bool crop_inverse) {
 
         // Get camera parameters
         float fx = viewpoint_camera.focal_x();
@@ -122,7 +123,8 @@ namespace lfs::rendering {
             brush_saturation_amount,
             crop_box_transform,
             crop_box_min,
-            crop_box_max);
+            crop_box_max,
+            crop_inverse);
 
         // Manually blend the background since the forward pass does not support it
         // bg_color is [3], need to make it [3, 1, 1]

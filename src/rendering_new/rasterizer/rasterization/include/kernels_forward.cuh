@@ -61,7 +61,8 @@ namespace lfs::rendering::kernels::forward {
         const float brush_saturation_amount,
         const float* crop_box_transform,
         const float3* crop_box_min,
-        const float3* crop_box_max) {
+        const float3* crop_box_max,
+        const bool crop_inverse) {
         auto primitive_idx = cg::this_grid().thread_rank();
         bool active = true;
         if (primitive_idx >= n_primitives) {
@@ -75,7 +76,7 @@ namespace lfs::rendering::kernels::forward {
         // load 3d mean
         float3 mean3d = means[primitive_idx];
 
-        // Early crop box culling - skip splats outside crop box entirely
+        // Crop box culling
         if (active && crop_box_transform != nullptr && crop_box_min != nullptr && crop_box_max != nullptr) {
             const float3 box_min = *crop_box_min;
             const float3 box_max = *crop_box_max;
@@ -85,9 +86,11 @@ namespace lfs::rendering::kernels::forward {
                                   crop_box_transform[6] * mean3d.z + crop_box_transform[7];
             const float local_z = crop_box_transform[8] * mean3d.x + crop_box_transform[9] * mean3d.y +
                                   crop_box_transform[10] * mean3d.z + crop_box_transform[11];
-            if (local_x < box_min.x || local_x > box_max.x ||
-                local_y < box_min.y || local_y > box_max.y ||
-                local_z < box_min.z || local_z > box_max.z) {
+            const bool inside = local_x >= box_min.x && local_x <= box_max.x &&
+                                local_y >= box_min.y && local_y <= box_max.y &&
+                                local_z >= box_min.z && local_z <= box_max.z;
+            // Normal: cull outside, Inverse: cull inside
+            if (crop_inverse ? inside : !inside) {
                 active = false;
             }
         }
