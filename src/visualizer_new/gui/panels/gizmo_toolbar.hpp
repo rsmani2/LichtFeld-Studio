@@ -20,9 +20,17 @@ namespace lfs::vis::gui::panels {
         CropBox
     };
 
+    enum class CropBoxOperation {
+        Bounds,
+        Translate,
+        Rotate,
+        Scale
+    };
+
     struct GizmoToolbarState {
         ImGuizmo::OPERATION current_operation = ImGuizmo::TRANSLATE;
         ToolMode current_tool = ToolMode::Translate;
+        CropBoxOperation cropbox_operation = CropBoxOperation::Bounds;
         bool initialized = false;
         unsigned int translation_texture = 0;
         unsigned int rotation_texture = 0;
@@ -30,6 +38,7 @@ namespace lfs::vis::gui::panels {
         unsigned int brush_texture = 0;
         unsigned int align_texture = 0;
         unsigned int cropbox_texture = 0;
+        unsigned int bounds_texture = 0;
     };
 
     void InitGizmoToolbar(GizmoToolbarState& state);

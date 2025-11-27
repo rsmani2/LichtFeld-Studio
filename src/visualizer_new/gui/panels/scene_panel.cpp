@@ -66,6 +66,20 @@ namespace lfs::vis::gui {
         cmd::RenamePLY::when([this](const auto& event) {
             handlePLYRenamed(event);
         });
+
+        // Listen for programmatic node selection
+        ui::NodeSelected::when([this](const auto& event) {
+            if (event.type == "PLY") {
+                for (size_t i = 0; i < m_plyNodes.size(); ++i) {
+                    if (m_plyNodes[i].name == event.path) {
+                        for (auto& n : m_plyNodes) n.selected = false;
+                        m_plyNodes[i].selected = true;
+                        m_selectedPLYIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+        });
     }
 
     void ScenePanel::handleSceneLoaded(const state::SceneLoaded& event) {

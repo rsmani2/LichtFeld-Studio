@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "command/commands/cropbox_command.hpp"
 #include "core_new/events.hpp"
 #include "gui/panels/gizmo_toolbar.hpp"
 #include "gui/panels/menu_bar.hpp"
@@ -15,6 +16,7 @@
 #include <imgui.h>
 #include <ImGuizmo.h>
 #include <memory>
+#include <optional>
 #include <string>
 #include <unordered_map>
 
@@ -123,6 +125,10 @@ namespace lfs::vis {
 
             // Gizmo toolbar state
             panels::GizmoToolbarState gizmo_toolbar_state_;
+
+            // Cropbox undo/redo state
+            bool cropbox_gizmo_active_ = false;
+            std::optional<command::CropBoxState> cropbox_state_before_drag_;
         };
     } // namespace gui
 } // namespace lfs::vis

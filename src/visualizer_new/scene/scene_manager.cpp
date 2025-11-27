@@ -85,8 +85,10 @@ namespace lfs::vis {
         // Handle node selection from scene panel
         ui::NodeSelected::when([this](const auto& event) {
             if (event.type == "PLY") {
-                // Select the node for transforms
-                selectNode(event.path);
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                if (selected_node_ != event.path) {
+                    selected_node_ = event.path;
+                }
             }
         });
 
@@ -294,12 +296,21 @@ namespace lfs::vis {
     // ========== Node Selection ==========
 
     void SceneManager::selectNode(const std::string& name) {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-        if (scene_.getNode(name) != nullptr) {
-            selected_node_ = name;
-            LOG_INFO("Selected node: '{}'", name);
-        } else {
-            LOG_WARN("Cannot select node '{}' - not found", name);
+        const auto* node = scene_.getNode(name);
+        if (node != nullptr) {
+            {
+                std::lock_guard<std::mutex> lock(state_mutex_);
+                selected_node_ = name;
+            }
+            ui::NodeSelected{
+                .path = name,
+                .type = "PLY",
+                .metadata = {
+                    {"name", name},
+                    {"gaussians", std::to_string(node->model ? node->model->size() : 0)},
+                    {"visible", node->visible ? "true" : "false"}
+                }
+            }.emit();
         }
     }
 

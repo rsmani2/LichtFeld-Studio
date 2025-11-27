@@ -46,6 +46,7 @@ namespace lfs::vis::gui::panels {
         state.brush_texture = LoadIconTexture("brush.png");
         state.align_texture = LoadIconTexture("align.png");
         state.cropbox_texture = LoadIconTexture("cropbox.png");
+        state.bounds_texture = LoadIconTexture("bounds.png");
         state.initialized = true;
     }
 
@@ -58,6 +59,7 @@ namespace lfs::vis::gui::panels {
         if (state.brush_texture) glDeleteTextures(1, &state.brush_texture);
         if (state.align_texture) glDeleteTextures(1, &state.align_texture);
         if (state.cropbox_texture) glDeleteTextures(1, &state.cropbox_texture);
+        if (state.bounds_texture) glDeleteTextures(1, &state.bounds_texture);
 
         state.translation_texture = 0;
         state.rotation_texture = 0;
@@ -65,6 +67,7 @@ namespace lfs::vis::gui::panels {
         state.brush_texture = 0;
         state.align_texture = 0;
         state.cropbox_texture = 0;
+        state.bounds_texture = 0;
         state.initialized = false;
     }
 
@@ -157,13 +160,65 @@ namespace lfs::vis::gui::panels {
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("3-Point Align");
             ImGui::SameLine();
 
-            IconButton("##cropbox", state.cropbox_texture, ToolMode::CropBox, ImGuizmo::SCALE, "C");
+            IconButton("##cropbox", state.cropbox_texture, ToolMode::CropBox, ImGuizmo::BOUNDS, "C");
             if (ImGui::IsItemHovered()) ImGui::SetTooltip("Crop Box");
         }
         ImGui::End();
 
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
+
+        // Secondary toolbar for cropbox operations
+        if (state.current_tool == ToolMode::CropBox) {
+            constexpr float sub_toolbar_width = 160.0f;
+            constexpr float sub_toolbar_height = 36.0f;
+
+            const float sub_pos_x = viewport->WorkPos.x + viewport_pos.x + (viewport_size.x - sub_toolbar_width) * 0.5f;
+            const float sub_pos_y = viewport->WorkPos.y + viewport_pos.y + toolbar_height + 8.0f;
+
+            ImGui::SetNextWindowPos(ImVec2(sub_pos_x, sub_pos_y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(sub_toolbar_width, sub_toolbar_height), ImGuiCond_Always);
+
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, vertical_padding));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.12f, 0.95f));
+
+            if (ImGui::Begin("##CropBoxToolbar", nullptr, flags)) {
+                const ImVec2 btn_size(button_size, button_size);
+
+                const auto CropOpButton = [&](const char* id, const unsigned int texture,
+                                              const CropBoxOperation op, const char* fallback, const char* tooltip) {
+                    const bool is_selected = (state.cropbox_operation == op);
+                    ImGui::PushStyleColor(ImGuiCol_Button, is_selected ?
+                        ImVec4(0.3f, 0.5f, 0.8f, 1.0f) : ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, is_selected ?
+                        ImVec4(0.4f, 0.6f, 0.9f, 1.0f) : ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+
+                    const bool clicked = texture ?
+                        ImGui::ImageButton(id, (ImTextureID)(intptr_t)texture, btn_size,
+                                           ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0)) :
+                        ImGui::Button(fallback, btn_size);
+
+                    ImGui::PopStyleColor(2);
+                    if (clicked) {
+                        state.cropbox_operation = op;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+                };
+
+                CropOpButton("##crop_bounds", state.bounds_texture, CropBoxOperation::Bounds, "B", "Resize Bounds");
+                ImGui::SameLine();
+                CropOpButton("##crop_translate", state.translation_texture, CropBoxOperation::Translate, "T", "Translate");
+                ImGui::SameLine();
+                CropOpButton("##crop_rotate", state.rotation_texture, CropBoxOperation::Rotate, "R", "Rotate");
+                ImGui::SameLine();
+                CropOpButton("##crop_scale", state.scaling_texture, CropBoxOperation::Scale, "S", "Scale");
+            }
+            ImGui::End();
+
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(2);
+        }
     }
 
 } // namespace lfs::vis::gui::panels
