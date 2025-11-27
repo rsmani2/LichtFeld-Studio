@@ -178,11 +178,30 @@ namespace lfs::rendering {
         // Set uniforms
         glm::mat4 mvp = projection * view * box2World;
 
+        // Calculate view direction from inverse view matrix
+        glm::mat4 inv_view = glm::inverse(view);
+        glm::vec3 camera_pos = glm::vec3(inv_view[3]);
+
+        // Transform box center to world space
+        glm::vec3 local_center = (min_bounds_ + max_bounds_) * 0.5f;
+        glm::vec3 world_center = glm::vec3(box2World * glm::vec4(local_center, 1.0f));
+
+        // View direction from camera to box center (normalized)
+        glm::vec3 view_dir = glm::normalize(world_center - camera_pos);
+
+        // Transform view direction to box local space for shader
+        glm::mat3 world2Box_rot = glm::mat3(world2BBox_.toMat4());
+        glm::vec3 local_view_dir = world2Box_rot * view_dir;
+
         LOG_TRACE("Rendering bounding box with color ({}, {}, {})", color_.r, color_.g, color_.b);
 
         if (auto result = s->set("u_mvp", mvp); !result)
             return result;
         if (auto result = s->set("u_color", color_); !result)
+            return result;
+        if (auto result = s->set("u_box_center", local_center); !result)
+            return result;
+        if (auto result = s->set("u_view_dir", local_view_dir); !result)
             return result;
 
         // Bind VAO and draw
