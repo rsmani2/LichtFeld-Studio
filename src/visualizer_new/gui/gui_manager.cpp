@@ -644,17 +644,15 @@ namespace lfs::vis::gui {
             return;
         }
 
-        // Get viewport for positioning
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
-
-        // Position overlay in the center-top of the viewport
+        // Position overlay centered in viewport
         const float overlay_width = 300.0f;
         const float overlay_height = 80.0f;
-        const float padding = 20.0f;
+        // Shift down when crop box tool is active to avoid toolbar overlap
+        const float padding = (gizmo_toolbar_state_.current_tool == panels::ToolMode::CropBox) ? 130.0f : 20.0f;
 
         ImVec2 overlay_pos(
-            viewport->WorkPos.x + (viewport->WorkSize.x - overlay_width) * 0.5f,
-            viewport->WorkPos.y + padding);
+            viewport_pos_.x + (viewport_size_.x - overlay_width) * 0.5f,
+            viewport_pos_.y + padding);
 
         // Create overlay window
         ImGui::SetNextWindowPos(overlay_pos, ImGuiCond_Always);
@@ -746,16 +744,16 @@ namespace lfs::vis::gui {
             return;
         }
 
-        const auto* viewport = ImGui::GetMainViewport();
         constexpr float kOverlayWidth = 300.0f;
         constexpr float kOverlayHeight = 80.0f;
-        constexpr float kPadding = 20.0f;
         constexpr float kFadeDuration = 500.0f;
 
-        const float y_offset = speed_overlay_visible_ ? 110.0f : kPadding;
+        // Base padding shifts down when crop box tool is active
+        const float base_padding = (gizmo_toolbar_state_.current_tool == panels::ToolMode::CropBox) ? 130.0f : 20.0f;
+        const float y_offset = speed_overlay_visible_ ? (base_padding + 90.0f) : base_padding;
         const ImVec2 overlay_pos(
-            viewport->WorkPos.x + (viewport->WorkSize.x - kOverlayWidth) * 0.5f,
-            viewport->WorkPos.y + y_offset);
+            viewport_pos_.x + (viewport_size_.x - kOverlayWidth) * 0.5f,
+            viewport_pos_.y + y_offset);
 
         ImGui::SetNextWindowPos(overlay_pos, ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(kOverlayWidth, kOverlayHeight), ImGuiCond_Always);
