@@ -47,6 +47,7 @@ namespace lfs::vis::gui::panels {
         state.align_texture = LoadIconTexture("align.png");
         state.cropbox_texture = LoadIconTexture("cropbox.png");
         state.bounds_texture = LoadIconTexture("bounds.png");
+        state.reset_texture = LoadIconTexture("reset.png");
         state.initialized = true;
     }
 
@@ -60,6 +61,7 @@ namespace lfs::vis::gui::panels {
         if (state.align_texture) glDeleteTextures(1, &state.align_texture);
         if (state.cropbox_texture) glDeleteTextures(1, &state.cropbox_texture);
         if (state.bounds_texture) glDeleteTextures(1, &state.bounds_texture);
+        if (state.reset_texture) glDeleteTextures(1, &state.reset_texture);
 
         state.translation_texture = 0;
         state.rotation_texture = 0;
@@ -68,6 +70,7 @@ namespace lfs::vis::gui::panels {
         state.align_texture = 0;
         state.cropbox_texture = 0;
         state.bounds_texture = 0;
+        state.reset_texture = 0;
         state.initialized = false;
     }
 
@@ -170,7 +173,7 @@ namespace lfs::vis::gui::panels {
 
         // Secondary toolbar for cropbox operations
         if (state.current_tool == ToolMode::CropBox) {
-            constexpr float sub_toolbar_width = 160.0f;
+            constexpr float sub_toolbar_width = 200.0f;
             constexpr float sub_toolbar_height = 36.0f;
 
             const float sub_pos_x = viewport->WorkPos.x + viewport_pos.x + (viewport_size.x - sub_toolbar_width) * 0.5f;
@@ -213,6 +216,30 @@ namespace lfs::vis::gui::panels {
                 CropOpButton("##crop_rotate", state.rotation_texture, CropBoxOperation::Rotate, "R", "Rotate");
                 ImGui::SameLine();
                 CropOpButton("##crop_scale", state.scaling_texture, CropBoxOperation::Scale, "S", "Scale");
+
+                // Separator
+                ImGui::SameLine(0.0f, 8.0f);
+                const ImVec2 p = ImGui::GetCursorScreenPos();
+                ImGui::GetWindowDrawList()->AddLine(
+                    ImVec2(p.x, p.y + 2.0f), ImVec2(p.x, p.y + button_size - 2.0f),
+                    IM_COL32(128, 128, 128, 128), 1.0f);
+                ImGui::Dummy(ImVec2(2.0f, 0.0f));
+                ImGui::SameLine(0.0f, 8.0f);
+
+                // Reset button
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+
+                const bool reset_clicked = state.reset_texture ?
+                    ImGui::ImageButton("##crop_reset", (ImTextureID)(intptr_t)state.reset_texture, btn_size,
+                                       ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0)) :
+                    ImGui::Button("X", btn_size);
+
+                ImGui::PopStyleColor(2);
+                if (reset_clicked) {
+                    state.reset_cropbox_requested = true;
+                }
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Reset to Default");
             }
             ImGui::End();
 

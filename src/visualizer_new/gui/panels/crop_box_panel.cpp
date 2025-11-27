@@ -52,58 +52,7 @@ namespace lfs::vis::gui::panels {
         auto settings = render_manager->getSettings();
         bool settings_changed = false;
 
-        if (ImGui::Checkbox("Show Crop Box", &settings.show_crop_box)) {
-            settings_changed = true;
-        }
-
-        if (ImGui::Checkbox("Use Crop Box", &settings.use_crop_box)) {
-            settings_changed = true;
-        }
-
-        ImVec4 orangishColor(1.0f, 0.55f, 0.0f, 1.0f);
-        ImGui::PushStyleColor(ImGuiCol_Button, orangishColor);
-
-        // Add the "Crop Active PLY" button below the checkboxes
-        if (ImGui::Button("Crop Active PLY")) {
-            lfs::geometry::BoundingBox crop_box;
-            crop_box.setBounds(settings.crop_min, settings.crop_max);
-            lfs::geometry::EuclideanTransform transform(settings.crop_transform.inv());
-            crop_box.setworld2BBox(transform);
-            lfs::core::events::cmd::CropPLY{
-                .crop_box = crop_box,
-                .inverse = settings.crop_inverse}
-                .emit();
-        }
-        ImGui::PopStyleColor(1); // pop orange color
-
         if (settings.show_crop_box) {
-            // ImGuizmo controls
-            ImGui::Separator();
-            ImGui::Text("Gizmo Controls:");
-
-            // Get current gizmo state from GUI manager
-            auto* gui_manager = ctx.viewer->gui_manager_.get();
-            ImGuizmo::OPERATION currentGizmoOperation = gui_manager->getCropGizmoOperation();
-
-            // Operation selection
-            if (ImGui::RadioButton("Translate##CropGizmo", currentGizmoOperation == ImGuizmo::TRANSLATE)) {
-                gui_manager->setCropGizmoOperation(ImGuizmo::TRANSLATE);
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("Rotate##CropGizmo", currentGizmoOperation == ImGuizmo::ROTATE)) {
-                gui_manager->setCropGizmoOperation(ImGuizmo::ROTATE);
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("Scale##CropGizmo", currentGizmoOperation == ImGuizmo::SCALE)) {
-                gui_manager->setCropGizmoOperation(ImGuizmo::SCALE);
-            }
-            ImGui::SameLine();
-            if (ImGui::RadioButton("Bounds##CropGizmo", currentGizmoOperation == ImGuizmo::BOUNDS)) {
-                gui_manager->setCropGizmoOperation(ImGuizmo::BOUNDS);
-            }
-
-            ImGui::Separator();
-
             // Appearance controls
             float bbox_color[3] = {settings.crop_color.x, settings.crop_color.y, settings.crop_color.z};
             if (ImGui::ColorEdit3("Box Color", bbox_color)) {
@@ -111,19 +60,7 @@ namespace lfs::vis::gui::panels {
                 settings_changed = true;
             }
 
-            float available_width = ImGui::GetContentRegionAvail().x;
-            float button_width = 120.0f;
-            float slider_width = available_width - button_width - ImGui::GetStyle().ItemSpacing.x;
-
-            ImGui::SetNextItemWidth(slider_width);
             if (ImGui::SliderFloat("Line Width", &settings.crop_line_width, 0.5f, 10.0f)) {
-                settings_changed = true;
-            }
-
-            if (ImGui::Button("Reset to Default")) {
-                settings.crop_min = glm::vec3(-1.0f, -1.0f, -1.0f);
-                settings.crop_max = glm::vec3(1.0f, 1.0f, 1.0f);
-                settings.crop_transform = lfs::geometry::EuclideanTransform();
                 settings_changed = true;
             }
 
@@ -249,9 +186,6 @@ namespace lfs::vis::gui::panels {
 
                 bool bounds_changed = false;
 
-                const float max_box_size = 200.0f;
-                const float min_range = -max_box_size * 0.5f;
-                const float max_range = max_box_size * 0.5f;
                 const float bound_step = 0.01f;
                 const float bound_step_fast = 0.1f;
 
@@ -266,21 +200,18 @@ namespace lfs::vis::gui::panels {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(text_width);
                 bounds_changed |= ImGui::InputFloat("##MinX", &min_bounds[0], bound_step, bound_step_fast, "%.3f");
-                min_bounds[0] = std::clamp(min_bounds[0], min_range, max_range);
                 min_bounds[0] = std::min(min_bounds[0], max_bounds[0]);
 
                 ImGui::Text("Y:");
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(text_width);
                 bounds_changed |= ImGui::InputFloat("##MinY", &min_bounds[1], bound_step, bound_step_fast, "%.3f");
-                min_bounds[1] = std::clamp(min_bounds[1], min_range, max_range);
                 min_bounds[1] = std::min(min_bounds[1], max_bounds[1]);
 
                 ImGui::Text("Z:");
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(text_width);
                 bounds_changed |= ImGui::InputFloat("##MinZ", &min_bounds[2], bound_step, bound_step_fast, "%.3f");
-                min_bounds[2] = std::clamp(min_bounds[2], min_range, max_range);
                 min_bounds[2] = std::min(min_bounds[2], max_bounds[2]);
 
                 ImGui::Separator();
@@ -291,21 +222,18 @@ namespace lfs::vis::gui::panels {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(text_width);
                 bounds_changed |= ImGui::InputFloat("##MaxX", &max_bounds[0], bound_step, bound_step_fast, "%.3f");
-                max_bounds[0] = std::clamp(max_bounds[0], min_range, max_range);
                 max_bounds[0] = std::max(max_bounds[0], min_bounds[0]);
 
                 ImGui::Text("Y:");
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(text_width);
                 bounds_changed |= ImGui::InputFloat("##MaxY", &max_bounds[1], bound_step, bound_step_fast, "%.3f");
-                max_bounds[1] = std::clamp(max_bounds[1], min_range, max_range);
                 max_bounds[1] = std::max(max_bounds[1], min_bounds[1]);
 
                 ImGui::Text("Z:");
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(text_width);
                 bounds_changed |= ImGui::InputFloat("##MaxZ", &max_bounds[2], bound_step, bound_step_fast, "%.3f");
-                max_bounds[2] = std::clamp(max_bounds[2], min_range, max_range);
                 max_bounds[2] = std::max(max_bounds[2], min_bounds[2]);
 
                 if (bounds_changed) {

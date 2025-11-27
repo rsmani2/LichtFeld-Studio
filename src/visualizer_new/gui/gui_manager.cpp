@@ -422,6 +422,19 @@ namespace lfs::vis::gui {
                     render_manager->updateSettings(settings);
                 }
             }
+
+            // Handle reset cropbox request from toolbar
+            if (gizmo_toolbar_state_.reset_cropbox_requested) {
+                gizmo_toolbar_state_.reset_cropbox_requested = false;
+                if (auto* render_manager = ctx.viewer->getRenderingManager()) {
+                    auto settings = render_manager->getSettings();
+                    settings.crop_min = glm::vec3(-1.0f, -1.0f, -1.0f);
+                    settings.crop_max = glm::vec3(1.0f, 1.0f, 1.0f);
+                    settings.crop_transform = lfs::geometry::EuclideanTransform();
+                    settings.use_crop_box = false;
+                    render_manager->updateSettings(settings);
+                }
+            }
         } else {
             show_node_gizmo_ = false;
             auto* brush_tool = ctx.viewer->getBrushTool();
