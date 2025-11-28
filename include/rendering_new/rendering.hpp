@@ -29,6 +29,11 @@ namespace lfs::rendering {
     template <typename T>
     using Result = std::expected<T, std::string>;
 
+    enum class SelectionMode {
+        Centers,
+        Rings
+    };
+
     // Public types
     struct ViewportData {
         glm::mat3 rotation;
@@ -71,7 +76,10 @@ namespace lfs::rendering {
         lfs::core::Tensor* brush_selection_tensor = nullptr;
         bool brush_saturation_mode = false;
         float brush_saturation_amount = 0.0f;
-        bool crop_inverse = false;  // If true, cull inside crop box instead of outside
+        bool selection_mode_rings = false;
+        bool crop_inverse = false;
+        unsigned long long* hovered_depth_id = nullptr;
+        int highlight_gaussian_id = -1;
     };
 
     struct RenderResult {

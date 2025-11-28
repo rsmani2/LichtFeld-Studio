@@ -33,6 +33,7 @@ namespace lfs::vis::gui::panels {
         ToolMode current_tool = ToolMode::Translate;
         CropBoxOperation cropbox_operation = CropBoxOperation::Bounds;
         bool reset_cropbox_requested = false;
+        bool selection_use_rings = false;  // false = Centers mode, true = Rings mode
         bool initialized = false;
         unsigned int selection_texture = 0;
         unsigned int translation_texture = 0;

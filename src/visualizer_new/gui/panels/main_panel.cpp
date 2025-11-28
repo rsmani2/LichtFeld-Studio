@@ -99,7 +99,7 @@ namespace lfs::vis::gui::panels {
 
         // Show ring width slider only when ring mode is enabled and not in point cloud mode
         if (settings.show_rings && !settings.point_cloud_mode) {
-            if (widgets::SliderWithReset("Ring Width", &settings.ring_width, 0.0005f, 0.01f, 0.002f)) {
+            if (widgets::SliderWithReset("Ring Width", &settings.ring_width, 0.001f, 0.05f, 0.01f)) {
                 settings_changed = true;
             }
         }

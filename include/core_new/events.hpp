@@ -65,6 +65,7 @@ namespace lfs::core {
             EVENT(ToggleGimbalLock, bool locked;);
             EVENT(Undo, );
             EVENT(Redo, );
+            EVENT(DeleteSelected, );  // Delete selected Gaussians (soft delete)
         } // namespace cmd
 
         // ============================================================================

@@ -38,28 +38,44 @@ namespace lfs::vis::tools {
                                   [[maybe_unused]] bool* p_open) {
         if (!isEnabled() || ImGui::GetIO().WantCaptureMouse) return;
 
+        bool is_ring_mode = false;
+        if (tool_context_) {
+            const auto* const rm = tool_context_->getRenderingManager();
+            if (rm) {
+                is_ring_mode = rm->getSelectionMode() == lfs::rendering::SelectionMode::Rings;
+            }
+        }
+
         ImDrawList* const draw_list = ImGui::GetForegroundDrawList();
-        const ImVec2 mouse_pos(last_mouse_pos_.x, last_mouse_pos_.y);
+        const ImVec2 mouse_pos = ImGui::GetMousePos();
         constexpr ImU32 brush_color = IM_COL32(100, 180, 255, 220);
 
-        draw_list->AddCircle(mouse_pos, brush_radius_, brush_color, 32, 2.0f);
-        draw_list->AddCircleFilled(mouse_pos, 3.0f, brush_color);
+        if (is_ring_mode) {
+            constexpr float cross_size = 8.0f;
+            draw_list->AddLine(ImVec2(mouse_pos.x - cross_size, mouse_pos.y),
+                               ImVec2(mouse_pos.x + cross_size, mouse_pos.y), brush_color, 2.0f);
+            draw_list->AddLine(ImVec2(mouse_pos.x, mouse_pos.y - cross_size),
+                               ImVec2(mouse_pos.x, mouse_pos.y + cross_size), brush_color, 2.0f);
+        } else {
+            draw_list->AddCircle(mouse_pos, brush_radius_, brush_color, 32, 2.0f);
+            draw_list->AddCircleFilled(mouse_pos, 3.0f, brush_color);
+        }
 
-        // Show action indicator
         const char* info_text = is_painting_
-            ? (current_action_ == SelectionAction::Add ? "SEL +" : "SEL -")
-            : "SEL";
+            ? (current_action_ == SelectionAction::Add ? (is_ring_mode ? "RING +" : "SEL +") : (is_ring_mode ? "RING -" : "SEL -"))
+            : (is_ring_mode ? "RING" : "SEL");
 
         constexpr float font_size = 22.0f;
-        const ImVec2 text_pos(mouse_pos.x + brush_radius_ + 10, mouse_pos.y - font_size / 2);
+        const float text_offset = is_ring_mode ? 15.0f : (brush_radius_ + 10.0f);
+        const ImVec2 text_pos(mouse_pos.x + text_offset, mouse_pos.y - font_size / 2);
 
         constexpr ImU32 shadow_color = IM_COL32(0, 0, 0, 180);
         draw_list->AddText(ImGui::GetFont(), font_size, ImVec2(text_pos.x + 1, text_pos.y + 1), shadow_color, info_text);
         draw_list->AddText(ImGui::GetFont(), font_size, text_pos, IM_COL32(255, 255, 255, 255), info_text);
     }
 
-    bool SelectionTool::handleMouseButton(int button, int action, int mods, double x, double y,
-                                           const ToolContext& ctx) {
+    bool SelectionTool::handleMouseButton(const int button, const int action, const int mods,
+                                           const double x, const double y, const ToolContext& ctx) {
         if (!isEnabled() || button != GLFW_MOUSE_BUTTON_LEFT) return false;
 
         if (action == GLFW_PRESS) {
@@ -84,7 +100,7 @@ namespace lfs::vis::tools {
         return false;
     }
 
-    bool SelectionTool::handleMouseMove(double x, double y, const ToolContext& ctx) {
+    bool SelectionTool::handleMouseMove(const double x, const double y, const ToolContext& ctx) {
         if (!isEnabled()) return false;
 
         last_mouse_pos_ = glm::vec2(static_cast<float>(x), static_cast<float>(y));
@@ -100,9 +116,14 @@ namespace lfs::vis::tools {
         return false;
     }
 
-    bool SelectionTool::handleScroll([[maybe_unused]] double x_offset, double y_offset,
-                                      int mods, const ToolContext& ctx) {
+    bool SelectionTool::handleScroll([[maybe_unused]] const double x_offset, const double y_offset,
+                                      const int mods, const ToolContext& ctx) {
         if (!isEnabled()) return false;
+
+        const auto* const rm = ctx.getRenderingManager();
+        if (rm && rm->getSelectionMode() == lfs::rendering::SelectionMode::Rings) {
+            return false;
+        }
 
         const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
         const bool shift = (mods & GLFW_MOD_SHIFT) != 0;
@@ -112,7 +133,6 @@ namespace lfs::vis::tools {
         if (is_painting_ || ctrl || shift || alt) {
             const float scale = (y_offset > 0) ? 1.1f : 0.9f;
             brush_radius_ = std::clamp(brush_radius_ * scale, 1.0f, 500.0f);
-
             updateBrushPreview(last_mouse_pos_.x, last_mouse_pos_.y, ctx);
             ctx.requestRender();
             return true;
@@ -120,7 +140,7 @@ namespace lfs::vis::tools {
         return false;
     }
 
-    void SelectionTool::onEnabledChanged(bool enabled) {
+    void SelectionTool::onEnabledChanged(const bool enabled) {
         if (!enabled) {
             is_painting_ = false;
         }
@@ -134,8 +154,9 @@ namespace lfs::vis::tools {
         }
     }
 
-    void SelectionTool::beginStroke([[maybe_unused]] double x, [[maybe_unused]] double y,
-                                     SelectionAction action, bool clear_existing, const ToolContext& ctx) {
+    void SelectionTool::beginStroke([[maybe_unused]] const double x, [[maybe_unused]] const double y,
+                                     const SelectionAction action, const bool clear_existing,
+                                     const ToolContext& ctx) {
         is_painting_ = true;
         current_action_ = action;
 
@@ -201,7 +222,7 @@ namespace lfs::vis::tools {
         }
     }
 
-    void SelectionTool::updateSelectionAtPoint(double x, double y, const ToolContext& ctx) {
+    void SelectionTool::updateSelectionAtPoint(const double x, const double y, const ToolContext& ctx) {
         auto* const rm = ctx.getRenderingManager();
         if (!rm) return;
 
@@ -219,13 +240,35 @@ namespace lfs::vis::tools {
 
         const float image_x = rel_x * scale_x;
         const float image_y = rel_y * scale_y;
-        const float scaled_radius = brush_radius_ * scale_x;
         const bool add_mode = (current_action_ == SelectionAction::Add);
 
-        rm->setBrushState(true, image_x, image_y, scaled_radius, add_mode, &cumulative_selection_);
+        if (rm->getSelectionMode() == lfs::rendering::SelectionMode::Rings) {
+            const int hovered_id = rm->getHoveredGaussianId();
+            if (hovered_id >= 0 && cumulative_selection_.is_valid()) {
+                auto cpu_sel = cumulative_selection_.cpu();
+                cpu_sel.ptr<bool>()[hovered_id] = add_mode;
+                cumulative_selection_ = cpu_sel.cuda();
+
+                auto* const sm = ctx.getSceneManager();
+                if (sm) {
+                    auto mask = cumulative_selection_.to(lfs::core::DataType::UInt8);
+                    sm->getScene().setSelectionMask(std::make_shared<lfs::core::Tensor>(std::move(mask)));
+                }
+            }
+            rm->setBrushState(true, image_x, image_y, 0.0f, add_mode, nullptr, false, 0.0f);
+        } else {
+            const float scaled_radius = brush_radius_ * scale_x;
+            rm->setBrushState(true, image_x, image_y, scaled_radius, add_mode, &cumulative_selection_);
+
+            auto* const sm = ctx.getSceneManager();
+            if (sm && cumulative_selection_.is_valid()) {
+                auto mask = cumulative_selection_.to(lfs::core::DataType::UInt8);
+                sm->getScene().setSelectionMask(std::make_shared<lfs::core::Tensor>(std::move(mask)));
+            }
+        }
     }
 
-    void SelectionTool::updateBrushPreview(double x, double y, const ToolContext& ctx) {
+    void SelectionTool::updateBrushPreview(const double x, const double y, const ToolContext& ctx) {
         auto* const rm = ctx.getRenderingManager();
         if (!rm) return;
 
@@ -243,9 +286,18 @@ namespace lfs::vis::tools {
 
         const float image_x = rel_x * scale_x;
         const float image_y = rel_y * scale_y;
-        const float scaled_radius = brush_radius_ * scale_x;
 
-        rm->setBrushState(true, image_x, image_y, scaled_radius, true, nullptr, false, 0.0f);
+        const auto sel_mode = rm->getSelectionMode();
+        const bool shift_held = glfwGetKey(ctx.getWindow(), GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
+                                glfwGetKey(ctx.getWindow(), GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+        const bool add_mode = !shift_held;
+
+        if (sel_mode == lfs::rendering::SelectionMode::Rings) {
+            rm->setBrushState(true, image_x, image_y, 0.0f, add_mode, nullptr, false, 0.0f);
+        } else {
+            const float scaled_radius = brush_radius_ * scale_x;
+            rm->setBrushState(true, image_x, image_y, scaled_radius, add_mode, nullptr, false, 0.0f);
+        }
     }
 
 } // namespace lfs::vis::tools

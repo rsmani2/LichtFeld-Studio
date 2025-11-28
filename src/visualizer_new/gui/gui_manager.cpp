@@ -25,6 +25,7 @@
 #include "tools/align_tool.hpp"
 #include "tools/brush_tool.hpp"
 #include "tools/selection_tool.hpp"
+#include "rendering/rendering_manager.hpp"
 #include "visualizer_impl.hpp"
 
 #include <chrono>
@@ -409,6 +410,42 @@ namespace lfs::vis::gui {
             if (align_tool) align_tool->setEnabled(is_align_mode);
             if (selection_tool) selection_tool->setEnabled(is_selection_mode);
 
+            // Update selection mode and auto-toggle ring rendering
+            if (is_selection_mode) {
+                if (auto* rm = ctx.viewer->getRenderingManager()) {
+                    const auto mode = gizmo_toolbar_state_.selection_use_rings
+                        ? lfs::rendering::SelectionMode::Rings
+                        : lfs::rendering::SelectionMode::Centers;
+                    rm->setSelectionMode(mode);
+
+                    const bool ring_mode_active = gizmo_toolbar_state_.selection_use_rings;
+                    if (ring_mode_active && !ring_mode_was_active_) {
+                        auto settings = rm->getSettings();
+                        show_rings_before_ring_mode_ = settings.show_rings;
+                        if (!settings.show_rings) {
+                            settings.show_rings = true;
+                            rm->updateSettings(settings);
+                        }
+                    } else if (!ring_mode_active && ring_mode_was_active_) {
+                        auto settings = rm->getSettings();
+                        if (settings.show_rings != show_rings_before_ring_mode_) {
+                            settings.show_rings = show_rings_before_ring_mode_;
+                            rm->updateSettings(settings);
+                        }
+                    }
+                    ring_mode_was_active_ = ring_mode_active;
+                }
+            } else if (ring_mode_was_active_) {
+                if (auto* rm = ctx.viewer->getRenderingManager()) {
+                    auto settings = rm->getSettings();
+                    if (settings.show_rings != show_rings_before_ring_mode_) {
+                        settings.show_rings = show_rings_before_ring_mode_;
+                        rm->updateSettings(settings);
+                    }
+                }
+                ring_mode_was_active_ = false;
+            }
+
             if (is_cropbox_mode) {
                 switch (gizmo_toolbar_state_.cropbox_operation) {
                     case panels::CropBoxOperation::Bounds:    crop_gizmo_operation_ = ImGuizmo::BOUNDS; break;
@@ -474,6 +511,11 @@ namespace lfs::vis::gui {
         auto* brush_tool = ctx.viewer->getBrushTool();
         if (brush_tool && brush_tool->isEnabled()) {
             brush_tool->renderUI(ctx, nullptr);
+        }
+
+        auto* selection_tool = ctx.viewer->getSelectionTool();
+        if (selection_tool && selection_tool->isEnabled()) {
+            selection_tool->renderUI(ctx, nullptr);
         }
 
         auto* align_tool = ctx.viewer->getAlignTool();

@@ -13,6 +13,7 @@
 #include "rendering_new/rendering.hpp"
 #include "scene/scene_manager.hpp"
 #include "training/training_manager.hpp"
+#include <cuda_runtime.h>
 #include <glad/glad.h>
 #include <stdexcept>
 
@@ -173,6 +174,10 @@ namespace lfs::vis {
     RenderingManager::~RenderingManager() {
         if (cached_render_texture_ > 0) {
             glDeleteTextures(1, &cached_render_texture_);
+        }
+        if (d_hovered_depth_id_ != nullptr) {
+            cudaFree(d_hovered_depth_id_);
+            d_hovered_depth_id_ = nullptr;
         }
     }
 
@@ -572,7 +577,22 @@ namespace lfs::vis {
             .brush_add_mode = brush_add_mode_,
             .brush_selection_tensor = brush_selection_tensor_,
             .brush_saturation_mode = brush_saturation_mode_,
-            .brush_saturation_amount = brush_saturation_amount_};
+            .brush_saturation_amount = brush_saturation_amount_,
+            .selection_mode_rings = (selection_mode_ == lfs::rendering::SelectionMode::Rings),
+            .hovered_depth_id = nullptr,
+            .highlight_gaussian_id = (selection_mode_ == lfs::rendering::SelectionMode::Rings) ? hovered_gaussian_id_ : -1};
+
+        // Ring mode hover preview: allocate device buffer if needed
+        const bool need_hovered_output = (selection_mode_ == lfs::rendering::SelectionMode::Rings) && brush_active_;
+        if (need_hovered_output) {
+            if (d_hovered_depth_id_ == nullptr) {
+                cudaMalloc(&d_hovered_depth_id_, sizeof(unsigned long long));
+            }
+            // Initialize to max value (atomicMin finds minimum)
+            constexpr unsigned long long init_val = 0xFFFFFFFFFFFFFFFFULL;
+            cudaMemcpy(d_hovered_depth_id_, &init_val, sizeof(unsigned long long), cudaMemcpyHostToDevice);
+            request.hovered_depth_id = d_hovered_depth_id_;
+        }
 
         // Add crop box if enabled (for filtering) or if showing (for visualization)
         if (settings_.use_crop_box || settings_.show_crop_box) {
@@ -588,6 +608,17 @@ namespace lfs::vis {
         auto render_result = engine_->renderGaussians(*model, request);
         if (render_result) {
             cached_result_ = *render_result;
+
+            // Copy packed depth+id back and extract gaussian ID
+            if (need_hovered_output) {
+                cudaMemcpy(&hovered_depth_id_, d_hovered_depth_id_, sizeof(unsigned long long), cudaMemcpyDeviceToHost);
+                // Extract gaussian ID from lower 32 bits; -1 if no hit (max value)
+                if (hovered_depth_id_ == 0xFFFFFFFFFFFFFFFFULL) {
+                    hovered_gaussian_id_ = -1;
+                } else {
+                    hovered_gaussian_id_ = static_cast<int>(hovered_depth_id_ & 0xFFFFFFFF);
+                }
+            }
 
             // Present to texture
             auto present_result = engine_->presentToScreen(
@@ -1189,8 +1220,9 @@ namespace lfs::vis {
         lfs::rendering::brush_select_tensor(*cached_result_.screen_positions, mouse_x, mouse_y, radius, selection_out);
     }
 
-    void RenderingManager::setBrushState(bool active, float x, float y, float radius, bool add_mode, lfs::core::Tensor* selection_tensor,
-                                          bool saturation_mode, float saturation_amount) {
+    void RenderingManager::setBrushState(const bool active, const float x, const float y, const float radius,
+                                          const bool add_mode, lfs::core::Tensor* selection_tensor,
+                                          const bool saturation_mode, const float saturation_amount) {
         brush_active_ = active;
         brush_x_ = x;
         brush_y_ = y;
@@ -1199,7 +1231,7 @@ namespace lfs::vis {
         brush_selection_tensor_ = selection_tensor;
         brush_saturation_mode_ = saturation_mode;
         brush_saturation_amount_ = saturation_amount;
-        markDirty();  // Need to re-render with brush selection
+        markDirty();
     }
 
     void RenderingManager::clearBrushState() {
@@ -1210,7 +1242,7 @@ namespace lfs::vis {
         brush_selection_tensor_ = nullptr;
         brush_saturation_mode_ = false;
         brush_saturation_amount_ = 0.0f;
-        // Don't mark dirty - clearing brush doesn't need immediate re-render
+        hovered_gaussian_id_ = -1;
     }
 
     void RenderingManager::adjustSaturation(const float mouse_x, const float mouse_y, const float radius,

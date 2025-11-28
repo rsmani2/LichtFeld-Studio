@@ -69,7 +69,7 @@ namespace lfs::vis {
 
         // Ring mode (only active in splat mode)
         bool show_rings = false;
-        float ring_width = 0.002f; // Width of the ring band (0.001 to 0.01)
+        float ring_width = 0.01f; // Width of the ring band (0.001 to 0.05)
 
         // Camera frustums
         bool show_camera_frustums = false;
@@ -201,6 +201,11 @@ namespace lfs::vis {
                            lfs::core::Tensor* selection_tensor = nullptr,
                            bool saturation_mode = false, float saturation_amount = 0.0f);
         void clearBrushState();
+
+        // Selection mode for brush tool
+        void setSelectionMode(lfs::rendering::SelectionMode mode) { selection_mode_ = mode; }
+        [[nodiscard]] lfs::rendering::SelectionMode getSelectionMode() const { return selection_mode_; }
+        [[nodiscard]] int getHoveredGaussianId() const { return hovered_gaussian_id_; }
         void adjustSaturation(float mouse_x, float mouse_y, float radius, float saturation_delta,
                               lfs::core::Tensor& sh0_tensor);
 
@@ -270,6 +275,12 @@ namespace lfs::vis {
         lfs::core::Tensor* brush_selection_tensor_ = nullptr;
         bool brush_saturation_mode_ = false;
         float brush_saturation_amount_ = 0.0f;
+        lfs::rendering::SelectionMode selection_mode_ = lfs::rendering::SelectionMode::Centers;
+
+        // Ring mode hover preview (packed depth+id from atomicMin)
+        unsigned long long hovered_depth_id_ = 0xFFFFFFFFFFFFFFFFULL;
+        unsigned long long* d_hovered_depth_id_ = nullptr;
+        int hovered_gaussian_id_ = -1;  // Extracted from lower 32 bits
     };
 
 } // namespace lfs::vis

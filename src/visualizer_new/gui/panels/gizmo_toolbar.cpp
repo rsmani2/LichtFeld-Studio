@@ -178,6 +178,50 @@ namespace lfs::vis::gui::panels {
         ImGui::PopStyleColor();
         ImGui::PopStyleVar(2);
 
+        // Secondary toolbar for selection mode (Centers vs Rings)
+        if (state.current_tool == ToolMode::Selection) {
+            constexpr float sub_toolbar_width = 130.0f;
+            constexpr float sub_toolbar_height = 36.0f;
+
+            const float sub_pos_x = viewport->WorkPos.x + viewport_pos.x + (viewport_size.x - sub_toolbar_width) * 0.5f;
+            const float sub_pos_y = viewport->WorkPos.y + viewport_pos.y + toolbar_height + 8.0f;
+
+            ImGui::SetNextWindowPos(ImVec2(sub_pos_x, sub_pos_y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(sub_toolbar_width, sub_toolbar_height), ImGuiCond_Always);
+
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 6.0f);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(6.0f, vertical_padding));
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.12f, 0.12f, 0.12f, 0.95f));
+
+            if (ImGui::Begin("##SelectionModeToolbar", nullptr, flags)) {
+                const ImVec2 text_btn_size(50.0f, button_size);
+
+                const auto SelectionModeButton = [&](const char* label, const bool is_rings_mode, const char* tooltip) {
+                    const bool is_selected = (state.selection_use_rings == is_rings_mode);
+                    ImGui::PushStyleColor(ImGuiCol_Button, is_selected ?
+                        ImVec4(0.3f, 0.5f, 0.8f, 1.0f) : ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, is_selected ?
+                        ImVec4(0.4f, 0.6f, 0.9f, 1.0f) : ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+
+                    const bool clicked = ImGui::Button(label, text_btn_size);
+
+                    ImGui::PopStyleColor(2);
+                    if (clicked) {
+                        state.selection_use_rings = is_rings_mode;
+                    }
+                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
+                };
+
+                SelectionModeButton("Centers", false, "Select by Gaussian center (fast)");
+                ImGui::SameLine();
+                SelectionModeButton("Rings", true, "Select by visible pixels (accurate)");
+            }
+            ImGui::End();
+
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(2);
+        }
+
         // Secondary toolbar for cropbox operations
         if (state.current_tool == ToolMode::CropBox) {
             constexpr float sub_toolbar_width = 205.0f;

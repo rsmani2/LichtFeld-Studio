@@ -598,6 +598,12 @@ namespace lfs::vis {
             }
         }
 
+        // DEL key - delete selected Gaussians
+        if (key == GLFW_KEY_DELETE && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
+            cmd::DeleteSelected{}.emit();
+            return;
+        }
+
         if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             if (!training_manager_) {
                 LOG_WARN("Training manager is not set; cannot cycle camera view.");

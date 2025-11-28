@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "visualizer_impl.hpp"
+#include "command/commands/crop_command.hpp"
 #include "core/data_loading_service.hpp"
 #include "core_new/logger.hpp"
 #include "scene/scene_manager.hpp"
@@ -167,6 +168,9 @@ namespace lfs::vis {
         // Undo/Redo commands
         cmd::Undo::when([this](const auto&) { undo(); });
         cmd::Redo::when([this](const auto&) { redo(); });
+
+        // Delete selected Gaussians
+        cmd::DeleteSelected::when([this](const auto&) { deleteSelectedGaussians(); });
 
         // Render settings changes
         ui::RenderSettingsChanged::when([this]([[maybe_unused]] const auto& event) {
@@ -456,6 +460,68 @@ namespace lfs::vis {
         command_history_.redo();
         if (rendering_manager_) {
             rendering_manager_->markDirty();
+        }
+    }
+
+    void VisualizerImpl::deleteSelectedGaussians() {
+        if (!scene_manager_) return;
+
+        auto& scene = scene_manager_->getScene();
+        auto selection = scene.getSelectionMask();
+
+        if (!selection || !selection->is_valid()) {
+            LOG_INFO("No Gaussians selected to delete");
+            return;
+        }
+
+        // Get all visible nodes and apply deletion
+        auto nodes = scene.getVisibleNodes();
+        if (nodes.empty()) return;
+
+        size_t offset = 0;
+        bool any_deleted = false;
+
+        for (const auto* node : nodes) {
+            if (!node || !node->model) continue;
+
+            const size_t node_size = node->model->size();
+            if (node_size == 0) continue;
+
+            // Extract selection for this node
+            auto node_selection = selection->slice(0, offset, offset + node_size);
+
+            // Convert selection (uint8) to bool tensor for soft_delete
+            auto bool_mask = node_selection.to(lfs::core::DataType::Bool);
+
+            // Get old state for undo (clone before modifying)
+            auto old_deleted = node->model->has_deleted_mask()
+                ? node->model->deleted().clone()
+                : lfs::core::Tensor::zeros({node_size}, lfs::core::Device::CUDA, lfs::core::DataType::Bool);
+
+            // Apply soft delete (OR with existing deleted mask)
+            node->model->soft_delete(bool_mask);
+
+            // Get new state for redo
+            auto new_deleted = node->model->deleted().clone();
+
+            // Create undo command
+            auto cmd = std::make_unique<command::CropCommand>(
+                scene_manager_.get(), node->name, std::move(old_deleted), std::move(new_deleted));
+            command_history_.execute(std::move(cmd));
+
+            any_deleted = true;
+            offset += node_size;
+        }
+
+        if (any_deleted) {
+            LOG_INFO("Deleted selected Gaussians");
+            // Mark scene as dirty to rebuild combined model with updated deletion masks
+            scene.markDirty();
+            // Clear selection after deletion
+            scene.clearSelection();
+            if (rendering_manager_) {
+                rendering_manager_->markDirty();
+            }
         }
     }
 

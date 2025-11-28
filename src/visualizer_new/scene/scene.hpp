@@ -84,6 +84,9 @@ namespace lfs::vis {
         // Get visible nodes for split view
         std::vector<const Node*> getVisibleNodes() const;
 
+        // Mark scene data as changed (e.g., after modifying a node's deleted mask)
+        void markDirty() { invalidateCache(); }
+
     private:
         std::vector<Node> nodes_;
 

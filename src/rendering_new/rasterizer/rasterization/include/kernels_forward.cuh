@@ -59,11 +59,14 @@ namespace lfs::rendering::kernels::forward {
         bool* brush_selection_out,
         const bool brush_saturation_mode,
         const float brush_saturation_amount,
+        const bool selection_mode_rings,
         const float* crop_box_transform,
         const float3* crop_box_min,
         const float3* crop_box_max,
         const bool crop_inverse,
-        const bool* deleted_mask) {
+        const bool* deleted_mask,
+        const int highlight_gaussian_id,
+        unsigned long long* hovered_depth_id) {
         auto primitive_idx = cg::this_grid().thread_rank();
         bool active = true;
         if (primitive_idx >= n_primitives) {
@@ -339,13 +342,36 @@ namespace lfs::rendering::kernels::forward {
             color.y = fmaxf(0.0f, fminf(1.0f, lum + factor * (color.y - lum)));
             color.z = fmaxf(0.0f, fminf(1.0f, lum + factor * (color.z - lum)));
         }
-        // Selection mode: show selection highlights
-        else if (!brush_saturation_mode) {
-            const bool in_cumulative = (brush_selection_out != nullptr && brush_selection_out[primitive_idx]);
-            const bool in_scene_selection = (selection_mask != nullptr && selection_mask[primitive_idx]);
+        // Ring mode hover detection
+        if (selection_mode_rings && brush_active && hovered_depth_id != nullptr) {
+            if (brush_x >= mean2d.x - extent_x && brush_x <= mean2d.x + extent_x &&
+                brush_y >= mean2d.y - extent_y && brush_y <= mean2d.y + extent_y) {
+                const float2 delta = make_float2(brush_x - mean2d.x, brush_y - mean2d.y);
+                const float sigma = 0.5f * (conic.x * delta.x * delta.x + conic.z * delta.y * delta.y) +
+                                    conic.y * delta.x * delta.y;
+                if (sigma >= 0.0f) {
+                    const float hover_alpha = opacity * expf(-sigma);
+                    if (hover_alpha >= config::min_alpha_threshold) {
+                        const unsigned int depth_bits = __float_as_uint(depth);
+                        const unsigned long long packed =
+                            (static_cast<unsigned long long>(depth_bits) << 32) | primitive_idx;
+                        atomicMin(hovered_depth_id, packed);
+                    }
+                }
+            }
+        }
 
-            if (under_brush || in_cumulative || in_scene_selection) {
-                color.x = fminf(color.x * 2.0f + 0.4f, 1.0f);
+        // Selection highlights
+        if (!brush_saturation_mode) {
+            const bool in_cumulative = brush_selection_out != nullptr && brush_selection_out[primitive_idx];
+            const bool in_scene_selection = selection_mask != nullptr && selection_mask[primitive_idx];
+            const bool highlight_under_brush = !selection_mode_rings && under_brush &&
+                                               (brush_add_mode || in_scene_selection || in_cumulative);
+            const bool is_hovered = highlight_gaussian_id >= 0 &&
+                                    static_cast<int>(primitive_idx) == highlight_gaussian_id;
+
+            if (highlight_under_brush || in_cumulative || in_scene_selection || is_hovered) {
+                color = make_float3(1.0f, 0.2f, 0.2f);
             }
         }
 
@@ -535,7 +561,6 @@ namespace lfs::rendering::kernels::forward {
         const uint2 tile_range = tile_instance_ranges[tile_idx];
         const int n_points_total = tile_range.y - tile_range.x;
 
-        // setup shared memory
         __shared__ float2 collected_mean2d[config::block_size_blend];
         __shared__ float4 collected_conic_opacity[config::block_size_blend];
         __shared__ float3 collected_color[config::block_size_blend];
@@ -554,8 +579,7 @@ namespace lfs::rendering::kernels::forward {
                 const uint primitive_idx = instance_primitive_indices[current_fetch_idx];
                 collected_mean2d[thread_rank] = primitive_mean2d[primitive_idx];
                 collected_conic_opacity[thread_rank] = primitive_conic_opacity[primitive_idx];
-                const float3 color = fmaxf(primitive_color[primitive_idx], 0.0f);
-                collected_color[thread_rank] = color;
+                collected_color[thread_rank] = fmaxf(primitive_color[primitive_idx], 0.0f);
                 collected_depth[thread_rank] = primitive_depth[primitive_idx];
             }
             block.sync();
@@ -575,14 +599,13 @@ namespace lfs::rendering::kernels::forward {
                 if (alpha < config::min_alpha_threshold)
                     continue;
 
-                // Ring mode: highlight the edge of gaussians
+                // Ring mode: draw outline at visibility boundary
                 if (show_rings) {
-                    const float ring_upper = 0.025f;
-                    const float ring_lower = ring_upper - ring_width;
-                    if (gaussian < ring_upper && gaussian > ring_lower) {
-                        float opacity_adjusted = 1.0f;
-                        gaussian += 0.5f;
-                        alpha = fminf(opacity_adjusted * gaussian, config::max_fragment_alpha);
+                    const float boundary_gaussian = config::min_alpha_threshold / opacity;
+                    const float ring_outer = boundary_gaussian * (1.0f + ring_width * 10.0f);
+                    const float ring_inner = boundary_gaussian * (1.0f - ring_width * 10.0f);
+                    if (gaussian < ring_outer && gaussian > ring_inner) {
+                        alpha = fminf(0.8f, config::max_fragment_alpha);
                     }
                 }
                 const float next_transmittance = transmittance * (1.0f - alpha);
@@ -590,11 +613,13 @@ namespace lfs::rendering::kernels::forward {
                     done = true;
                     continue;
                 }
+
                 color_pixel += transmittance * alpha * collected_color[j];
+
                 // Median depth: pick depth when accumulated alpha crosses 50%
                 // This gives the depth at the "middle" of the opacity distribution
-                float contribution = transmittance * alpha;
-                float new_accumulated = accumulated_alpha + contribution;
+                const float contribution = transmittance * alpha;
+                const float new_accumulated = accumulated_alpha + contribution;
                 if (accumulated_alpha < 0.5f && new_accumulated >= 0.5f) {
                     depth_pixel = collected_depth[j];
                 }

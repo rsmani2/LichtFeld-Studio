@@ -21,25 +21,29 @@ namespace lfs::vis::command {
     void CropCommand::undo() {
         if (!scene_manager_) return;
 
-        auto* node = scene_manager_->getScene().getMutableNode(node_name_);
+        auto& scene = scene_manager_->getScene();
+        auto* node = scene.getMutableNode(node_name_);
         if (!node || !node->model) {
             LOG_WARN("CropCommand::undo - node '{}' not found", node_name_);
             return;
         }
 
         node->model->deleted() = old_deleted_mask_.clone();
+        scene.markDirty();
     }
 
     void CropCommand::redo() {
         if (!scene_manager_) return;
 
-        auto* node = scene_manager_->getScene().getMutableNode(node_name_);
+        auto& scene = scene_manager_->getScene();
+        auto* node = scene.getMutableNode(node_name_);
         if (!node || !node->model) {
             LOG_WARN("CropCommand::redo - node '{}' not found", node_name_);
             return;
         }
 
         node->model->deleted() = new_deleted_mask_.clone();
+        scene.markDirty();
     }
 
 } // namespace lfs::vis::command

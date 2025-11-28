@@ -27,11 +27,14 @@ namespace lfs::rendering {
         Tensor* brush_selection_out,
         bool brush_saturation_mode,
         float brush_saturation_amount,
+        bool selection_mode_rings,
         const Tensor* crop_box_transform,
         const Tensor* crop_box_min,
         const Tensor* crop_box_max,
         bool crop_inverse,
-        const Tensor* deleted_mask) {
+        const Tensor* deleted_mask,
+        unsigned long long* hovered_depth_id,
+        int highlight_gaussian_id) {
 
         // Get camera parameters
         float fx = viewpoint_camera.focal_x();
@@ -128,11 +131,14 @@ namespace lfs::rendering {
             brush_selection_out,
             brush_saturation_mode,
             brush_saturation_amount,
+            selection_mode_rings,
             crop_box_transform,
             crop_box_min,
             crop_box_max,
             crop_inverse,
-            actual_deleted_mask);
+            actual_deleted_mask,
+            hovered_depth_id,
+            highlight_gaussian_id);
 
         // Manually blend the background since the forward pass does not support it
         // bg_color is [3], need to make it [3, 1, 1]

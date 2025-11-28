@@ -66,11 +66,14 @@ namespace lfs::rendering {
         Tensor* brush_selection_out,
         bool brush_saturation_mode,
         float brush_saturation_amount,
+        bool selection_mode_rings,
         const Tensor* crop_box_transform,
         const Tensor* crop_box_min,
         const Tensor* crop_box_max,
         bool crop_inverse,
-        const Tensor* deleted_mask) {
+        const Tensor* deleted_mask,
+        unsigned long long* hovered_depth_id,
+        int highlight_gaussian_id) {
 
         check_tensor_input(config::debug, means, "means");
         check_tensor_input(config::debug, scales_raw, "scales_raw");
@@ -209,11 +212,14 @@ namespace lfs::rendering {
             brush_selection_ptr,
             brush_saturation_mode,
             brush_saturation_amount,
+            selection_mode_rings,
             crop_box_transform_ptr,
             crop_box_min_ptr,
             crop_box_max_ptr,
             crop_inverse,
-            deleted_mask_ptr);
+            deleted_mask_ptr,
+            hovered_depth_id,
+            highlight_gaussian_id);
 
         arena.end_frame(frame_id, true);  // true = from_rendering
         arena.set_rendering_active(false);

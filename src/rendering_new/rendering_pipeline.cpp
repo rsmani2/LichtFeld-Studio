@@ -142,9 +142,12 @@ namespace lfs::rendering {
                                                 request.brush_active, request.brush_x, request.brush_y, request.brush_radius,
                                                 request.brush_add_mode, request.brush_selection_tensor,
                                                 request.brush_saturation_mode, request.brush_saturation_amount,
+                                                request.selection_mode_rings,
                                                 request.crop_box_transform, request.crop_box_min, request.crop_box_max,
                                                 request.crop_inverse,
-                                                request.deleted_mask);
+                                                request.deleted_mask,
+                                                request.hovered_depth_id,
+                                                request.highlight_gaussian_id);
                 result.image = std::move(image);
                 result.depth = std::move(depth);
                 if (request.output_screen_positions) {
@@ -178,9 +181,12 @@ namespace lfs::rendering {
                                             request.brush_active, request.brush_x, request.brush_y, request.brush_radius,
                                             request.brush_add_mode, request.brush_selection_tensor,
                                             request.brush_saturation_mode, request.brush_saturation_amount,
+                                            request.selection_mode_rings,
                                             request.crop_box_transform, request.crop_box_min, request.crop_box_max,
                                             request.crop_inverse,
-                                            request.deleted_mask);
+                                            request.deleted_mask,
+                                            request.hovered_depth_id,
+                                            request.highlight_gaussian_id);
             result.image = std::move(image);
             result.depth = std::move(depth);
             if (request.output_screen_positions) {

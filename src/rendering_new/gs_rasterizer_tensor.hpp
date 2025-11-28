@@ -11,7 +11,6 @@
 
 namespace lfs::rendering {
 
-    // Import Tensor from lfs::core
     using lfs::core::Tensor;
 
     std::tuple<Tensor, Tensor> rasterize_tensor(
@@ -19,7 +18,7 @@ namespace lfs::rendering {
         const lfs::core::SplatData& gaussian_model,
         const Tensor& bg_color,
         bool show_rings = false,
-        float ring_width = 0.002f,
+        float ring_width = 0.01f,
         const Tensor* model_transforms = nullptr,
         const Tensor* transform_indices = nullptr,
         const Tensor* selection_mask = nullptr,
@@ -32,10 +31,13 @@ namespace lfs::rendering {
         Tensor* brush_selection_out = nullptr,
         bool brush_saturation_mode = false,
         float brush_saturation_amount = 0.0f,
+        bool selection_mode_rings = false,
         const Tensor* crop_box_transform = nullptr,
         const Tensor* crop_box_min = nullptr,
         const Tensor* crop_box_max = nullptr,
         bool crop_inverse = false,
-        const Tensor* deleted_mask = nullptr);  // Soft deletion mask [N] bool, true = skip rendering
+        const Tensor* deleted_mask = nullptr,
+        unsigned long long* hovered_depth_id = nullptr,
+        int highlight_gaussian_id = -1);
 
 } // namespace lfs::rendering

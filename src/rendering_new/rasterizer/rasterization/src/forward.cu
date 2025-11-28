@@ -129,11 +129,14 @@ void lfs::rendering::forward(
     bool* brush_selection_out,
     bool brush_saturation_mode,
     float brush_saturation_amount,
+    bool selection_mode_rings,
     const float* crop_box_transform,
     const float3* crop_box_min,
     const float3* crop_box_max,
     bool crop_inverse,
-    const bool* deleted_mask) {
+    const bool* deleted_mask,
+    unsigned long long* hovered_depth_id,
+    int highlight_gaussian_id) {
 
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
     const dim3 block(config::tile_width, config::tile_height, 1);
@@ -211,11 +214,14 @@ void lfs::rendering::forward(
         brush_selection_out,
         brush_saturation_mode,
         brush_saturation_amount,
+        selection_mode_rings,
         crop_box_transform,
         crop_box_min,
         crop_box_max,
         crop_inverse,
-        deleted_mask);
+        deleted_mask,
+        highlight_gaussian_id,
+        hovered_depth_id);
     CHECK_CUDA(config::debug, "preprocess")
 
 

@@ -10,7 +10,7 @@
 #include "core_new/tensor.hpp"
 #include "geometry_new/bounding_box.hpp"
 #include "point_cloud_renderer.hpp"
-#include "rendering_new/rendering.hpp"
+#include "rendering_new/rendering.hpp"  // For SelectionMode
 #include "screen_renderer.hpp"
 #include <glm/glm.hpp>
 #include <optional>
@@ -42,7 +42,7 @@ namespace lfs::rendering {
             float voxel_size = 0.01f;
             bool gut = false;
             bool show_rings = false;
-            float ring_width = 0.002f;
+            float ring_width = 0.01f;
             // Per-node transforms: array of 4x4 matrices and per-Gaussian indices
             std::vector<glm::mat4> model_transforms;          // Array of transforms, one per node
             std::shared_ptr<lfs::core::Tensor> transform_indices;  // Per-Gaussian index [N], nullable
@@ -57,13 +57,16 @@ namespace lfs::rendering {
             lfs::core::Tensor* brush_selection_tensor = nullptr;
             bool brush_saturation_mode = false;
             float brush_saturation_amount = 0.0f;
-            // Crop box visualization (highlight gaussians outside box)
-            const Tensor* crop_box_transform = nullptr;  // 4x4 world-to-box transform
-            const Tensor* crop_box_min = nullptr;        // Box min bounds
-            const Tensor* crop_box_max = nullptr;        // Box max bounds
-            bool crop_inverse = false;                   // If true, cull inside instead of outside
-            // Soft deletion mask (for undo/redo crop support)
-            const Tensor* deleted_mask = nullptr;        // Per-Gaussian bool mask, true = skip
+            bool selection_mode_rings = false;  // Ring mode hover detection
+            // Crop box filtering
+            const Tensor* crop_box_transform = nullptr;
+            const Tensor* crop_box_min = nullptr;
+            const Tensor* crop_box_max = nullptr;
+            bool crop_inverse = false;
+            const Tensor* deleted_mask = nullptr;  // Soft deletion mask [N], true = skip
+            // Ring mode hover output
+            unsigned long long* hovered_depth_id = nullptr;
+            int highlight_gaussian_id = -1;
         };
 
         struct RenderResult {
