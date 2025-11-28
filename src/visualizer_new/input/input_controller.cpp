@@ -598,6 +598,15 @@ namespace lfs::vis {
             }
         }
 
+        // Selection tool key handling (Enter/Escape for polygon mode)
+        if (action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
+            if (selection_tool_ && selection_tool_->isEnabled() && tool_context_) {
+                if (selection_tool_->handleKeyPress(key, mods, *tool_context_)) {
+                    return;
+                }
+            }
+        }
+
         // DEL key - delete selected Gaussians
         if (key == GLFW_KEY_DELETE && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             cmd::DeleteSelected{}.emit();

@@ -31,6 +31,7 @@ namespace lfs::vis::tools {
         bool handleMouseButton(int button, int action, int mods, double x, double y, const ToolContext& ctx);
         bool handleMouseMove(double x, double y, const ToolContext& ctx);
         bool handleScroll(double x_offset, double y_offset, int mods, const ToolContext& ctx);
+        bool handleKeyPress(int key, int mods, const ToolContext& ctx);
 
         [[nodiscard]] float getBrushRadius() const { return brush_radius_; }
         void setBrushRadius(float radius) { brush_radius_ = std::clamp(radius, 1.0f, 500.0f); }
@@ -56,12 +57,23 @@ namespace lfs::vis::tools {
         bool is_lasso_dragging_ = false;
         std::vector<glm::vec2> lasso_points_;
 
+        // Polygon selection state
+        std::vector<glm::vec2> polygon_points_;
+        bool polygon_closed_ = false;
+        int polygon_dragged_vertex_ = -1;
+        static constexpr float POLYGON_VERTEX_RADIUS = 6.0f;
+        static constexpr float POLYGON_CLOSE_THRESHOLD = 12.0f;
+
         void beginStroke(double x, double y, SelectionAction action, bool clear_existing, const ToolContext& ctx);
         void endStroke();
         void updateSelectionAtPoint(double x, double y, const ToolContext& ctx);
         void updateBrushPreview(double x, double y, const ToolContext& ctx);
         void selectInRectangle(const ToolContext& ctx);
         void selectInLasso(const ToolContext& ctx);
+        void selectInPolygon(const ToolContext& ctx);
+        void resetPolygon();
+        void prepareSelectionState(const ToolContext& ctx, bool add_to_existing);
+        int findPolygonVertexAt(float x, float y) const;
         static bool pointInPolygon(float px, float py, const std::vector<glm::vec2>& polygon);
     };
 

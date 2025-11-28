@@ -68,6 +68,53 @@ namespace lfs::vis::tools {
                                IM_COL32(100, 180, 255, 100), 1.0f);
         }
 
+        // Draw polygon
+        if (!polygon_points_.empty()) {
+            constexpr ImU32 kVertexColor = IM_COL32(255, 200, 100, 255);
+            constexpr ImU32 kVertexHoverColor = IM_COL32(255, 255, 150, 255);
+            constexpr ImU32 kCloseHintColor = IM_COL32(100, 255, 100, 200);
+            constexpr ImU32 kFillColor = IM_COL32(100, 180, 255, 40);
+            constexpr ImU32 kLineToMouseColor = IM_COL32(100, 180, 255, 100);
+
+            // Draw edges
+            for (size_t i = 1; i < polygon_points_.size(); ++i) {
+                draw_list->AddLine(ImVec2(polygon_points_[i - 1].x, polygon_points_[i - 1].y),
+                                   ImVec2(polygon_points_[i].x, polygon_points_[i].y), brush_color, 2.0f);
+            }
+
+            if (polygon_closed_) {
+                draw_list->AddLine(ImVec2(polygon_points_.back().x, polygon_points_.back().y),
+                                   ImVec2(polygon_points_.front().x, polygon_points_.front().y), brush_color, 2.0f);
+                if (polygon_points_.size() >= 3) {
+                    std::vector<ImVec2> im_points;
+                    im_points.reserve(polygon_points_.size());
+                    for (const auto& pt : polygon_points_) {
+                        im_points.emplace_back(pt.x, pt.y);
+                    }
+                    draw_list->AddConvexPolyFilled(im_points.data(), static_cast<int>(im_points.size()), kFillColor);
+                }
+            } else {
+                draw_list->AddLine(ImVec2(polygon_points_.back().x, polygon_points_.back().y),
+                                   mouse_pos, kLineToMouseColor, 1.0f);
+                if (polygon_points_.size() >= 3) {
+                    const float dist = glm::distance(glm::vec2(mouse_pos.x, mouse_pos.y), polygon_points_.front());
+                    if (dist < POLYGON_CLOSE_THRESHOLD) {
+                        draw_list->AddCircle(ImVec2(polygon_points_.front().x, polygon_points_.front().y),
+                                             POLYGON_VERTEX_RADIUS + 3.0f, kCloseHintColor, 16, 2.0f);
+                    }
+                }
+            }
+
+            // Draw vertices (compute hovered index once)
+            const int hovered_idx = findPolygonVertexAt(mouse_pos.x, mouse_pos.y);
+            for (size_t i = 0; i < polygon_points_.size(); ++i) {
+                const auto& pt = polygon_points_[i];
+                const ImU32 color = (static_cast<int>(i) == hovered_idx) ? kVertexHoverColor : kVertexColor;
+                draw_list->AddCircleFilled(ImVec2(pt.x, pt.y), POLYGON_VERTEX_RADIUS, color);
+                draw_list->AddCircle(ImVec2(pt.x, pt.y), POLYGON_VERTEX_RADIUS, brush_color, 16, 1.5f);
+            }
+        }
+
         const char* info_text = nullptr;
         float text_offset = 15.0f;
 
@@ -85,6 +132,17 @@ namespace lfs::vis::tools {
             draw_list->AddLine(ImVec2(mouse_pos.x, mouse_pos.y - cross_size),
                                ImVec2(mouse_pos.x, mouse_pos.y + cross_size), brush_color, 2.0f);
             info_text = is_rect_dragging_ ? (current_action_ == SelectionAction::Add ? "RECT +" : "RECT -") : "RECT";
+        } else if (sel_mode == lfs::rendering::SelectionMode::Polygon) {
+            constexpr float cross_size = 8.0f;
+            draw_list->AddLine(ImVec2(mouse_pos.x - cross_size, mouse_pos.y),
+                               ImVec2(mouse_pos.x + cross_size, mouse_pos.y), brush_color, 2.0f);
+            draw_list->AddLine(ImVec2(mouse_pos.x, mouse_pos.y - cross_size),
+                               ImVec2(mouse_pos.x, mouse_pos.y + cross_size), brush_color, 2.0f);
+            if (polygon_closed_) {
+                info_text = "POLY [Enter]";
+            } else {
+                info_text = "POLY";
+            }
         } else if (sel_mode == lfs::rendering::SelectionMode::Lasso) {
             constexpr float cross_size = 8.0f;
             draw_list->AddLine(ImVec2(mouse_pos.x - cross_size, mouse_pos.y),
@@ -108,16 +166,67 @@ namespace lfs::vis::tools {
 
     bool SelectionTool::handleMouseButton(const int button, const int action, const int mods,
                                            const double x, const double y, const ToolContext& ctx) {
-        if (!isEnabled() || button != GLFW_MOUSE_BUTTON_LEFT) return false;
+        if (!isEnabled()) return false;
 
         const auto* const rm = ctx.getRenderingManager();
         const auto sel_mode = rm ? rm->getSelectionMode() : lfs::rendering::SelectionMode::Centers;
+
+        // Right-click removes last vertex in polygon mode (only when not closed)
+        if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
+            if (sel_mode == lfs::rendering::SelectionMode::Polygon && !polygon_closed_ && !polygon_points_.empty()) {
+                polygon_points_.pop_back();
+                ctx.requestRender();
+                return true;
+            }
+            return false;
+        }
+
+        if (button != GLFW_MOUSE_BUTTON_LEFT) return false;
+
         const bool is_rect_mode = (sel_mode == lfs::rendering::SelectionMode::Rectangle);
         const bool is_lasso_mode = (sel_mode == lfs::rendering::SelectionMode::Lasso);
+        const bool is_polygon_mode = (sel_mode == lfs::rendering::SelectionMode::Polygon);
 
         if (action == GLFW_PRESS) {
             const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
             const bool shift = (mods & GLFW_MOD_SHIFT) != 0;
+
+            if (is_polygon_mode) {
+                const float px = static_cast<float>(x);
+                const float py = static_cast<float>(y);
+                current_action_ = SelectionAction::Add;
+
+                if (polygon_closed_) {
+                    const int vertex_idx = findPolygonVertexAt(px, py);
+                    if (vertex_idx >= 0) {
+                        polygon_dragged_vertex_ = vertex_idx;
+                        ctx.requestRender();
+                        return true;
+                    }
+                    resetPolygon();
+                }
+
+                // Close polygon if clicking near first vertex
+                if (polygon_points_.size() >= 3 &&
+                    glm::distance(glm::vec2(px, py), polygon_points_.front()) < POLYGON_CLOSE_THRESHOLD) {
+                    polygon_closed_ = true;
+                    prepareSelectionState(ctx, ctrl);
+                    ctx.requestRender();
+                    return true;
+                }
+
+                // Drag existing vertex
+                const int vertex_idx = findPolygonVertexAt(px, py);
+                if (vertex_idx >= 0) {
+                    polygon_dragged_vertex_ = vertex_idx;
+                    ctx.requestRender();
+                    return true;
+                }
+
+                polygon_points_.emplace_back(px, py);
+                ctx.requestRender();
+                return true;
+            }
 
             if (is_rect_mode || is_lasso_mode) {
                 // Rectangle/Lasso mode: start dragging
@@ -171,6 +280,11 @@ namespace lfs::vis::tools {
         }
 
         if (action == GLFW_RELEASE) {
+            if (polygon_dragged_vertex_ >= 0) {
+                polygon_dragged_vertex_ = -1;
+                ctx.requestRender();
+                return true;
+            }
             if (is_rect_dragging_) {
                 selectInRectangle(ctx);
                 is_rect_dragging_ = false;
@@ -194,6 +308,13 @@ namespace lfs::vis::tools {
         if (!isEnabled()) return false;
 
         last_mouse_pos_ = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+
+        // Polygon vertex dragging
+        if (polygon_dragged_vertex_ >= 0 && polygon_dragged_vertex_ < static_cast<int>(polygon_points_.size())) {
+            polygon_points_[polygon_dragged_vertex_] = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+            ctx.requestRender();
+            return true;
+        }
 
         if (is_rect_dragging_) {
             rect_end_ = glm::vec2(static_cast<float>(x), static_cast<float>(y));
@@ -231,6 +352,7 @@ namespace lfs::vis::tools {
             const auto mode = rm->getSelectionMode();
             if (mode == lfs::rendering::SelectionMode::Rings ||
                 mode == lfs::rendering::SelectionMode::Rectangle ||
+                mode == lfs::rendering::SelectionMode::Polygon ||
                 mode == lfs::rendering::SelectionMode::Lasso) {
                 return false;
             }
@@ -257,6 +379,7 @@ namespace lfs::vis::tools {
             is_rect_dragging_ = false;
             is_lasso_dragging_ = false;
             lasso_points_.clear();
+            resetPolygon();
         }
 
         if (tool_context_) {
@@ -411,6 +534,7 @@ namespace lfs::vis::tools {
 
         if (sel_mode == lfs::rendering::SelectionMode::Rings ||
             sel_mode == lfs::rendering::SelectionMode::Rectangle ||
+            sel_mode == lfs::rendering::SelectionMode::Polygon ||
             sel_mode == lfs::rendering::SelectionMode::Lasso) {
             rm->setBrushState(true, image_x, image_y, 0.0f, add_mode, nullptr, false, 0.0f);
         } else {
@@ -561,6 +685,127 @@ namespace lfs::vis::tools {
 
         rm->clearBrushState();
         rm->markDirty();
+    }
+
+    void SelectionTool::selectInPolygon(const ToolContext& ctx) {
+        if (!polygon_closed_ || polygon_points_.size() < 3) return;
+
+        auto* const rm = ctx.getRenderingManager();
+        auto* const sm = ctx.getSceneManager();
+        if (!rm || !sm || !cumulative_selection_.is_valid()) return;
+
+        const auto screen_positions = rm->getScreenPositions();
+        if (!screen_positions || !screen_positions->is_valid()) return;
+
+        const auto& bounds = ctx.getViewportBounds();
+        const auto& viewport = ctx.getViewport();
+        const auto& cached = rm->getCachedResult();
+
+        const int render_w = cached.image ? static_cast<int>(cached.image->size(2)) : viewport.windowSize.x;
+        const int render_h = cached.image ? static_cast<int>(cached.image->size(1)) : viewport.windowSize.y;
+        const float scale_x = static_cast<float>(render_w) / bounds.width;
+        const float scale_y = static_cast<float>(render_h) / bounds.height;
+
+        // Convert polygon to image coords
+        std::vector<glm::vec2> img_polygon;
+        img_polygon.reserve(polygon_points_.size());
+        for (const auto& pt : polygon_points_) {
+            img_polygon.emplace_back((pt.x - bounds.x) * scale_x, (pt.y - bounds.y) * scale_y);
+        }
+
+        auto positions_cpu = screen_positions->cpu();
+        const auto* const pos_data = positions_cpu.ptr<float>();
+        const size_t num_gaussians = static_cast<size_t>(positions_cpu.size(0));
+
+        auto sel_cpu = cumulative_selection_.cpu();
+        auto* const sel_data = sel_cpu.ptr<bool>();
+
+        for (size_t i = 0; i < num_gaussians; ++i) {
+            if (pointInPolygon(pos_data[i * 2], pos_data[i * 2 + 1], img_polygon)) {
+                sel_data[i] = true;
+            }
+        }
+
+        cumulative_selection_ = sel_cpu.cuda();
+
+        auto new_selection = std::make_shared<lfs::core::Tensor>(cumulative_selection_.clone());
+        sm->getScene().setSelectionMask(new_selection);
+
+        auto* const ch = ctx.getCommandHistory();
+        if (ch) {
+            ch->execute(std::make_unique<command::SelectionCommand>(
+                sm, selection_before_stroke_, new_selection));
+        }
+        selection_before_stroke_.reset();
+
+        rm->clearBrushState();
+        rm->markDirty();
+    }
+
+    void SelectionTool::resetPolygon() {
+        polygon_points_.clear();
+        polygon_closed_ = false;
+        polygon_dragged_vertex_ = -1;
+    }
+
+    void SelectionTool::prepareSelectionState(const ToolContext& ctx, const bool add_to_existing) {
+        auto* const sm = ctx.getSceneManager();
+        if (!sm) return;
+
+        const size_t num_gaussians = sm->getScene().getTotalGaussianCount();
+        if (num_gaussians == 0) return;
+
+        auto existing = sm->getScene().getSelectionMask();
+        selection_before_stroke_ = (existing && existing->is_valid())
+            ? std::make_shared<lfs::core::Tensor>(existing->clone())
+            : nullptr;
+
+        if (add_to_existing && existing && existing->is_valid() && existing->size(0) == num_gaussians) {
+            cumulative_selection_ = existing->to(lfs::core::DataType::Bool);
+        } else {
+            cumulative_selection_ = lfs::core::Tensor::zeros(
+                {num_gaussians}, lfs::core::Device::CUDA, lfs::core::DataType::Bool);
+        }
+    }
+
+    int SelectionTool::findPolygonVertexAt(const float x, const float y) const {
+        for (size_t i = 0; i < polygon_points_.size(); ++i) {
+            const float dist = glm::distance(glm::vec2(x, y), polygon_points_[i]);
+            if (dist <= POLYGON_VERTEX_RADIUS) {
+                return static_cast<int>(i);
+            }
+        }
+        return -1;
+    }
+
+    bool SelectionTool::handleKeyPress(const int key, [[maybe_unused]] const int mods, const ToolContext& ctx) {
+        if (!isEnabled()) return false;
+
+        const auto* const rm = ctx.getRenderingManager();
+        const auto sel_mode = rm ? rm->getSelectionMode() : lfs::rendering::SelectionMode::Centers;
+
+        if (sel_mode != lfs::rendering::SelectionMode::Polygon) return false;
+
+        // Enter to confirm polygon selection
+        if (key == GLFW_KEY_ENTER || key == GLFW_KEY_KP_ENTER) {
+            if (polygon_closed_ && polygon_points_.size() >= 3) {
+                selectInPolygon(ctx);
+                resetPolygon();
+                ctx.requestRender();
+                return true;
+            }
+        }
+
+        // Escape to cancel polygon
+        if (key == GLFW_KEY_ESCAPE) {
+            if (!polygon_points_.empty()) {
+                resetPolygon();
+                ctx.requestRender();
+                return true;
+            }
+        }
+
+        return false;
     }
 
 } // namespace lfs::vis::tools

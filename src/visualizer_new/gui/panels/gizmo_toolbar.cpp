@@ -87,6 +87,7 @@ namespace lfs::vis::gui::panels {
 
         state.selection_texture = LoadIconTexture("selection.png");
         state.rectangle_texture = LoadIconTexture("rectangle.png");
+        state.polygon_texture = LoadIconTexture("polygon.png");
         state.lasso_texture = LoadIconTexture("lasso.png");
         state.ring_texture = LoadIconTexture("ring.png");
         state.translation_texture = LoadIconTexture("translation.png");
@@ -105,6 +106,7 @@ namespace lfs::vis::gui::panels {
 
         if (state.selection_texture) glDeleteTextures(1, &state.selection_texture);
         if (state.rectangle_texture) glDeleteTextures(1, &state.rectangle_texture);
+        if (state.polygon_texture) glDeleteTextures(1, &state.polygon_texture);
         if (state.lasso_texture) glDeleteTextures(1, &state.lasso_texture);
         if (state.ring_texture) glDeleteTextures(1, &state.ring_texture);
         if (state.translation_texture) glDeleteTextures(1, &state.translation_texture);
@@ -118,6 +120,7 @@ namespace lfs::vis::gui::panels {
 
         state.selection_texture = 0;
         state.rectangle_texture = 0;
+        state.polygon_texture = 0;
         state.lasso_texture = 0;
         state.ring_texture = 0;
         state.translation_texture = 0;
@@ -211,7 +214,7 @@ namespace lfs::vis::gui::panels {
 
         // Secondary toolbar for selection mode
         if (state.current_tool == ToolMode::Selection) {
-            constexpr int NUM_SEL_BUTTONS = 4;
+            constexpr int NUM_SEL_BUTTONS = 5;
             const ImVec2 sub_size = ComputeToolbarSize(NUM_SEL_BUTTONS);
 
             const float sub_pos_x = viewport->WorkPos.x + viewport_pos.x + (viewport_size.x - sub_size.x) * 0.5f;
@@ -249,6 +252,9 @@ namespace lfs::vis::gui::panels {
                     ImGui::SameLine();
                     SelectionModeButton("##rect", state.rectangle_texture, SelectionSubMode::Rectangle,
                                         "R", "Rectangle selection by center");
+                    ImGui::SameLine();
+                    SelectionModeButton("##polygon", state.polygon_texture, SelectionSubMode::Polygon,
+                                        "P", "Polygon selection (Enter to confirm)");
                     ImGui::SameLine();
                     SelectionModeButton("##lasso", state.lasso_texture, SelectionSubMode::Lasso,
                                         "L", "Lasso selection by center");
