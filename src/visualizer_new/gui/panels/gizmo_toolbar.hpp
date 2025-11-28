@@ -28,14 +28,22 @@ namespace lfs::vis::gui::panels {
         Scale
     };
 
+    enum class SelectionSubMode {
+        Centers,
+        Rectangle,
+        Rings
+    };
+
     struct GizmoToolbarState {
         ImGuizmo::OPERATION current_operation = ImGuizmo::TRANSLATE;
         ToolMode current_tool = ToolMode::Translate;
         CropBoxOperation cropbox_operation = CropBoxOperation::Bounds;
         bool reset_cropbox_requested = false;
-        bool selection_use_rings = false;  // false = Centers mode, true = Rings mode
+        SelectionSubMode selection_mode = SelectionSubMode::Centers;
         bool initialized = false;
         unsigned int selection_texture = 0;
+        unsigned int rectangle_texture = 0;
+        unsigned int ring_texture = 0;
         unsigned int translation_texture = 0;
         unsigned int rotation_texture = 0;
         unsigned int scaling_texture = 0;

@@ -413,12 +413,15 @@ namespace lfs::vis::gui {
             // Update selection mode and auto-toggle ring rendering
             if (is_selection_mode) {
                 if (auto* rm = ctx.viewer->getRenderingManager()) {
-                    const auto mode = gizmo_toolbar_state_.selection_use_rings
-                        ? lfs::rendering::SelectionMode::Rings
-                        : lfs::rendering::SelectionMode::Centers;
+                    lfs::rendering::SelectionMode mode = lfs::rendering::SelectionMode::Centers;
+                    switch (gizmo_toolbar_state_.selection_mode) {
+                        case panels::SelectionSubMode::Centers:   mode = lfs::rendering::SelectionMode::Centers; break;
+                        case panels::SelectionSubMode::Rectangle: mode = lfs::rendering::SelectionMode::Rectangle; break;
+                        case panels::SelectionSubMode::Rings:     mode = lfs::rendering::SelectionMode::Rings; break;
+                    }
                     rm->setSelectionMode(mode);
 
-                    const bool ring_mode_active = gizmo_toolbar_state_.selection_use_rings;
+                    const bool ring_mode_active = (gizmo_toolbar_state_.selection_mode == panels::SelectionSubMode::Rings);
                     if (ring_mode_active && !ring_mode_was_active_) {
                         auto settings = rm->getSettings();
                         show_rings_before_ring_mode_ = settings.show_rings;

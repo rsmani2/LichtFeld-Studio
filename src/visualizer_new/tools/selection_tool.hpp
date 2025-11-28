@@ -46,10 +46,16 @@ namespace lfs::vis::tools {
         lfs::core::Tensor cumulative_selection_;
         std::shared_ptr<lfs::core::Tensor> selection_before_stroke_;
 
+        // Rectangle selection state
+        bool is_rect_dragging_ = false;
+        glm::vec2 rect_start_{0.0f};
+        glm::vec2 rect_end_{0.0f};
+
         void beginStroke(double x, double y, SelectionAction action, bool clear_existing, const ToolContext& ctx);
         void endStroke();
         void updateSelectionAtPoint(double x, double y, const ToolContext& ctx);
         void updateBrushPreview(double x, double y, const ToolContext& ctx);
+        void selectInRectangle(const ToolContext& ctx);
     };
 
 } // namespace lfs::vis::tools
