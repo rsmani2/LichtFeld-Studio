@@ -36,6 +36,9 @@ namespace lfs::vis::tools {
         [[nodiscard]] float getBrushRadius() const { return brush_radius_; }
         void setBrushRadius(float radius) { brush_radius_ = std::clamp(radius, 1.0f, 500.0f); }
 
+        [[nodiscard]] bool hasActivePolygon() const { return !polygon_points_.empty(); }
+        void clearPolygon();
+
     protected:
         void onEnabledChanged(bool enabled) override;
 
@@ -73,7 +76,9 @@ namespace lfs::vis::tools {
         void selectInPolygon(const ToolContext& ctx);
         void resetPolygon();
         void prepareSelectionState(const ToolContext& ctx, bool add_to_existing);
+        void updatePolygonPreview(const ToolContext& ctx);
         int findPolygonVertexAt(float x, float y) const;
+        int findPolygonEdgeAt(float x, float y, float& t_out) const;
         static bool pointInPolygon(float px, float py, const std::vector<glm::vec2>& polygon);
     };
 

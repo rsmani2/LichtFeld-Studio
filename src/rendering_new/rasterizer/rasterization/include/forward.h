@@ -18,6 +18,14 @@ namespace lfs::rendering {
         uint8_t* selection_out,
         int n_primitives);
 
+    // Select Gaussians inside a 2D polygon
+    void polygon_select(
+        const float2* positions,
+        const float2* polygon,
+        int num_vertices,
+        bool* selection,
+        int n_primitives);
+
     void forward(
         std::function<char*(size_t)> per_primitive_buffers_func,
         std::function<char*(size_t)> per_tile_buffers_func,

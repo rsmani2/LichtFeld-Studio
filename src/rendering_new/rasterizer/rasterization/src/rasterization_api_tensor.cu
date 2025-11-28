@@ -247,4 +247,19 @@ namespace lfs::rendering {
             n_primitives);
     }
 
+    void polygon_select_tensor(
+        const Tensor& positions,
+        const Tensor& polygon,
+        Tensor& selection) {
+        if (!positions.is_valid() || positions.size(0) == 0) return;
+        if (!polygon.is_valid() || polygon.size(0) < 3) return;
+
+        polygon_select(
+            reinterpret_cast<const float2*>(positions.ptr<float>()),
+            reinterpret_cast<const float2*>(polygon.ptr<float>()),
+            static_cast<int>(polygon.size(0)),
+            selection.ptr<bool>(),
+            static_cast<int>(positions.size(0)));
+    }
+
 } // namespace lfs::rendering

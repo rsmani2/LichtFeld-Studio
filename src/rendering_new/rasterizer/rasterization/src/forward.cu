@@ -87,6 +87,52 @@ void lfs::rendering::brush_select(
         n_primitives);
 }
 
+// Ray casting point-in-polygon test
+__device__ __forceinline__ bool point_in_polygon(
+    const float px, const float py,
+    const float2* __restrict__ poly,
+    const int n) {
+    bool inside = false;
+    for (int i = 0, j = n - 1; i < n; j = i++) {
+        const float yi = poly[i].y, yj = poly[j].y;
+        if ((yi > py) != (yj > py)) {
+            const float xi = poly[i].x, xj = poly[j].x;
+            if (px < (xj - xi) * (py - yi) / (yj - yi) + xi)
+                inside = !inside;
+        }
+    }
+    return inside;
+}
+
+__global__ void polygon_select_kernel(
+    const float2* __restrict__ positions,
+    const float2* __restrict__ polygon,
+    const int num_verts,
+    bool* __restrict__ selection,
+    const int n) {
+    const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+
+    const float2 pos = positions[idx];
+    if (pos.x < -1000.0f) return;  // Invalid position marker
+
+    if (point_in_polygon(pos.x, pos.y, polygon, num_verts))
+        selection[idx] = true;
+}
+
+void lfs::rendering::polygon_select(
+    const float2* positions,
+    const float2* polygon,
+    const int num_vertices,
+    bool* selection,
+    const int n_primitives) {
+    if (n_primitives <= 0 || num_vertices < 3) return;
+
+    constexpr int BLOCK_SIZE = 256;
+    const int grid = (n_primitives + BLOCK_SIZE - 1) / BLOCK_SIZE;
+    polygon_select_kernel<<<grid, BLOCK_SIZE>>>(positions, polygon, num_vertices, selection, n_primitives);
+}
+
 // sorting is done separately for depth and tile as proposed in https://github.com/m-schuetz/Splatshop
 void lfs::rendering::forward(
     std::function<char*(size_t)> per_primitive_buffers_func,

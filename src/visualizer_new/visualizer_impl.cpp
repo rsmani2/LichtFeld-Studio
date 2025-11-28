@@ -548,6 +548,8 @@ namespace lfs::vis {
     }
 
     void VisualizerImpl::deselectAll() {
+        if (selection_tool_) selection_tool_->clearPolygon();
+
         if (!scene_manager_) return;
         auto& scene = scene_manager_->getScene();
         if (!scene.hasSelection()) return;
