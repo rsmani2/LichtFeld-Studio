@@ -87,6 +87,11 @@ namespace lfs::vis {
 
         bool gut = false;
         bool equirectangular = false;
+
+        // Selection colors (configurable via UI)
+        glm::vec3 selection_color_committed = glm::vec3(1.0f, 0.2f, 0.2f);
+        glm::vec3 selection_color_preview = glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 selection_color_center_marker = glm::vec3(1.0f, 1.0f, 1.0f);
     };
 
     struct SplitViewInfo {

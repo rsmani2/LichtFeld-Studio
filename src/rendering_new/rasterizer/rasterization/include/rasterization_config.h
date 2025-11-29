@@ -25,9 +25,15 @@ namespace lfs::rendering::config {
     DEF int tile_height = 16;
     DEF int block_size_blend = tile_width * tile_height;
     DEF int n_sequential_threshold = 4;
-    __device__ const float3 SELECTION_COLOR_COMMITTED = {1.0f, 0.2f, 0.2f};
-    __device__ const float3 SELECTION_COLOR_PREVIEW = {0.0f, 1.0f, 0.0f};
-    __device__ const float3 SELECTION_COLOR_CENTER_MARKER = {1.0f, 1.0f, 1.0f};
+
+    // Selection colors - stored in CUDA constant memory for runtime configuration
+    // These are declared extern and defined in forward.cu
+    extern __constant__ float3 SELECTION_COLOR_COMMITTED;
+    extern __constant__ float3 SELECTION_COLOR_PREVIEW;
+    extern __constant__ float3 SELECTION_COLOR_CENTER_MARKER;
+
+    // Host function to update selection colors (implemented in forward.cu)
+    void setSelectionColors(float3 committed, float3 preview, float3 center_marker);
 } // namespace lfs::rendering::config
 
 namespace config = lfs::rendering::config;

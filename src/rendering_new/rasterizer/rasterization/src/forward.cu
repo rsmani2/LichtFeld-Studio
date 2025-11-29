@@ -11,6 +11,19 @@
 #include <cub/cub.cuh>
 #include <functional>
 
+// Define selection colors in CUDA constant memory with default values
+namespace lfs::rendering::config {
+    __constant__ float3 SELECTION_COLOR_COMMITTED = {1.0f, 0.2f, 0.2f};
+    __constant__ float3 SELECTION_COLOR_PREVIEW = {0.0f, 1.0f, 0.0f};
+    __constant__ float3 SELECTION_COLOR_CENTER_MARKER = {1.0f, 1.0f, 1.0f};
+
+    void setSelectionColors(float3 committed, float3 preview, float3 center_marker) {
+        cudaMemcpyToSymbol(SELECTION_COLOR_COMMITTED, &committed, sizeof(float3));
+        cudaMemcpyToSymbol(SELECTION_COLOR_PREVIEW, &preview, sizeof(float3));
+        cudaMemcpyToSymbol(SELECTION_COLOR_CENTER_MARKER, &center_marker, sizeof(float3));
+    }
+} // namespace lfs::rendering::config
+
 // Initialize mean2d buffer with invalid marker values
 __global__ void init_mean2d_kernel(float2* data, int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
