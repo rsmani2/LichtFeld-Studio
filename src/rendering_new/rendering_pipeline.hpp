@@ -43,6 +43,7 @@ namespace lfs::rendering {
             bool gut = false;
             bool show_rings = false;
             float ring_width = 0.01f;
+            bool show_center_markers = false;
             // Per-node transforms: array of 4x4 matrices and per-Gaussian indices
             std::vector<glm::mat4> model_transforms;          // Array of transforms, one per node
             std::shared_ptr<lfs::core::Tensor> transform_indices;  // Per-Gaussian index [N], nullable

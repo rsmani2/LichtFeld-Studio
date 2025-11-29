@@ -158,6 +158,7 @@ namespace lfs::rendering {
             .gut = request.gut,
             .show_rings = request.show_rings,
             .ring_width = request.ring_width,
+            .show_center_markers = request.show_center_markers,
             .model_transforms = request.model_transforms,
             .transform_indices = request.transform_indices,
             .selection_mask = request.selection_mask,

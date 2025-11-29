@@ -130,6 +130,10 @@ namespace lfs::vis {
             bool ring_mode_was_active_ = false;
             bool show_rings_before_ring_mode_ = false;
 
+            // Center markers auto-toggle state
+            bool center_markers_mode_was_active_ = false;
+            bool show_center_markers_before_ = false;
+
             // Cropbox undo/redo state
             bool cropbox_gizmo_active_ = false;
             std::optional<command::CropBoxState> cropbox_state_before_drag_;

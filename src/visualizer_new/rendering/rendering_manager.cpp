@@ -583,6 +583,7 @@ namespace lfs::vis {
             .gut = settings_.gut,
             .show_rings = settings_.show_rings,
             .ring_width = settings_.ring_width,
+            .show_center_markers = settings_.show_center_markers,
             .model_transforms = std::move(model_transforms),
             .transform_indices = transform_indices,
             .selection_mask = selection_mask,

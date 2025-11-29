@@ -279,6 +279,7 @@ void lfs::rendering::forward(
     bool brush_saturation_mode,
     float brush_saturation_amount,
     bool selection_mode_rings,
+    bool show_center_markers,
     const float* crop_box_transform,
     const float3* crop_box_min,
     const float3* crop_box_max,
@@ -441,8 +442,6 @@ void lfs::rendering::forward(
             n_instances);
         CHECK_CUDA(config::debug, "extract_instance_ranges")
     }
-
-    const bool show_center_markers = brush_active && !selection_mode_rings;
 
     kernels::forward::blend_cu<<<grid, block>>>(
         per_tile_buffers.instance_ranges,

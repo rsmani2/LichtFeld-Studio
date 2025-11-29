@@ -69,7 +69,8 @@ namespace lfs::vis {
 
         // Ring mode (only active in splat mode)
         bool show_rings = false;
-        float ring_width = 0.01f; // Width of the ring band (0.001 to 0.05)
+        float ring_width = 0.01f;
+        bool show_center_markers = false;
 
         // Camera frustums
         bool show_camera_frustums = false;

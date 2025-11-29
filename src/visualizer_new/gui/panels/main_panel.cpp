@@ -104,6 +104,13 @@ namespace lfs::vis::gui::panels {
             }
         }
 
+        // Center Markers checkbox (only enabled when NOT in point cloud mode)
+        ImGui::BeginDisabled(settings.point_cloud_mode);
+        if (ImGui::Checkbox("Show Center Markers", &settings.show_center_markers)) {
+            settings_changed = true;
+        }
+        ImGui::EndDisabled();
+
         // Background Color
         ImGui::Separator();
         ImGui::Text("Background");
