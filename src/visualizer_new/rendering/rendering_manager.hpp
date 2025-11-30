@@ -41,7 +41,7 @@ namespace lfs::vis {
         bool crop_desaturate = false;
         glm::vec3 crop_min = glm::vec3(-1.0f, -1.0f, -1.0f);
         glm::vec3 crop_max = glm::vec3(1.0f, 1.0f, 1.0f);
-        glm::vec3 crop_color = glm::vec3(1.0f, 1.0f, 0.0f);
+        glm::vec3 crop_color = glm::vec3(0.859f, 0.325f, 0.325f);
         float crop_line_width = 2.0f;
         lfs::geometry::EuclideanTransform crop_transform;
 
@@ -87,10 +87,10 @@ namespace lfs::vis {
         bool gut = false;
         bool equirectangular = false;
 
-        // Selection colors
-        glm::vec3 selection_color_committed{0.859f, 0.325f, 0.325f};    // 219, 83, 83
-        glm::vec3 selection_color_preview{0.0f, 0.871f, 0.298f};        // 0, 222, 76
-        glm::vec3 selection_color_center_marker{0.0f, 0.510f, 0.090f};  // 0, 130, 23
+        // Selection colors (RGB: committed=219,83,83 preview=0,222,76 center=0,154,187)
+        glm::vec3 selection_color_committed{0.859f, 0.325f, 0.325f};
+        glm::vec3 selection_color_preview{0.0f, 0.871f, 0.298f};
+        glm::vec3 selection_color_center_marker{0.0f, 0.604f, 0.733f};
 
         // Depth clipping
         bool depth_clip_enabled = false;

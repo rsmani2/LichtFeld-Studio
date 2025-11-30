@@ -33,6 +33,7 @@ namespace lfs::rendering::kernels::forward {
         float3* primitive_color,
         float* primitive_depth,
         bool* primitive_outside_crop,
+        uint8_t* primitive_selection_status,
         uint* n_visible_primitives,
         uint* n_instances,
         const uint n_primitives,
@@ -346,27 +347,25 @@ namespace lfs::rendering::kernels::forward {
             }
         }
 
-        // Selection highlights
+        // Selection status: 0=none, 1=committed, 2=preview
+        uint8_t sel_status = 0;
         if (!brush_saturation_mode) {
             const bool is_committed = selection_mask && selection_mask[primitive_idx];
             const bool has_preview = brush_selection_out != nullptr;
             const bool is_in_preview = has_preview && brush_selection_out[primitive_idx];
-            const bool brush_hover_add = under_brush && selectable && brush_add_mode && !is_committed;
-            const bool brush_hover_remove = under_brush && selectable && !brush_add_mode && is_committed;
-            const bool is_preview_add = (is_in_preview && !is_committed) || brush_hover_add;
-            const bool is_preview_remove = (is_committed && has_preview && !is_in_preview) || brush_hover_remove;
-            const bool is_ring_hovered = selection_mode_rings && selectable && highlight_gaussian_id == static_cast<int>(primitive_idx);
+            const bool is_preview = (is_in_preview && !is_committed) ||
+                                    (under_brush && selectable && brush_add_mode && !is_committed) ||
+                                    (is_committed && has_preview && !is_in_preview) ||
+                                    (under_brush && selectable && !brush_add_mode && is_committed) ||
+                                    (selection_mode_rings && selectable && highlight_gaussian_id == static_cast<int>(primitive_idx));
 
-            if (is_preview_add || is_preview_remove || is_ring_hovered) {
-                color = lerp(color, config::SELECTION_COLOR_PREVIEW, 0.5f);
-            } else if (is_committed || is_in_preview) {
-                color = config::SELECTION_COLOR_COMMITTED;
-            }
+            sel_status = is_preview ? 2 : ((is_committed || is_in_preview) ? 1 : 0);
         }
 
         primitive_color[primitive_idx] = color;
         primitive_depth[primitive_idx] = depth;
         primitive_outside_crop[primitive_idx] = outside_crop;
+        primitive_selection_status[primitive_idx] = sel_status;
 
         const uint offset = atomicAdd(n_visible_primitives, 1);
         const uint depth_key = __float_as_uint(depth);
@@ -532,6 +531,7 @@ namespace lfs::rendering::kernels::forward {
         const float3* primitive_color,
         const float* primitive_depth,
         const bool* primitive_outside_crop,
+        const uint8_t* primitive_selection_status,
         float* image,
         float* alpha_map,
         float* depth_map,
@@ -558,6 +558,7 @@ namespace lfs::rendering::kernels::forward {
         __shared__ float3 collected_color[config::block_size_blend];
         __shared__ float collected_depth[config::block_size_blend];
         __shared__ bool collected_outside_crop[config::block_size_blend];
+        __shared__ uint8_t collected_selection_status[config::block_size_blend];
         // initialize local storage
         float3 color_pixel = make_float3(0.0f);
         float depth_pixel = 1e10f;  // Median depth (at 50% accumulated alpha)
@@ -575,6 +576,7 @@ namespace lfs::rendering::kernels::forward {
                 collected_color[thread_rank] = fmaxf(primitive_color[primitive_idx], 0.0f);
                 collected_depth[thread_rank] = primitive_depth[primitive_idx];
                 collected_outside_crop[thread_rank] = primitive_outside_crop[primitive_idx];
+                collected_selection_status[thread_rank] = primitive_selection_status[primitive_idx];
             }
             block.sync();
             const int current_batch_size = min(config::block_size_blend, n_points_remaining);
@@ -610,30 +612,22 @@ namespace lfs::rendering::kernels::forward {
                     continue;
                 }
 
-                // Center markers (skip for outside gaussians)
                 float3 final_color = collected_color[j];
+                const uint8_t sel_status = collected_selection_status[j];
+
+                // Center markers mode
                 if (show_center_markers && !is_outside) {
-                    constexpr float INNER_RADIUS_SQ = 2.25f;   // 1.5px
-                    constexpr float OUTER_RADIUS_SQ = 6.25f;   // 2.5px
-                    constexpr float COLOR_TOLERANCE = 0.1f;
+                    constexpr float INNER_RADIUS_SQ = 2.25f;
+                    constexpr float OUTER_RADIUS_SQ = 6.25f;
                     constexpr float OUTLINE_DARKEN = 0.4f;
 
                     const float dist_sq = delta.x * delta.x + delta.y * delta.y;
                     if (dist_sq > OUTER_RADIUS_SQ)
                         continue;
 
-                    const float3& sel = config::SELECTION_COLOR_COMMITTED;
-                    const float3& prev = config::SELECTION_COLOR_PREVIEW;
-                    const bool is_selected =
-                        (fabsf(final_color.x - sel.x) < COLOR_TOLERANCE &&
-                         fabsf(final_color.y - sel.y) < COLOR_TOLERANCE &&
-                         fabsf(final_color.z - sel.z) < COLOR_TOLERANCE) ||
-                        (fabsf(final_color.x - prev.x) < COLOR_TOLERANCE &&
-                         fabsf(final_color.y - prev.y) < COLOR_TOLERANCE &&
-                         fabsf(final_color.z - prev.z) < COLOR_TOLERANCE);
-
-                    if (!is_selected)
-                        final_color = config::SELECTION_COLOR_CENTER_MARKER;
+                    final_color = (sel_status == 2) ? config::SELECTION_COLOR_PREVIEW :
+                                  (sel_status == 1) ? config::SELECTION_COLOR_COMMITTED :
+                                                      config::SELECTION_COLOR_CENTER_MARKER;
 
                     if (dist_sq > INNER_RADIUS_SQ)
                         final_color = final_color * OUTLINE_DARKEN;
@@ -642,6 +636,13 @@ namespace lfs::rendering::kernels::forward {
                     transmittance = 0.0f;
                     done = true;
                     continue;
+                }
+
+                // Selection coloring for normal/ring modes
+                if (sel_status == 2) {
+                    final_color = lerp(final_color, config::SELECTION_COLOR_PREVIEW, 0.5f);
+                } else if (sel_status == 1) {
+                    final_color = config::SELECTION_COLOR_COMMITTED;
                 }
 
                 color_pixel += transmittance * alpha * final_color;

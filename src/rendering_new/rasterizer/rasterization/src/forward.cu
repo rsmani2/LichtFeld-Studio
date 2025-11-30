@@ -12,9 +12,10 @@
 #include <functional>
 
 namespace lfs::rendering::config {
-    __constant__ float3 SELECTION_COLOR_COMMITTED = {0.859f, 0.325f, 0.325f};    // 219, 83, 83
-    __constant__ float3 SELECTION_COLOR_PREVIEW = {0.0f, 0.871f, 0.298f};        // 0, 222, 76
-    __constant__ float3 SELECTION_COLOR_CENTER_MARKER = {0.0f, 0.510f, 0.090f};  // 0, 130, 23
+    // Selection colors (RGB: committed=219,83,83 preview=0,222,76 center=0,154,187)
+    __constant__ float3 SELECTION_COLOR_COMMITTED = {0.859f, 0.325f, 0.325f};
+    __constant__ float3 SELECTION_COLOR_PREVIEW = {0.0f, 0.871f, 0.298f};
+    __constant__ float3 SELECTION_COLOR_CENTER_MARKER = {0.0f, 0.604f, 0.733f};
 
     void setSelectionColors(const float3 committed, const float3 preview, const float3 center_marker) {
         cudaMemcpyToSymbol(SELECTION_COLOR_COMMITTED, &committed, sizeof(float3));
@@ -351,6 +352,7 @@ void lfs::rendering::forward(
         per_primitive_buffers.color,
         per_primitive_buffers.depth,
         per_primitive_buffers.outside_crop,
+        per_primitive_buffers.selection_status,
         per_primitive_buffers.n_visible_primitives,
         per_primitive_buffers.n_instances,
         n_primitives,
@@ -474,6 +476,7 @@ void lfs::rendering::forward(
         per_primitive_buffers.color,
         per_primitive_buffers.depth,
         per_primitive_buffers.outside_crop,
+        per_primitive_buffers.selection_status,
         image,
         alpha,
         depth,
