@@ -376,14 +376,14 @@ namespace lfs::rendering::kernels::forward {
             const bool is_committed = selection_mask && selection_mask[primitive_idx];
             const bool has_preview = brush_selection_out != nullptr;
             const bool is_in_preview = has_preview && brush_selection_out[primitive_idx];
-            const bool brush_hover_add = under_brush && brush_add_mode && !is_committed;
-            const bool brush_hover_remove = under_brush && !brush_add_mode && is_committed;
+            const bool brush_hover_add = under_brush && selectable && brush_add_mode && !is_committed;
+            const bool brush_hover_remove = under_brush && selectable && !brush_add_mode && is_committed;
             const bool is_preview_add = (is_in_preview && !is_committed) || brush_hover_add;
             const bool is_preview_remove = (is_committed && has_preview && !is_in_preview) || brush_hover_remove;
-            const bool is_hovered = selection_mode_rings && highlight_gaussian_id >= 0 && static_cast<int>(primitive_idx) == highlight_gaussian_id;
+            const bool is_ring_hovered = selection_mode_rings && selectable && highlight_gaussian_id == static_cast<int>(primitive_idx);
 
-            if (is_preview_add || is_preview_remove || is_hovered) {
-                color = config::SELECTION_COLOR_PREVIEW;
+            if (is_preview_add || is_preview_remove || is_ring_hovered) {
+                color = lerp(color, config::SELECTION_COLOR_PREVIEW, 0.5f);
             } else if (is_committed || is_in_preview) {
                 color = config::SELECTION_COLOR_COMMITTED;
             }
