@@ -408,7 +408,7 @@ namespace lfs::vis::tools {
                 depth_far_ = std::clamp(depth_far_ * scale, DEPTH_MIN, DEPTH_MAX);
             }
 
-            updateSelectionCropBox(ctx, true);  // Force update - params changed
+            updateSelectionCropBox(ctx);
             ctx.requestRender();
             return true;
         }
@@ -935,7 +935,7 @@ namespace lfs::vis::tools {
                 disableDepthFilter(ctx);
             } else {
                 depth_filter_enabled_ = true;
-                updateSelectionCropBox(ctx, true);  // Force initial update
+                updateSelectionCropBox(ctx);
             }
             ctx.requestRender();
             return true;
@@ -984,29 +984,14 @@ namespace lfs::vis::tools {
         frustum_half_width_ = 50.0f;
     }
 
-    void SelectionTool::updateSelectionCropBox(const ToolContext& ctx, const bool force) {
+    void SelectionTool::updateSelectionCropBox(const ToolContext& ctx) {
         auto* const rm = ctx.getRenderingManager();
         if (!rm) return;
 
         const auto& viewport = ctx.getViewport();
-        const glm::vec3& cam_pos = viewport.camera.t;
-        const glm::vec3 cam_fwd = viewport.camera.R[2];
-
-        // Skip update if camera hasn't moved (unless forced)
-        constexpr float EPSILON = 1e-5f;
-        if (!force &&
-            glm::dot(cam_pos - last_cam_pos_, cam_pos - last_cam_pos_) < EPSILON &&
-            glm::dot(cam_fwd - last_cam_fwd_, cam_fwd - last_cam_fwd_) < EPSILON) {
-            return;
-        }
-        last_cam_pos_ = cam_pos;
-        last_cam_fwd_ = cam_fwd;
-
-        // Build camera-aligned crop box transform
         const glm::quat cam_quat = glm::quat_cast(viewport.camera.R);
-        const lfs::geometry::EuclideanTransform crop_transform(cam_quat, cam_pos);
+        const lfs::geometry::EuclideanTransform crop_transform(cam_quat, viewport.camera.t);
 
-        // Crop box in camera local space: X bounded by width, Y unbounded, Z from 0 to depth_far
         constexpr float Y_BOUND = 10000.0f;
         const glm::vec3 crop_min(-frustum_half_width_, -Y_BOUND, 0.0f);
         const glm::vec3 crop_max(frustum_half_width_, Y_BOUND, depth_far_);

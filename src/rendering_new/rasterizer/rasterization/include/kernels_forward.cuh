@@ -86,67 +86,42 @@ namespace lfs::rendering::kernels::forward {
 
         float3 mean3d = means[primitive_idx];
 
-        // Crop box test
+        // Apply model transform
+        mat3x3 model_rot = {1, 0, 0, 0, 1, 0, 0, 0, 1};
+        bool has_transform = false;
+        if (model_transforms != nullptr && num_transforms > 0) {
+            const int transform_idx = transform_indices != nullptr
+                ? min(max(transform_indices[primitive_idx], 0), num_transforms - 1) : 0;
+            const float* const m = model_transforms + transform_idx * 16;
+            has_transform = m[0] != 1.0f || m[5] != 1.0f || m[10] != 1.0f ||
+                            m[1] != 0.0f || m[2] != 0.0f || m[3] != 0.0f ||
+                            m[4] != 0.0f || m[6] != 0.0f || m[7] != 0.0f ||
+                            m[8] != 0.0f || m[9] != 0.0f || m[11] != 0.0f;
+            if (has_transform) {
+                model_rot = {m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]};
+                const float3 t = make_float3(m[3], m[7], m[11]);
+                mean3d = make_float3(
+                    model_rot.m11 * mean3d.x + model_rot.m12 * mean3d.y + model_rot.m13 * mean3d.z + t.x,
+                    model_rot.m21 * mean3d.x + model_rot.m22 * mean3d.y + model_rot.m23 * mean3d.z + t.y,
+                    model_rot.m31 * mean3d.x + model_rot.m32 * mean3d.y + model_rot.m33 * mean3d.z + t.z);
+            }
+        }
+
+        // Crop box test (on transformed position)
         bool outside_crop = false;
         if (active && crop_box_transform != nullptr) {
             const float3 bmin = *crop_box_min;
             const float3 bmax = *crop_box_max;
-            const float lx = crop_box_transform[0] * mean3d.x + crop_box_transform[1] * mean3d.y +
-                             crop_box_transform[2] * mean3d.z + crop_box_transform[3];
-            const float ly = crop_box_transform[4] * mean3d.x + crop_box_transform[5] * mean3d.y +
-                             crop_box_transform[6] * mean3d.z + crop_box_transform[7];
-            const float lz = crop_box_transform[8] * mean3d.x + crop_box_transform[9] * mean3d.y +
-                             crop_box_transform[10] * mean3d.z + crop_box_transform[11];
+            const float* const c = crop_box_transform;
+            const float lx = c[0] * mean3d.x + c[1] * mean3d.y + c[2] * mean3d.z + c[3];
+            const float ly = c[4] * mean3d.x + c[5] * mean3d.y + c[6] * mean3d.z + c[7];
+            const float lz = c[8] * mean3d.x + c[9] * mean3d.y + c[10] * mean3d.z + c[11];
             const bool inside = lx >= bmin.x && lx <= bmax.x &&
                                 ly >= bmin.y && ly <= bmax.y &&
                                 lz >= bmin.z && lz <= bmax.z;
-            outside_crop = crop_inverse ? inside : !inside;
-            if (outside_crop && !crop_desaturate) {
+            outside_crop = inside == crop_inverse;
+            if (outside_crop && !crop_desaturate)
                 active = false;
-            }
-        }
-
-        // Apply model transform to mean if provided
-        // Supports per-Gaussian transform lookup via transform_indices
-        mat3x3 model_rot = {1, 0, 0, 0, 1, 0, 0, 0, 1};  // identity by default
-        bool has_transform = false;
-
-        if (model_transforms != nullptr && num_transforms > 0) {
-            // Get transform index for this Gaussian
-            int transform_idx = 0;
-            if (transform_indices != nullptr) {
-                transform_idx = transform_indices[primitive_idx];
-                // Clamp to valid range
-                transform_idx = min(max(transform_idx, 0), num_transforms - 1);
-            }
-
-            // Get pointer to this Gaussian's 4x4 transform (row-major)
-            const float* model_transform = model_transforms + transform_idx * 16;
-
-            // Check if transform is not identity (optimization: skip if identity)
-            // Simple check: if any diagonal != 1 or any off-diagonal != 0, it's not identity
-            bool is_identity = (model_transform[0] == 1.0f && model_transform[5] == 1.0f &&
-                               model_transform[10] == 1.0f && model_transform[15] == 1.0f &&
-                               model_transform[1] == 0.0f && model_transform[2] == 0.0f && model_transform[3] == 0.0f &&
-                               model_transform[4] == 0.0f && model_transform[6] == 0.0f && model_transform[7] == 0.0f &&
-                               model_transform[8] == 0.0f && model_transform[9] == 0.0f && model_transform[11] == 0.0f);
-
-            if (!is_identity) {
-                has_transform = true;
-                // Extract 3x3 rotation/scale part (row-major)
-                model_rot = {
-                    model_transform[0], model_transform[1], model_transform[2],
-                    model_transform[4], model_transform[5], model_transform[6],
-                    model_transform[8], model_transform[9], model_transform[10]
-                };
-                // Transform position: p' = R*p + t
-                const float3 t = make_float3(model_transform[3], model_transform[7], model_transform[11]);
-                mean3d = make_float3(
-                    model_rot.m11 * mean3d.x + model_rot.m12 * mean3d.y + model_rot.m13 * mean3d.z + t.x,
-                    model_rot.m21 * mean3d.x + model_rot.m22 * mean3d.y + model_rot.m23 * mean3d.z + t.y,
-                    model_rot.m31 * mean3d.x + model_rot.m32 * mean3d.y + model_rot.m33 * mean3d.z + t.z
-                );
-            }
         }
 
         // z culling
