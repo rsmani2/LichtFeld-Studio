@@ -301,7 +301,7 @@ namespace lfs::vis {
             // Start camera interaction
             viewport_.camera.initScreenPos(glm::vec2(x, y));
 
-            if (button == GLFW_MOUSE_BUTTON_LEFT) {
+            if (button == GLFW_MOUSE_BUTTON_RIGHT) {
                 // Double-click: set pivot and center camera on it
                 const auto now = std::chrono::steady_clock::now();
                 const double time_since_last = std::chrono::duration<double>(now - last_pivot_click_time_).count();
@@ -319,8 +319,10 @@ namespace lfs::vis {
                 last_pivot_click_time_ = now;
                 last_pivot_click_pos_ = {x, y};
                 drag_mode_ = DragMode::Pan;
-            } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-                drag_mode_ = DragMode::Rotate;
+            } else if (button == GLFW_MOUSE_BUTTON_LEFT) {
+                // Left mouse: reserved for tools/selection (no camera action)
+                // Rotate functionality disabled - kept for reference:
+                // drag_mode_ = DragMode::Rotate;
             } else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
                 drag_mode_ = DragMode::Orbit;
                 const float current_time = static_cast<float>(glfwGetTime());
@@ -329,11 +331,12 @@ namespace lfs::vis {
         } else if (action == GLFW_RELEASE) {
             // Always handle our own releases if we were dragging
             bool was_dragging = false;
-            if (button == GLFW_MOUSE_BUTTON_LEFT && drag_mode_ == DragMode::Pan) {
+            if (button == GLFW_MOUSE_BUTTON_RIGHT && drag_mode_ == DragMode::Pan) {
                 drag_mode_ = DragMode::None;
                 was_dragging = true;
                 LOG_TRACE("Ended camera pan");
-            } else if (button == GLFW_MOUSE_BUTTON_RIGHT && drag_mode_ == DragMode::Rotate) {
+            } else if (button == GLFW_MOUSE_BUTTON_LEFT && drag_mode_ == DragMode::Rotate) {
+                // Rotate is disabled but keep release handling in case it gets re-enabled
                 drag_mode_ = DragMode::None;
                 was_dragging = true;
                 LOG_TRACE("Ended camera rotate");
@@ -770,13 +773,14 @@ namespace lfs::vis {
         }
 
         if (drag_mode_ == DragMode::Rotate &&
-            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
+            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) != GLFW_PRESS) {
+            // Rotate is disabled but keep safety check
             drag_mode_ = DragMode::None;
             LOG_TRACE("Rotate stopped - button released outside window");
         }
 
         if (drag_mode_ == DragMode::Pan &&
-            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) != GLFW_PRESS) {
+            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
             drag_mode_ = DragMode::None;
             LOG_TRACE("Pan stopped - button released outside window");
         }
