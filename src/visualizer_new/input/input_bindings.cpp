@@ -211,7 +211,7 @@ namespace lfs::vis::input {
     }
 
     std::optional<Action> InputBindings::getActionForKey(const int key, const int modifiers) const {
-        constexpr int MOD_MASK = MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER;
+        constexpr int MOD_MASK = MODIFIER_SHIFT | MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SUPER;
 
         auto it = key_map_.find({key, modifiers});
         if (it != key_map_.end()) {
@@ -230,21 +230,21 @@ namespace lfs::vis::input {
     }
 
     std::optional<Action> InputBindings::getActionForMouseButton(const MouseButton button, const int modifiers) const {
-        constexpr int MOD_MASK = MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER;
+        constexpr int MOD_MASK = MODIFIER_SHIFT | MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SUPER;
         const int base_mods = modifiers & MOD_MASK;
         const auto it = mouse_button_map_.find({button, base_mods});
         return it != mouse_button_map_.end() ? std::optional{it->second} : std::nullopt;
     }
 
     std::optional<Action> InputBindings::getActionForScroll(const int modifiers) const {
-        constexpr int MOD_MASK = MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER;
+        constexpr int MOD_MASK = MODIFIER_SHIFT | MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SUPER;
         const int base_mods = modifiers & MOD_MASK;
         const auto it = scroll_map_.find(base_mods);
         return it != scroll_map_.end() ? std::optional{it->second} : std::nullopt;
     }
 
     std::optional<Action> InputBindings::getActionForDrag(const MouseButton button, const int modifiers) const {
-        constexpr int MOD_MASK = MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER;
+        constexpr int MOD_MASK = MODIFIER_SHIFT | MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SUPER;
         const int base_mods = modifiers & MOD_MASK;
         const auto it = drag_map_.find({button, base_mods});
         return it != drag_map_.end() ? std::optional{it->second} : std::nullopt;
@@ -319,7 +319,7 @@ namespace lfs::vis::input {
     }
 
     bool InputBindings::modifiersMatch(const int required, const int actual) {
-        constexpr int MOD_MASK = MOD_SHIFT | MOD_CTRL | MOD_ALT | MOD_SUPER;
+        constexpr int MOD_MASK = MODIFIER_SHIFT | MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SUPER;
         return (actual & MOD_MASK) == required;
     }
 
@@ -330,62 +330,62 @@ namespace lfs::vis::input {
 
         profile.bindings = {
             // Camera navigation
-            {MouseDragTrigger{MouseButton::MIDDLE, MOD_NONE}, Action::CAMERA_ORBIT, "Orbit camera"},
-            {MouseDragTrigger{MouseButton::RIGHT, MOD_NONE}, Action::CAMERA_PAN, "Pan camera"},
-            {MouseScrollTrigger{MOD_NONE}, Action::CAMERA_ZOOM, "Zoom camera"},
-            {KeyTrigger{GLFW_KEY_W, MOD_NONE, true}, Action::CAMERA_MOVE_FORWARD, "Move forward"},
-            {KeyTrigger{GLFW_KEY_S, MOD_NONE, true}, Action::CAMERA_MOVE_BACKWARD, "Move backward"},
-            {KeyTrigger{GLFW_KEY_A, MOD_NONE, true}, Action::CAMERA_MOVE_LEFT, "Move left"},
-            {KeyTrigger{GLFW_KEY_D, MOD_NONE, true}, Action::CAMERA_MOVE_RIGHT, "Move right"},
-            {KeyTrigger{GLFW_KEY_Q, MOD_NONE, true}, Action::CAMERA_MOVE_DOWN, "Move down"},
-            {KeyTrigger{GLFW_KEY_E, MOD_NONE, true}, Action::CAMERA_MOVE_UP, "Move up"},
-            {KeyTrigger{GLFW_KEY_H, MOD_NONE}, Action::CAMERA_RESET_HOME, "Reset to home"},
+            {MouseDragTrigger{MouseButton::MIDDLE, MODIFIER_NONE}, Action::CAMERA_ORBIT, "Orbit camera"},
+            {MouseDragTrigger{MouseButton::RIGHT, MODIFIER_NONE}, Action::CAMERA_PAN, "Pan camera"},
+            {MouseScrollTrigger{MODIFIER_NONE}, Action::CAMERA_ZOOM, "Zoom camera"},
+            {KeyTrigger{GLFW_KEY_W, MODIFIER_NONE, true}, Action::CAMERA_MOVE_FORWARD, "Move forward"},
+            {KeyTrigger{GLFW_KEY_S, MODIFIER_NONE, true}, Action::CAMERA_MOVE_BACKWARD, "Move backward"},
+            {KeyTrigger{GLFW_KEY_A, MODIFIER_NONE, true}, Action::CAMERA_MOVE_LEFT, "Move left"},
+            {KeyTrigger{GLFW_KEY_D, MODIFIER_NONE, true}, Action::CAMERA_MOVE_RIGHT, "Move right"},
+            {KeyTrigger{GLFW_KEY_Q, MODIFIER_NONE, true}, Action::CAMERA_MOVE_DOWN, "Move down"},
+            {KeyTrigger{GLFW_KEY_E, MODIFIER_NONE, true}, Action::CAMERA_MOVE_UP, "Move up"},
+            {KeyTrigger{GLFW_KEY_H, MODIFIER_NONE}, Action::CAMERA_RESET_HOME, "Reset to home"},
 
             // View
-            {KeyTrigger{GLFW_KEY_V, MOD_NONE}, Action::TOGGLE_SPLIT_VIEW, "Toggle split view"},
-            {KeyTrigger{GLFW_KEY_G, MOD_NONE}, Action::TOGGLE_GT_COMPARISON, "Toggle GT comparison"},
-            {KeyTrigger{GLFW_KEY_T, MOD_NONE}, Action::CYCLE_PLY, "Cycle PLY"},
+            {KeyTrigger{GLFW_KEY_V, MODIFIER_NONE}, Action::TOGGLE_SPLIT_VIEW, "Toggle split view"},
+            {KeyTrigger{GLFW_KEY_G, MODIFIER_NONE}, Action::TOGGLE_GT_COMPARISON, "Toggle GT comparison"},
+            {KeyTrigger{GLFW_KEY_T, MODIFIER_NONE}, Action::CYCLE_PLY, "Cycle PLY"},
 
             // Depth filter
-            {KeyTrigger{GLFW_KEY_F, MOD_CTRL}, Action::TOGGLE_DEPTH_MODE, "Toggle depth filter"},
-            {MouseScrollTrigger{MOD_ALT}, Action::DEPTH_ADJUST_FAR, "Adjust depth far plane"},
-            {MouseScrollTrigger{MOD_ALT | MOD_CTRL}, Action::DEPTH_ADJUST_SIDE, "Adjust depth side"},
+            {KeyTrigger{GLFW_KEY_F, MODIFIER_CTRL}, Action::TOGGLE_DEPTH_MODE, "Toggle depth filter"},
+            {MouseScrollTrigger{MODIFIER_ALT}, Action::DEPTH_ADJUST_FAR, "Adjust depth far plane"},
+            {MouseScrollTrigger{MODIFIER_ALT | MODIFIER_CTRL}, Action::DEPTH_ADJUST_SIDE, "Adjust depth side"},
 
             // Editing
-            {KeyTrigger{GLFW_KEY_DELETE, MOD_NONE}, Action::DELETE_SELECTED, "Delete selected"},
-            {KeyTrigger{GLFW_KEY_Z, MOD_CTRL}, Action::UNDO, "Undo"},
-            {KeyTrigger{GLFW_KEY_Y, MOD_CTRL}, Action::REDO, "Redo"},
-            {KeyTrigger{GLFW_KEY_I, MOD_CTRL}, Action::INVERT_SELECTION, "Invert selection"},
-            {KeyTrigger{GLFW_KEY_D, MOD_CTRL}, Action::DESELECT_ALL, "Deselect all"},
+            {KeyTrigger{GLFW_KEY_DELETE, MODIFIER_NONE}, Action::DELETE_SELECTED, "Delete selected"},
+            {KeyTrigger{GLFW_KEY_Z, MODIFIER_CTRL}, Action::UNDO, "Undo"},
+            {KeyTrigger{GLFW_KEY_Y, MODIFIER_CTRL}, Action::REDO, "Redo"},
+            {KeyTrigger{GLFW_KEY_I, MODIFIER_CTRL}, Action::INVERT_SELECTION, "Invert selection"},
+            {KeyTrigger{GLFW_KEY_D, MODIFIER_CTRL}, Action::DESELECT_ALL, "Deselect all"},
 
             // Tools
-            {KeyTrigger{GLFW_KEY_B, MOD_NONE}, Action::CYCLE_BRUSH_MODE, "Cycle brush mode"},
-            {KeyTrigger{GLFW_KEY_T, MOD_CTRL}, Action::CYCLE_SELECTION_VIS, "Cycle selection visualization"},
-            {KeyTrigger{GLFW_KEY_ENTER, MOD_NONE}, Action::APPLY_CROP_BOX, "Apply crop box / confirm polygon"},
-            {KeyTrigger{GLFW_KEY_ESCAPE, MOD_NONE}, Action::CANCEL_POLYGON, "Cancel / disable depth filter"},
+            {KeyTrigger{GLFW_KEY_B, MODIFIER_NONE}, Action::CYCLE_BRUSH_MODE, "Cycle brush mode"},
+            {KeyTrigger{GLFW_KEY_T, MODIFIER_CTRL}, Action::CYCLE_SELECTION_VIS, "Cycle selection visualization"},
+            {KeyTrigger{GLFW_KEY_ENTER, MODIFIER_NONE}, Action::APPLY_CROP_BOX, "Apply crop box / confirm polygon"},
+            {KeyTrigger{GLFW_KEY_ESCAPE, MODIFIER_NONE}, Action::CANCEL_POLYGON, "Cancel / disable depth filter"},
 
             // Selection
-            {MouseDragTrigger{MouseButton::LEFT, MOD_SHIFT}, Action::SELECTION_ADD, "Add to selection"},
-            {MouseDragTrigger{MouseButton::LEFT, MOD_CTRL}, Action::SELECTION_REMOVE, "Remove from selection"},
-            {KeyTrigger{GLFW_KEY_RIGHT, MOD_NONE}, Action::CAMERA_NEXT_VIEW, "Next camera view"},
-            {KeyTrigger{GLFW_KEY_LEFT, MOD_NONE}, Action::CAMERA_PREV_VIEW, "Previous camera view"},
+            {MouseDragTrigger{MouseButton::LEFT, MODIFIER_SHIFT}, Action::SELECTION_ADD, "Add to selection"},
+            {MouseDragTrigger{MouseButton::LEFT, MODIFIER_CTRL}, Action::SELECTION_REMOVE, "Remove from selection"},
+            {KeyTrigger{GLFW_KEY_RIGHT, MODIFIER_NONE}, Action::CAMERA_NEXT_VIEW, "Next camera view"},
+            {KeyTrigger{GLFW_KEY_LEFT, MODIFIER_NONE}, Action::CAMERA_PREV_VIEW, "Previous camera view"},
 
             // Speed
-            {KeyTrigger{GLFW_KEY_EQUAL, MOD_CTRL}, Action::CAMERA_SPEED_UP, "Increase move speed"},
-            {KeyTrigger{GLFW_KEY_MINUS, MOD_CTRL}, Action::CAMERA_SPEED_DOWN, "Decrease move speed"},
-            {KeyTrigger{GLFW_KEY_KP_ADD, MOD_CTRL}, Action::CAMERA_SPEED_UP, "Increase move speed"},
-            {KeyTrigger{GLFW_KEY_KP_SUBTRACT, MOD_CTRL}, Action::CAMERA_SPEED_DOWN, "Decrease move speed"},
-            {KeyTrigger{GLFW_KEY_EQUAL, MOD_CTRL | MOD_SHIFT}, Action::ZOOM_SPEED_UP, "Increase zoom speed"},
-            {KeyTrigger{GLFW_KEY_MINUS, MOD_CTRL | MOD_SHIFT}, Action::ZOOM_SPEED_DOWN, "Decrease zoom speed"},
-            {KeyTrigger{GLFW_KEY_KP_ADD, MOD_CTRL | MOD_SHIFT}, Action::ZOOM_SPEED_UP, "Increase zoom speed"},
-            {KeyTrigger{GLFW_KEY_KP_SUBTRACT, MOD_CTRL | MOD_SHIFT}, Action::ZOOM_SPEED_DOWN, "Decrease zoom speed"},
+            {KeyTrigger{GLFW_KEY_EQUAL, MODIFIER_CTRL}, Action::CAMERA_SPEED_UP, "Increase move speed"},
+            {KeyTrigger{GLFW_KEY_MINUS, MODIFIER_CTRL}, Action::CAMERA_SPEED_DOWN, "Decrease move speed"},
+            {KeyTrigger{GLFW_KEY_KP_ADD, MODIFIER_CTRL}, Action::CAMERA_SPEED_UP, "Increase move speed"},
+            {KeyTrigger{GLFW_KEY_KP_SUBTRACT, MODIFIER_CTRL}, Action::CAMERA_SPEED_DOWN, "Decrease move speed"},
+            {KeyTrigger{GLFW_KEY_EQUAL, MODIFIER_CTRL | MODIFIER_SHIFT}, Action::ZOOM_SPEED_UP, "Increase zoom speed"},
+            {KeyTrigger{GLFW_KEY_MINUS, MODIFIER_CTRL | MODIFIER_SHIFT}, Action::ZOOM_SPEED_DOWN, "Decrease zoom speed"},
+            {KeyTrigger{GLFW_KEY_KP_ADD, MODIFIER_CTRL | MODIFIER_SHIFT}, Action::ZOOM_SPEED_UP, "Increase zoom speed"},
+            {KeyTrigger{GLFW_KEY_KP_SUBTRACT, MODIFIER_CTRL | MODIFIER_SHIFT}, Action::ZOOM_SPEED_DOWN, "Decrease zoom speed"},
 
             // Selection mode
-            {KeyTrigger{GLFW_KEY_1, MOD_CTRL}, Action::SELECT_MODE_CENTERS, "Centers mode"},
-            {KeyTrigger{GLFW_KEY_2, MOD_CTRL}, Action::SELECT_MODE_RECTANGLE, "Rectangle mode"},
-            {KeyTrigger{GLFW_KEY_3, MOD_CTRL}, Action::SELECT_MODE_POLYGON, "Polygon mode"},
-            {KeyTrigger{GLFW_KEY_4, MOD_CTRL}, Action::SELECT_MODE_LASSO, "Lasso mode"},
-            {KeyTrigger{GLFW_KEY_5, MOD_CTRL}, Action::SELECT_MODE_RINGS, "Rings mode"},
+            {KeyTrigger{GLFW_KEY_1, MODIFIER_CTRL}, Action::SELECT_MODE_CENTERS, "Centers mode"},
+            {KeyTrigger{GLFW_KEY_2, MODIFIER_CTRL}, Action::SELECT_MODE_RECTANGLE, "Rectangle mode"},
+            {KeyTrigger{GLFW_KEY_3, MODIFIER_CTRL}, Action::SELECT_MODE_POLYGON, "Polygon mode"},
+            {KeyTrigger{GLFW_KEY_4, MODIFIER_CTRL}, Action::SELECT_MODE_LASSO, "Lasso mode"},
+            {KeyTrigger{GLFW_KEY_5, MODIFIER_CTRL}, Action::SELECT_MODE_RINGS, "Rings mode"},
         };
 
         return profile;
@@ -545,18 +545,18 @@ namespace lfs::vis::input {
 
     std::string getModifierString(const int modifiers) {
         std::string result;
-        if (modifiers & MOD_CTRL) {
+        if (modifiers & MODIFIER_CTRL) {
             result += "Ctrl";
         }
-        if (modifiers & MOD_ALT) {
+        if (modifiers & MODIFIER_ALT) {
             if (!result.empty()) result += "+";
             result += "Alt";
         }
-        if (modifiers & MOD_SHIFT) {
+        if (modifiers & MODIFIER_SHIFT) {
             if (!result.empty()) result += "+";
             result += "Shift";
         }
-        if (modifiers & MOD_SUPER) {
+        if (modifiers & MODIFIER_SUPER) {
             if (!result.empty()) result += "+";
             result += "Super";
         }

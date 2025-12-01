@@ -78,12 +78,13 @@ namespace lfs::vis::input {
     };
 
     // Modifier flags (can be combined)
+    // Note: Using MODIFIER_ prefix to avoid Windows macro conflicts (MOD_NONE, MOD_SHIFT etc.)
     enum Modifier : int {
-        MOD_NONE = 0,
-        MOD_SHIFT = GLFW_MOD_SHIFT,
-        MOD_CTRL = GLFW_MOD_CONTROL,
-        MOD_ALT = GLFW_MOD_ALT,
-        MOD_SUPER = GLFW_MOD_SUPER,
+        MODIFIER_NONE = 0,
+        MODIFIER_SHIFT = GLFW_MOD_SHIFT,
+        MODIFIER_CTRL = GLFW_MOD_CONTROL,
+        MODIFIER_ALT = GLFW_MOD_ALT,
+        MODIFIER_SUPER = GLFW_MOD_SUPER,
     };
 
     // Mouse button identifiers
@@ -95,23 +96,23 @@ namespace lfs::vis::input {
 
     // Input trigger types
     struct KeyTrigger {
-        int key;                     // GLFW key code
-        int modifiers = MOD_NONE;    // Required modifiers
-        bool on_repeat = false;      // Allow repeat
+        int key;                           // GLFW key code
+        int modifiers = MODIFIER_NONE;     // Required modifiers
+        bool on_repeat = false;            // Allow repeat
     };
 
     struct MouseButtonTrigger {
         MouseButton button;
-        int modifiers = MOD_NONE;
+        int modifiers = MODIFIER_NONE;
     };
 
     struct MouseScrollTrigger {
-        int modifiers = MOD_NONE;    // Modifiers to activate
+        int modifiers = MODIFIER_NONE;     // Modifiers to activate
     };
 
     struct MouseDragTrigger {
         MouseButton button;
-        int modifiers = MOD_NONE;
+        int modifiers = MODIFIER_NONE;
     };
 
     using InputTrigger = std::variant<KeyTrigger, MouseButtonTrigger, MouseScrollTrigger, MouseDragTrigger>;
