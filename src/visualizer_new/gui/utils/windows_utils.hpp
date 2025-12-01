@@ -52,4 +52,9 @@ namespace lfs::vis::gui {
     // in windows- save file dialog for PLY, returns selected path or empty if cancelled
     std::filesystem::path SavePlyFileDialog(const std::string& defaultName);
 #endif
+
+    // Cross-platform JSON file dialogs
+    std::filesystem::path SaveJsonFileDialog(const std::string& defaultName);
+    std::filesystem::path OpenJsonFileDialog();
+
 } // namespace lfs::vis::gui

@@ -26,22 +26,17 @@ namespace lfs::vis {
     InputController::InputController(GLFWwindow* window, Viewport& viewport)
         : window_(window),
           viewport_(viewport) {
-        // Subscribe to GoToCamView events
-        cmd::GoToCamView::when([this](const auto& e) {
-            handleGoToCamView(e);
-        });
-        // Subscribe to WindowFocusLost to reset states
+        cmd::GoToCamView::when([this](const auto& e) { handleGoToCamView(e); });
+
         internal::WindowFocusLost::when([this](const auto&) {
             drag_mode_ = DragMode::None;
             std::fill(std::begin(keys_wasd_), std::end(keys_wasd_), false);
             hovered_camera_id_ = -1;
         });
-        // Subscribe to GimbalLock events
+
         cmd::ToggleGimbalLock::when([this](const cmd::ToggleGimbalLock& e) {
             gimbal_locked = e.locked;
         });
-
-        LOG_DEBUG("InputController created");
     }
 
     InputController::~InputController() {
@@ -89,7 +84,6 @@ namespace lfs::vis {
         resize_cursor_ = glfwCreateStandardCursor(GLFW_HRESIZE_CURSOR);
         hand_cursor_ = glfwCreateStandardCursor(GLFW_HAND_CURSOR);
 
-        LOG_DEBUG("InputController initialized - callbacks set");
     }
 
     // Static callbacks - chain to ImGui then handle ourselves
@@ -170,16 +164,12 @@ namespace lfs::vis {
                           std::end(instance_->keys_wasd_), false);
                 instance_->hovered_camera_id_ = -1; // Reset hovered camera
 
-                // Reset cursor to default when losing focus
                 if (instance_->current_cursor_ != CursorType::Default) {
                     glfwSetCursor(instance_->window_, nullptr);
                     instance_->current_cursor_ = CursorType::Default;
                 }
             }
             lfs::core::events::internal::WindowFocusLost{}.emit();
-            LOG_DEBUG("Window lost focus - input states reset");
-        } else {
-            LOG_DEBUG("Window gained focus");
         }
     }
 
@@ -197,6 +187,12 @@ namespace lfs::vis {
 
     // Core handlers
     void InputController::handleMouseButton(int button, int action, double x, double y) {
+        // Forward to GUI for mouse capture (rebinding)
+        if (action == GLFW_PRESS && gui_manager_ && gui_manager_->isCapturingInput()) {
+            gui_manager_->captureMouseButton(button, getModifierKeys());
+            return;
+        }
+
         // Check for splitter drag FIRST
         if (button == GLFW_MOUSE_BUTTON_LEFT && action == GLFW_PRESS) {
             // Check for double-click on camera frustum
@@ -213,7 +209,6 @@ namespace lfs::vis {
             // If we have a hovered camera, check for double-click
             if (hovered_camera_id_ >= 0) {
                 if (is_double_click && hovered_camera_id_ == last_clicked_camera_id_) {
-                    LOG_DEBUG("Double-clicked on camera ID: {}", hovered_camera_id_);
                     cmd::GoToCamView{.cam_id = hovered_camera_id_}.emit();
 
                     // Reset click tracking to prevent triple-click
@@ -257,8 +252,10 @@ namespace lfs::vis {
             if (!over_gui && brush_tool_->handleMouseButton(button, action, mods, x, y, *tool_context_)) {
                 if (action == GLFW_PRESS) {
                     drag_mode_ = DragMode::Brush;
+                    drag_button_ = button;
                 } else if (action == GLFW_RELEASE && drag_mode_ == DragMode::Brush) {
                     drag_mode_ = DragMode::None;
+                    drag_button_ = -1;
                 }
                 return;
             }
@@ -269,8 +266,10 @@ namespace lfs::vis {
             if (!over_gui && selection_tool_->handleMouseButton(button, action, mods, x, y, *tool_context_)) {
                 if (action == GLFW_PRESS) {
                     drag_mode_ = DragMode::Brush;
+                    drag_button_ = button;
                 } else if (action == GLFW_RELEASE && drag_mode_ == DragMode::Brush) {
                     drag_mode_ = DragMode::None;
+                    drag_button_ = -1;
                 }
                 return;
             }
@@ -298,56 +297,59 @@ namespace lfs::vis {
                 return;
             }
 
-            // Start camera interaction
             viewport_.camera.initScreenPos(glm::vec2(x, y));
 
-            if (button == GLFW_MOUSE_BUTTON_RIGHT) {
-                // Double-click: set pivot and center camera on it
-                const auto now = std::chrono::steady_clock::now();
-                const double time_since_last = std::chrono::duration<double>(now - last_pivot_click_time_).count();
-                const double dist = glm::length(glm::dvec2(x, y) - last_pivot_click_pos_);
+            const int mods = getModifierKeys();
+            const auto mouse_btn = static_cast<input::MouseButton>(button);
 
-                if (time_since_last < DOUBLE_CLICK_TIME && dist < DOUBLE_CLICK_DISTANCE) {
-                    const glm::vec3 new_pivot = unprojectScreenPoint(x, y);
-                    const float current_distance = glm::length(viewport_.camera.getPivot() - viewport_.camera.t);
-                    const glm::vec3 forward = glm::normalize(viewport_.camera.R * glm::vec3(0, 0, 1));
-                    viewport_.camera.t = new_pivot - forward * current_distance;
-                    viewport_.camera.setPivot(new_pivot);
-                    publishCameraMove();
+            if (const auto bound_action = bindings_.getActionForDrag(mouse_btn, mods)) {
+                drag_button_ = button;
+                switch (*bound_action) {
+                case input::Action::CAMERA_PAN: {
+                    // Double-click sets pivot
+                    const auto now = std::chrono::steady_clock::now();
+                    const double time_since_last = std::chrono::duration<double>(now - last_pivot_click_time_).count();
+                    const double dist = glm::length(glm::dvec2(x, y) - last_pivot_click_pos_);
+
+                    if (time_since_last < DOUBLE_CLICK_TIME && dist < DOUBLE_CLICK_DISTANCE) {
+                        const glm::vec3 new_pivot = unprojectScreenPoint(x, y);
+                        const float current_distance = glm::length(viewport_.camera.getPivot() - viewport_.camera.t);
+                        const glm::vec3 forward = glm::normalize(viewport_.camera.R * glm::vec3(0, 0, 1));
+                        viewport_.camera.t = new_pivot - forward * current_distance;
+                        viewport_.camera.setPivot(new_pivot);
+                        publishCameraMove();
+                    }
+
+                    last_pivot_click_time_ = now;
+                    last_pivot_click_pos_ = {x, y};
+                    drag_mode_ = DragMode::Pan;
+                    break;
                 }
-
-                last_pivot_click_time_ = now;
-                last_pivot_click_pos_ = {x, y};
-                drag_mode_ = DragMode::Pan;
-            } else if (button == GLFW_MOUSE_BUTTON_LEFT) {
-                // Left mouse: reserved for tools/selection (no camera action)
-                // Rotate functionality disabled - kept for reference:
-                // drag_mode_ = DragMode::Rotate;
-            } else if (button == GLFW_MOUSE_BUTTON_MIDDLE) {
-                drag_mode_ = DragMode::Orbit;
-                const float current_time = static_cast<float>(glfwGetTime());
-                viewport_.camera.startRotateAroundCenter(glm::vec2(x, y), current_time);
+                case input::Action::CAMERA_ORBIT: {
+                    drag_mode_ = DragMode::Orbit;
+                    viewport_.camera.startRotateAroundCenter(
+                        glm::vec2(x, y), static_cast<float>(glfwGetTime()));
+                    break;
+                }
+                default:
+                    drag_button_ = -1;
+                    break;
+                }
             }
         } else if (action == GLFW_RELEASE) {
-            // Always handle our own releases if we were dragging
             bool was_dragging = false;
-            if (button == GLFW_MOUSE_BUTTON_RIGHT && drag_mode_ == DragMode::Pan) {
+
+            if (drag_mode_ == DragMode::Pan) {
                 drag_mode_ = DragMode::None;
+                drag_button_ = -1;
                 was_dragging = true;
-                LOG_TRACE("Ended camera pan");
-            } else if (button == GLFW_MOUSE_BUTTON_LEFT && drag_mode_ == DragMode::Rotate) {
-                // Rotate is disabled but keep release handling in case it gets re-enabled
-                drag_mode_ = DragMode::None;
-                was_dragging = true;
-                LOG_TRACE("Ended camera rotate");
-            } else if (button == GLFW_MOUSE_BUTTON_MIDDLE && drag_mode_ == DragMode::Orbit) {
+            } else if (drag_mode_ == DragMode::Orbit) {
                 viewport_.camera.endRotateAroundCenter();
                 drag_mode_ = DragMode::None;
+                drag_button_ = -1;
                 was_dragging = true;
-                LOG_TRACE("Ended camera orbit");
             }
 
-            // Force publish on mouse release
             if (was_dragging) {
                 ui::CameraMove{
                     .rotation = viewport_.getRotationMatrix(),
@@ -563,164 +565,151 @@ namespace lfs::vis {
             key_r_pressed_ = (action != GLFW_RELEASE);
         }
 
-        // T: cycle PLY, Ctrl+T: cycle visualization mode in Selection tool
-        if (key == GLFW_KEY_T && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            const bool ctrl = glfwGetKey(window_, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
-                              glfwGetKey(window_, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-            if (ctrl && gui_manager_ &&
-                gui_manager_->getCurrentToolMode() == gui::panels::ToolMode::Selection) {
-                cmd::CycleSelectionVisualization{}.emit();
-                return;
-            }
-            if (!ctrl) {
-                cmd::CyclePLY{}.emit();
-            }
+        // Forward to GUI for key capture (rebinding)
+        if (action == GLFW_PRESS && gui_manager_ && gui_manager_->isCapturingInput()) {
+            gui_manager_->captureKey(key, mods);
             return;
         }
 
-
-        if (key == GLFW_KEY_V && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            cmd::ToggleSplitView{}.emit();
-            return;
-        }
-
-        if (key == GLFW_KEY_G && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            cmd::ToggleGTComparison{}.emit();
-            LOG_DEBUG("Toggled GT comparison mode");
-            return;
-        }
-
-        // H - reset camera to home position
-        if (key == GLFW_KEY_H && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            viewport_.camera.resetToHome();
-            publishCameraMove();
-            return;
-        }
-
-        // B key cycles brush mode when brush tool is active
-        if (key == GLFW_KEY_B && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
-                if (brush_tool_->handleKeyPress(key, mods, *tool_context_)) {
+        // Handle key press actions through bindings
+        if (action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
+            // Check if this key+mods triggers a bound action
+            if (auto bound_action = bindings_.getActionForKey(key, mods)) {
+                switch (*bound_action) {
+                case input::Action::TOGGLE_SPLIT_VIEW:
+                    cmd::ToggleSplitView{}.emit();
                     return;
+
+                case input::Action::TOGGLE_GT_COMPARISON:
+                    cmd::ToggleGTComparison{}.emit();
+                    return;
+
+                case input::Action::CAMERA_RESET_HOME:
+                    viewport_.camera.resetToHome();
+                    publishCameraMove();
+                    return;
+
+                case input::Action::CYCLE_PLY:
+                    cmd::CyclePLY{}.emit();
+                    return;
+
+                case input::Action::CYCLE_SELECTION_VIS:
+                    if (gui_manager_ &&
+                        gui_manager_->getCurrentToolMode() == gui::panels::ToolMode::Selection) {
+                        cmd::CycleSelectionVisualization{}.emit();
+                    }
+                    return;
+
+                case input::Action::DELETE_SELECTED:
+                    cmd::DeleteSelected{}.emit();
+                    return;
+
+                case input::Action::UNDO:
+                    cmd::Undo{}.emit();
+                    return;
+
+                case input::Action::REDO:
+                    cmd::Redo{}.emit();
+                    return;
+
+                case input::Action::INVERT_SELECTION:
+                    cmd::InvertSelection{}.emit();
+                    return;
+
+                case input::Action::DESELECT_ALL:
+                    cmd::DeselectAll{}.emit();
+                    return;
+
+                case input::Action::APPLY_CROP_BOX:
+                    cmd::ApplyCropBox{}.emit();
+                    return;
+
+                case input::Action::CYCLE_BRUSH_MODE:
+                    if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
+                        brush_tool_->handleKeyPress(key, mods, *tool_context_);
+                    }
+                    return;
+
+                case input::Action::CAMERA_NEXT_VIEW:
+                    if (training_manager_) {
+                        const int num_cams = static_cast<int>(training_manager_->getCamList().size());
+                        if (num_cams > 0) {
+                            last_camview_ = (last_camview_ + 1) % num_cams;
+                            cmd::GoToCamView{.cam_id = last_camview_}.emit();
+                        }
+                    }
+                    return;
+
+                case input::Action::CAMERA_PREV_VIEW:
+                    if (training_manager_) {
+                        const int num_cams = static_cast<int>(training_manager_->getCamList().size());
+                        if (num_cams > 0) {
+                            last_camview_ = (last_camview_ - 1 + num_cams) % num_cams;
+                            cmd::GoToCamView{.cam_id = last_camview_}.emit();
+                        }
+                    }
+                    return;
+
+                case input::Action::CAMERA_SPEED_UP:
+                    updateCameraSpeed(true);
+                    return;
+
+                case input::Action::CAMERA_SPEED_DOWN:
+                    updateCameraSpeed(false);
+                    return;
+
+                case input::Action::ZOOM_SPEED_UP:
+                    updateZoomSpeed(true);
+                    return;
+
+                case input::Action::ZOOM_SPEED_DOWN:
+                    updateZoomSpeed(false);
+                    return;
+
+                case input::Action::SELECT_MODE_CENTERS:
+                    if (gui_manager_) {
+                        gui_manager_->setSelectionSubMode(gui::panels::SelectionSubMode::Centers);
+                    }
+                    return;
+
+                case input::Action::SELECT_MODE_RECTANGLE:
+                    if (gui_manager_) {
+                        gui_manager_->setSelectionSubMode(gui::panels::SelectionSubMode::Rectangle);
+                    }
+                    return;
+
+                case input::Action::SELECT_MODE_POLYGON:
+                    if (gui_manager_) {
+                        gui_manager_->setSelectionSubMode(gui::panels::SelectionSubMode::Polygon);
+                    }
+                    return;
+
+                case input::Action::SELECT_MODE_LASSO:
+                    if (gui_manager_) {
+                        gui_manager_->setSelectionSubMode(gui::panels::SelectionSubMode::Lasso);
+                    }
+                    return;
+
+                case input::Action::SELECT_MODE_RINGS:
+                    if (gui_manager_) {
+                        gui_manager_->setSelectionSubMode(gui::panels::SelectionSubMode::Rings);
+                    }
+                    return;
+
+                default:
+                    break;
                 }
             }
         }
 
-        // Selection tool key handling (Enter/Escape for polygon mode)
+        // Selection tool key handling (Enter/Escape for polygon mode, Ctrl+F for depth)
+        // These need to be handled by the tool itself for proper state management
         if (action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
             if (selection_tool_ && selection_tool_->isEnabled() && tool_context_) {
                 if (selection_tool_->handleKeyPress(key, mods, *tool_context_)) {
                     return;
                 }
             }
-        }
-
-        // DEL key - delete selected Gaussians
-        if (key == GLFW_KEY_DELETE && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            cmd::DeleteSelected{}.emit();
-            return;
-        }
-
-        if (key == GLFW_KEY_RIGHT && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            if (!training_manager_) {
-                LOG_WARN("Training manager is not set; cannot cycle camera view.");
-                return;
-            }
-            int num_cams = training_manager_->getCamList().size();
-            if (num_cams == 0) {
-                return;
-            }
-
-            last_camview++;
-            if (last_camview >= num_cams) {
-                last_camview = 0; // Wrap to beginning
-            }
-
-            cmd::GoToCamView{
-                .cam_id = last_camview}
-                .emit();
-            return;
-        }
-
-        if (key == GLFW_KEY_LEFT && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            if (!training_manager_) {
-                LOG_WARN("Training manager is not set; cannot cycle camera view.");
-                return;
-            }
-            int num_cams = training_manager_->getCamList().size();
-            if (num_cams == 0) {
-                return;
-            }
-
-            last_camview--;
-            if (last_camview < 0) {
-                last_camview = num_cams - 1; // Wrap to end
-            }
-
-            cmd::GoToCamView{
-                .cam_id = last_camview}
-                .emit();
-            return;
-        }
-
-        // Speed control works even when GUI has focus
-        if (key_ctrl_pressed_ && (action == GLFW_PRESS || action == GLFW_REPEAT)) {
-            const bool shift_pressed = glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-                                       glfwGetKey(window_, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-            if (key == GLFW_KEY_EQUAL || key == GLFW_KEY_KP_ADD) {
-                if (shift_pressed) {
-                    updateZoomSpeed(true);
-                } else {
-                    updateCameraSpeed(true);
-                }
-                return;
-            }
-            if (key == GLFW_KEY_MINUS || key == GLFW_KEY_KP_SUBTRACT) {
-                if (shift_pressed) {
-                    updateZoomSpeed(false);
-                } else {
-                    updateCameraSpeed(false);
-                }
-                return;
-            }
-        }
-
-        // Ctrl shortcuts
-        if (key_ctrl_pressed_ && action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            if (key == GLFW_KEY_Z) {
-                cmd::Undo{}.emit();
-                return;
-            }
-            if (key == GLFW_KEY_Y) {
-                cmd::Redo{}.emit();
-                return;
-            }
-            if (key == GLFW_KEY_I) {
-                cmd::InvertSelection{}.emit();
-                return;
-            }
-            if (key == GLFW_KEY_D) {
-                cmd::DeselectAll{}.emit();
-                return;
-            }
-            // Ctrl+1..5: selection sub-mode shortcuts
-            if (gui_manager_ && key >= GLFW_KEY_1 && key <= GLFW_KEY_5) {
-                using Mode = gui::panels::SelectionSubMode;
-                static constexpr Mode SELECTION_MODES[] = {
-                    Mode::Centers, Mode::Rectangle, Mode::Polygon, Mode::Lasso, Mode::Rings
-                };
-                gui_manager_->setSelectionSubMode(SELECTION_MODES[key - GLFW_KEY_1]);
-                return;
-            }
-        }
-
-        // Enter - apply crop box
-        if (key == GLFW_KEY_ENTER && action == GLFW_PRESS) {
-            LOG_INFO("Enter pressed, ImGui::IsAnyItemActive()={}", ImGui::IsAnyItemActive());
-            if (!ImGui::IsAnyItemActive()) {
-                cmd::ApplyCropBox{}.emit();
-            }
-            return;
         }
 
         // WASD only works when viewport has focus and gizmo isn't active
@@ -764,63 +753,51 @@ namespace lfs::vis {
     }
 
     void InputController::update(float delta_time) {
-        // This catches cases where mouse release events are missed (e.g., outside window)
-        if (drag_mode_ == DragMode::Orbit &&
-            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_MIDDLE) != GLFW_PRESS) {
+        const bool drag_button_released = drag_button_ >= 0 &&
+            glfwGetMouseButton(window_, drag_button_) != GLFW_PRESS;
+
+        // Handle missed mouse release events (e.g., outside window)
+        if (drag_mode_ == DragMode::Orbit && drag_button_released) {
             viewport_.camera.endRotateAroundCenter();
             drag_mode_ = DragMode::None;
-            LOG_TRACE("Orbit stopped - button released outside window");
+            drag_button_ = -1;
         }
 
-        if (drag_mode_ == DragMode::Rotate &&
-            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) != GLFW_PRESS) {
-            // Rotate is disabled but keep safety check
+        if (drag_mode_ == DragMode::Pan && drag_button_released) {
             drag_mode_ = DragMode::None;
-            LOG_TRACE("Rotate stopped - button released outside window");
-        }
-
-        if (drag_mode_ == DragMode::Pan &&
-            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_RIGHT) != GLFW_PRESS) {
-            drag_mode_ = DragMode::None;
-            LOG_TRACE("Pan stopped - button released outside window");
+            drag_button_ = -1;
         }
 
         if (drag_mode_ == DragMode::Splitter &&
             glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) != GLFW_PRESS) {
             drag_mode_ = DragMode::None;
-            glfwSetCursor(window_, nullptr); // Reset cursor
-            LOG_TRACE("Splitter drag stopped - button released outside window");
+            drag_button_ = -1;
+            glfwSetCursor(window_, nullptr);
         }
 
-        if (drag_mode_ == DragMode::Brush &&
-            glfwGetMouseButton(window_, GLFW_MOUSE_BUTTON_LEFT) != GLFW_PRESS) {
+        if (drag_mode_ == DragMode::Brush && drag_button_released) {
             drag_mode_ = DragMode::None;
+            drag_button_ = -1;
         }
 
-        // Prevent stuck keys by syncing with actual keyboard state
+        // Sync WASD key states with actual keyboard
         if (keys_wasd_[0] && glfwGetKey(window_, GLFW_KEY_W) != GLFW_PRESS) {
             keys_wasd_[0] = false;
-            LOG_TRACE("W key unstuck");
         }
         if (keys_wasd_[1] && glfwGetKey(window_, GLFW_KEY_A) != GLFW_PRESS) {
             keys_wasd_[1] = false;
-            LOG_TRACE("A key unstuck");
         }
         if (keys_wasd_[2] && glfwGetKey(window_, GLFW_KEY_S) != GLFW_PRESS) {
             keys_wasd_[2] = false;
-            LOG_TRACE("S key unstuck");
         }
         if (keys_wasd_[3] && glfwGetKey(window_, GLFW_KEY_D) != GLFW_PRESS) {
             keys_wasd_[3] = false;
-            LOG_TRACE("D key unstuck");
         }
         if (keys_wasd_[4] && glfwGetKey(window_, GLFW_KEY_Q) != GLFW_PRESS) {
             keys_wasd_[4] = false;
-            LOG_TRACE("Q key unstuck");
         }
         if (keys_wasd_[5] && glfwGetKey(window_, GLFW_KEY_E) != GLFW_PRESS) {
             keys_wasd_[5] = false;
-            LOG_TRACE("E key unstuck");
         }
 
         // Handle continuous WASD movement
@@ -857,8 +834,6 @@ namespace lfs::vis {
     }
 
     void InputController::handleFileDrop(const std::vector<std::string>& paths) {
-        LOG_DEBUG("Handling file drop with {} files", paths.size());
-
         std::vector<std::filesystem::path> splat_files;
         std::optional<std::filesystem::path> dataset_path;
 
@@ -876,7 +851,6 @@ namespace lfs::vis {
                 LOG_TRACE("Checking directory for dataset markers: {}", filepath.string());
                 if (lfs::loader::Loader::isDatasetPath(filepath)) {
                     dataset_path = filepath;
-                    LOG_DEBUG("Dataset detected in dropped directory");
                 }
             }
         }
@@ -916,8 +890,6 @@ namespace lfs::vis {
             LOG_ERROR("Camera ID {} not found", event.cam_id);
             return;
         }
-
-        LOG_DEBUG("Moving camera to view ID: {} ({})", event.cam_id, cam_data->image_name());
 
         // Get rotation and translation tensors and ensure they're on CPU
         auto R_tensor = cam_data->R().cpu();
@@ -960,7 +932,6 @@ namespace lfs::vis {
         // Save as home position if this is the first camera view
         if (!viewport_.camera.home_saved) {
             viewport_.camera.saveHomePosition();
-            LOG_DEBUG("Saved home position");
         }
 
         // Get camera intrinsics using the proper method
@@ -971,9 +942,6 @@ namespace lfs::vis {
         // Calculate vertical FOV using the actual focal length
         const float fov_y_rad = 2.0f * std::atan(height / (2.0f * focal_y));
         const float fov_y_deg = glm::degrees(fov_y_rad);
-
-        LOG_DEBUG("Camera params - focal: ({:.1f}, {:.1f}), center: ({:.1f}, {:.1f}), image: {}x{}, FOV: {:.2f}°",
-                  focal_x, focal_y, center_x, center_y, width, height, fov_y_deg);
 
         // Check for principal point offset (should be near center)
         const float cx_expected = width / 2.0f;
@@ -1005,7 +973,7 @@ namespace lfs::vis {
             rendering_manager_->setCurrentCameraId(event.cam_id);
         }
 
-        last_camview = event.cam_id;
+        last_camview_ = event.cam_id;
     }
 
     // Helpers
@@ -1102,6 +1070,10 @@ namespace lfs::vis {
         if (glfwGetKey(window_, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
             glfwGetKey(window_, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS) {
             mods |= GLFW_MOD_SHIFT;
+        }
+        if (glfwGetKey(window_, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+            glfwGetKey(window_, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS) {
+            mods |= GLFW_MOD_ALT;
         }
         return mods;
     }

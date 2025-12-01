@@ -10,6 +10,10 @@
 #include <memory>
 #include <vector>
 
+namespace lfs::vis::input {
+    class InputBindings;
+}
+
 namespace lfs::vis::tools {
 
     class SelectionTool : public ToolBase {
@@ -43,6 +47,9 @@ namespace lfs::vis::tools {
         // Depth filter
         [[nodiscard]] bool isDepthFilterEnabled() const { return depth_filter_enabled_; }
         void resetDepthFilter();
+
+        // Input bindings (optional, for customizable scroll actions)
+        void setInputBindings(const input::InputBindings* bindings) { input_bindings_ = bindings; }
 
     protected:
         void onEnabledChanged(bool enabled) override;
@@ -106,6 +113,9 @@ namespace lfs::vis::tools {
         void drawDepthFrustum(const ToolContext& ctx) const;
         void updateSelectionCropBox(const ToolContext& ctx);
         void disableDepthFilter(const ToolContext& ctx);
+
+        // Input bindings pointer (optional)
+        const input::InputBindings* input_bindings_ = nullptr;
     };
 
 } // namespace lfs::vis::tools

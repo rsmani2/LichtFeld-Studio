@@ -5,6 +5,8 @@
 #include "gui/panels/menu_bar.hpp"
 #include "config.h"
 #include "core_new/logger.hpp"
+#include "gui/utils/windows_utils.hpp"
+#include <GLFW/glfw3.h>
 #include <imgui.h>
 
 #include <cstdlib> // for system()
@@ -14,13 +16,8 @@
 
 namespace lfs::vis::gui {
 
-    MenuBar::MenuBar() {
-        LOG_DEBUG("MenuBar created");
-    }
-
-    MenuBar::~MenuBar() {
-        // Cleanup handled automatically
-    }
+    MenuBar::MenuBar() = default;
+    MenuBar::~MenuBar() = default;
 
     void MenuBar::render() {
         // Modern color scheme
@@ -35,75 +32,44 @@ namespace lfs::vis::gui {
         ImGui::PushStyleColor(ImGuiCol_TextDisabled, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
 
         if (ImGui::BeginMainMenuBar()) {
-            // File menu
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Open Project")) {
-                    LOG_DEBUG("Open Project clicked");
-                    if (on_open_project_) {
-                        on_open_project_();
-                    }
+                if (ImGui::MenuItem("Open Project") && on_open_project_) {
+                    on_open_project_();
                 }
-
-                if (ImGui::MenuItem("Import Dataset")) {
-                    LOG_DEBUG("Import Dataset clicked");
-                    if (on_import_dataset_) {
-                        on_import_dataset_();
-                    }
+                if (ImGui::MenuItem("Import Dataset") && on_import_dataset_) {
+                    on_import_dataset_();
                 }
-
-                if (ImGui::MenuItem("Import Ply")) {
-                    LOG_DEBUG("Import Ply clicked");
-                    if (on_import_ply_) {
-                        on_import_ply_();
-                    }
+                if (ImGui::MenuItem("Import Ply") && on_import_ply_) {
+                    on_import_ply_();
                 }
-
                 ImGui::Separator();
-
-                if (ImGui::MenuItem("Save Project As...")) {
-                    LOG_DEBUG("Save Project As clicked");
-                    if (on_save_project_as_) {
-                        on_save_project_as_();
-                    }
+                if (ImGui::MenuItem("Save Project As...") && on_save_project_as_) {
+                    on_save_project_as_();
                 }
-
-                // Disable "Save Project" if project is temporary
-                if (ImGui::MenuItem("Save Project", nullptr, false, !is_project_temp_)) {
-                    LOG_DEBUG("Save Project clicked");
-                    if (on_save_project_) {
-                        on_save_project_();
-                    }
+                if (ImGui::MenuItem("Save Project", nullptr, false, !is_project_temp_) && on_save_project_) {
+                    on_save_project_();
                 }
-
                 ImGui::Separator();
-
-                if (ImGui::MenuItem("Exit")) {
-                    LOG_DEBUG("Exit clicked");
-                    if (on_exit_) {
-                        on_exit_();
-                    }
+                if (ImGui::MenuItem("Exit") && on_exit_) {
+                    on_exit_();
                 }
-
                 ImGui::EndMenu();
             }
 
-            // Help menu
+            if (ImGui::BeginMenu("Edit")) {
+                if (ImGui::MenuItem("Input Settings...")) {
+                    show_input_settings_ = true;
+                }
+                ImGui::EndMenu();
+            }
+
             if (ImGui::BeginMenu("Help")) {
                 if (ImGui::MenuItem("Getting Started")) {
-                    LOG_DEBUG("Getting Started clicked");
                     show_getting_started_ = true;
                 }
-
-                if (ImGui::MenuItem("Controls & Shortcuts")) {
-                    LOG_DEBUG("Camera Controls and Shortcuts clicked");
-                    show_controls_and_shortcuts_ = true;
-                }
-
                 if (ImGui::MenuItem("About LichtFeld Studio")) {
-                    LOG_DEBUG("About clicked");
                     show_about_window_ = true;
                 }
-
                 ImGui::EndMenu();
             }
 
@@ -115,7 +81,7 @@ namespace lfs::vis::gui {
 
         renderGettingStartedWindow();
         renderAboutWindow();
-        renderControlsAndShortcutsWindow();
+        renderInputSettingsWindow();
     }
 
     void MenuBar::openURL(const char* url) {
@@ -132,11 +98,9 @@ namespace lfs::vis::gui {
             return;
         }
 
-        ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
-
+        constexpr ImGuiWindowFlags WINDOW_FLAGS = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
         ImGui::SetNextWindowSize(ImVec2(700, 0), ImGuiCond_Once);
 
-        // Modern dark theme with subtle gradient effect
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 12.0f));
@@ -146,9 +110,8 @@ namespace lfs::vis::gui {
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.2f, 0.2f, 0.24f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.26f, 0.59f, 0.98f, 0.3f));
 
-        if (ImGui::Begin("Getting Started", &show_getting_started_, window_flags)) {
-            // Header with gradient-like color
-            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]); // Assumes default font
+        if (ImGui::Begin("Getting Started", &show_getting_started_, WINDOW_FLAGS)) {
+            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
             ImGui::TextColored(ImVec4(0.26f, 0.59f, 0.98f, 1.0f), "QUICK START GUIDE");
             ImGui::PopFont();
             ImGui::Spacing();
@@ -247,8 +210,7 @@ namespace lfs::vis::gui {
             return;
         }
 
-        ImGuiWindowFlags window_flags = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
-
+        constexpr ImGuiWindowFlags WINDOW_FLAGS = ImGuiWindowFlags_NoDocking | ImGuiWindowFlags_AlwaysAutoResize;
         ImGui::SetNextWindowSize(ImVec2(750, 0), ImGuiCond_Once);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
@@ -262,17 +224,15 @@ namespace lfs::vis::gui {
         ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(0.2f, 0.2f, 0.24f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
 
-        const char* repo_url = "https://github.com/MrNeRF/LichtFeld-Studio";
-        const char* website_url = "https://lichtfeld.io";
+        static constexpr const char* REPO_URL = "https://github.com/MrNeRF/LichtFeld-Studio";
+        static constexpr const char* WEBSITE_URL = "https://lichtfeld.io";
 
-        if (ImGui::Begin("About LichtFeld Studio", &show_about_window_, window_flags)) {
-            // Header
+        if (ImGui::Begin("About LichtFeld Studio", &show_about_window_, WINDOW_FLAGS)) {
             ImGui::TextColored(ImVec4(0.26f, 0.59f, 0.98f, 1.0f), "LICHTFELD STUDIO");
             ImGui::Spacing();
             ImGui::Separator();
             ImGui::Spacing();
 
-            // Description
             ImGui::TextWrapped(
                 "A high-performance C++ and CUDA implementation of 3D Gaussian Splatting for "
                 "real-time neural rendering, training, and visualization.");
@@ -280,22 +240,19 @@ namespace lfs::vis::gui {
             ImGui::Spacing();
             ImGui::Spacing();
 
-            // Build Information Table
             ImGui::TextColored(ImVec4(0.26f, 0.59f, 0.98f, 1.0f), "BUILD INFORMATION");
             ImGui::Spacing();
 
-            if (ImGui::BeginTable("build_info_table", 2,
-                                  ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp)) {
-
+            constexpr ImGuiTableFlags TABLE_FLAGS = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_SizingStretchProp;
+            if (ImGui::BeginTable("build_info_table", 2, TABLE_FLAGS)) {
                 ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
-                const ImVec4 labelColor = ImVec4(0.7f, 0.7f, 0.7f, 1.0f);
+                static constexpr ImVec4 LABEL_COLOR{0.7f, 0.7f, 0.7f, 1.0f};
 
-                // Version
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(labelColor, "Version");
+                ImGui::TextColored(LABEL_COLOR, "Version");
                 ImGui::TableNextColumn();
                 ImGui::TextWrapped("%s", GIT_TAGGED_VERSION);
                 if (ImGui::IsItemHovered()) {
@@ -305,10 +262,9 @@ namespace lfs::vis::gui {
                     ImGui::SetClipboardText(GIT_TAGGED_VERSION);
                 }
 
-                // Commit (short)
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(labelColor, "Commit");
+                ImGui::TextColored(LABEL_COLOR, "Commit");
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", GIT_COMMIT_HASH_SHORT);
                 if (ImGui::IsItemHovered()) {
@@ -318,10 +274,9 @@ namespace lfs::vis::gui {
                     ImGui::SetClipboardText(GIT_COMMIT_HASH_SHORT);
                 }
 
-                // Build Type
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(labelColor, "Build Type");
+                ImGui::TextColored(LABEL_COLOR, "Build Type");
                 ImGui::TableNextColumn();
 #ifdef DEBUG_BUILD
                 ImGui::Text("Debug");
@@ -329,10 +284,9 @@ namespace lfs::vis::gui {
                 ImGui::Text("Release");
 #endif
 
-                // Platform
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(labelColor, "Platform");
+                ImGui::TextColored(LABEL_COLOR, "Platform");
                 ImGui::TableNextColumn();
 #ifdef PLATFORM_WINDOWS
                 ImGui::Text("Windows");
@@ -342,10 +296,9 @@ namespace lfs::vis::gui {
                 ImGui::Text("Unknown");
 #endif
 
-                // CUDA Interop
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(labelColor, "CUDA-GL Interop");
+                ImGui::TextColored(LABEL_COLOR, "CUDA-GL Interop");
                 ImGui::TableNextColumn();
 #ifdef CUDA_GL_INTEROP_ENABLED
                 ImGui::Text("Enabled");
@@ -359,37 +312,36 @@ namespace lfs::vis::gui {
             ImGui::Spacing();
             ImGui::Spacing();
 
-            // Links
             ImGui::TextColored(ImVec4(0.26f, 0.59f, 0.98f, 1.0f), "LINKS");
             ImGui::Spacing();
 
+            static constexpr ImVec4 LINK_COLOR{0.4f, 0.7f, 1.0f, 1.0f};
+
             ImGui::Text("Repository:");
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
-            ImGui::Text("%s", repo_url);
+            ImGui::PushStyleColor(ImGuiCol_Text, LINK_COLOR);
+            ImGui::Text("%s", REPO_URL);
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             }
             if (ImGui::IsItemClicked()) {
-                openURL(repo_url);
+                openURL(REPO_URL);
             }
 
             ImGui::Text("Website:");
             ImGui::SameLine();
-            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.4f, 0.7f, 1.0f, 1.0f));
-            ImGui::Text("%s", website_url);
+            ImGui::PushStyleColor(ImGuiCol_Text, LINK_COLOR);
+            ImGui::Text("%s", WEBSITE_URL);
             ImGui::PopStyleColor();
             if (ImGui::IsItemHovered()) {
                 ImGui::SetMouseCursor(ImGuiMouseCursor_Hand);
             }
             if (ImGui::IsItemClicked()) {
-                openURL(website_url);
+                openURL(WEBSITE_URL);
             }
 
             ImGui::Spacing();
-
-            // Credits & License
             ImGui::Separator();
             ImGui::Spacing();
             ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "LichtFeld Studio Authors");
@@ -402,188 +354,6 @@ namespace lfs::vis::gui {
 
         ImGui::PopStyleColor(7);
         ImGui::PopStyleVar(3);
-    }
-
-    void MenuBar::renderControlsAndShortcutsWindow() {
-        if (!show_controls_and_shortcuts_) {
-            return;
-        }
-
-        ImGuiWindowFlags window_flags = ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking;
-
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 8.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(10.0f, 6.0f));
-        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.11f, 0.11f, 0.13f, 0.98f));
-        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.2f, 0.2f, 0.24f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.26f, 0.59f, 0.98f, 0.3f));
-        ImGui::PushStyleColor(ImGuiCol_Tab, ImVec4(0.18f, 0.18f, 0.22f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TabHovered, ImVec4(0.26f, 0.59f, 0.98f, 0.4f));
-        ImGui::PushStyleColor(ImGuiCol_TabActive, ImVec4(0.26f, 0.59f, 0.98f, 0.6f));
-        ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(0.2f, 0.2f, 0.24f, 1.0f));
-        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
-
-        if (ImGui::Begin("Controls & Shortcuts", &show_controls_and_shortcuts_, window_flags)) {
-            if (ImGui::BeginTabBar("ControlsTabBar", ImGuiTabBarFlags_None)) {
-                // Camera Controls Tab
-                if (ImGui::BeginTabItem("Camera Controls")) {
-                    ImGui::Spacing();
-
-                    if (ImGui::BeginTable("camera_controls_table", 2,
-                                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
-
-                        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 350.0f);
-                        ImGui::TableSetupColumn("Control", ImGuiTableColumnFlags_WidthFixed, 200.0f);
-                        ImGui::TableHeadersRow();
-
-                        const ImVec4 actionColor = ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
-                        const ImVec4 controlColor = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Local Translate Camera");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "Left Mouse + Drag");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Local Rotate Camera (Pitch/Yaw)");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "Right Mouse + Drag");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Rotate Around Scene Center");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "Middle Mouse + Drag");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Zoom");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "Mouse Scroll");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Roll Camera");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "R + Mouse Scroll");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Navigate Scene (Forward/Back/Left/Right)");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "W, S, A, D");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Navigate Scene (Up/Down)");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "Q, E");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Adjust Movement Speed");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "Ctrl + +/-");
-                        
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Adjust Mouse zoom Speed");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "Ctrl + Shift + +/-");
-						
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Return To Home Location");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "H");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(actionColor, "* Center On Mouse Cursor Location");
-                        ImGui::TableNextColumn();
-                        ImGui::TextColored(controlColor, "Double Click Left Mouse Button");
-
-                        ImGui::EndTable();
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::EndTabItem();
-                }
-
-                // Shortcuts Tab
-                if (ImGui::BeginTabItem("Shortcuts")) {
-                    ImGui::Spacing();
-
-                    if (ImGui::BeginTable("shortcuts_table", 3,
-                                          ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_BordersInnerV)) {
-
-                        // Calculate available width and distribute columns
-                        float charWidth = ImGui::CalcTextSize("K").x;
-
-                        float keyWidth = 10 * charWidth; // Fixed width for key column
-                        float stateActionWidth = 40 * charWidth;
-                        float actionWidth = 40 * charWidth;
-
-                        ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthFixed, keyWidth);
-                        ImGui::TableSetupColumn("State", ImGuiTableColumnFlags_WidthFixed, stateActionWidth);
-                        ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, actionWidth);
-
-                        ImGui::TableHeadersRow();
-
-                        const ImVec4 keyColor = ImVec4(0.4f, 0.7f, 1.0f, 1.0f);
-                        const ImVec4 StateColor = ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
-                        const ImVec4 actionColor = ImVec4(0.9f, 0.9f, 0.9f, 1.0f);
-
-                        // go to the next line if width does not fit the text
-                        auto WrappedTextColored = [](const ImVec4& color, const char* text) {
-                            ImGui::PushTextWrapPos(ImGui::GetColumnWidth() + ImGui::GetCursorPosX());
-                            ImGui::TextColored(color, "%s", text);
-                            ImGui::PopTextWrapPos();
-                        };
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        WrappedTextColored(keyColor, "G");
-                        ImGui::TableNextColumn();
-                        WrappedTextColored(StateColor, "Image selected in Images panel");
-                        ImGui::TableNextColumn();
-                        WrappedTextColored(actionColor, "Split screen comparison between ground truth image and model image");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        WrappedTextColored(keyColor, "V");
-                        ImGui::TableNextColumn();
-                        WrappedTextColored(StateColor, "Two plys selected in Ply panel");
-                        ImGui::TableNextColumn();
-                        WrappedTextColored(actionColor, "Split screen comparison between plys");
-
-                        ImGui::TableNextRow();
-                        ImGui::TableNextColumn();
-                        WrappedTextColored(keyColor, "F2");
-                        ImGui::TableNextColumn();
-                        WrappedTextColored(StateColor, "Ply selected in Ply panel");
-                        ImGui::TableNextColumn();
-                        WrappedTextColored(actionColor, "Rename ply file");
-
-                        ImGui::EndTable();
-                    }
-
-                    ImGui::Spacing();
-                    ImGui::EndTabItem();
-                }
-
-                ImGui::EndTabBar();
-            }
-        }
-        ImGui::End();
-
-        ImGui::PopStyleColor(10);
-        ImGui::PopStyleVar(4);
     }
 
     void MenuBar::setOnImportDataset(std::function<void()> callback) {
@@ -608,6 +378,315 @@ namespace lfs::vis::gui {
 
     void MenuBar::setOnExit(std::function<void()> callback) {
         on_exit_ = std::move(callback);
+    }
+
+    void MenuBar::renderBindingRow(const input::Action action) {
+        static constexpr ImVec4 COLOR_ACTION{0.9f, 0.9f, 0.9f, 1.0f};
+        static constexpr ImVec4 COLOR_BINDING{0.4f, 0.7f, 1.0f, 1.0f};
+        static constexpr ImVec4 COLOR_WAITING{1.0f, 0.8f, 0.2f, 1.0f};
+        static constexpr ImVec4 COLOR_REBIND{0.2f, 0.4f, 0.6f, 1.0f};
+        static constexpr ImVec4 COLOR_REBIND_HOVER{0.3f, 0.5f, 0.7f, 1.0f};
+        static constexpr ImVec4 COLOR_REBIND_ACTIVE{0.4f, 0.6f, 0.8f, 1.0f};
+        static constexpr ImVec4 COLOR_CANCEL{0.6f, 0.2f, 0.2f, 1.0f};
+        static constexpr ImVec4 COLOR_CANCEL_HOVER{0.7f, 0.3f, 0.3f, 1.0f};
+        static constexpr ImVec4 COLOR_CANCEL_ACTIVE{0.8f, 0.4f, 0.4f, 1.0f};
+
+        const bool is_rebinding = rebinding_action_.has_value() && *rebinding_action_ == action;
+
+        ImGui::TableNextRow();
+        ImGui::TableNextColumn();
+        ImGui::TextColored(COLOR_ACTION, "%s", input::getActionName(action).c_str());
+
+        ImGui::TableNextColumn();
+        if (is_rebinding) {
+            ImGui::TextColored(COLOR_WAITING, "Press key or mouse...");
+        } else {
+            const std::string desc = input_bindings_->getTriggerDescription(action);
+            ImGui::TextColored(COLOR_BINDING, "%s", desc.c_str());
+        }
+
+        ImGui::TableNextColumn();
+        const int action_id = static_cast<int>(action);
+        if (is_rebinding) {
+            ImGui::PushStyleColor(ImGuiCol_Button, COLOR_CANCEL);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COLOR_CANCEL_HOVER);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, COLOR_CANCEL_ACTIVE);
+            char label[32];
+            snprintf(label, sizeof(label), "Cancel##%d", action_id);
+            if (ImGui::Button(label, ImVec2(-1, 0))) {
+                cancelCapture();
+            }
+            ImGui::PopStyleColor(3);
+        } else {
+            ImGui::PushStyleColor(ImGuiCol_Button, COLOR_REBIND);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, COLOR_REBIND_HOVER);
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, COLOR_REBIND_ACTIVE);
+            char label[32];
+            snprintf(label, sizeof(label), "Rebind##%d", action_id);
+            if (ImGui::Button(label, ImVec2(-1, 0))) {
+                rebinding_action_ = action;
+            }
+            ImGui::PopStyleColor(3);
+        }
+    }
+
+    void MenuBar::captureKey(const int key, const int mods) {
+        if (!rebinding_action_.has_value() || !input_bindings_) {
+            return;
+        }
+
+        if (key == GLFW_KEY_ESCAPE) {
+            cancelCapture();
+            return;
+        }
+
+        // Ignore modifier-only keys
+        if (key == GLFW_KEY_LEFT_SHIFT || key == GLFW_KEY_RIGHT_SHIFT ||
+            key == GLFW_KEY_LEFT_CONTROL || key == GLFW_KEY_RIGHT_CONTROL ||
+            key == GLFW_KEY_LEFT_ALT || key == GLFW_KEY_RIGHT_ALT ||
+            key == GLFW_KEY_LEFT_SUPER || key == GLFW_KEY_RIGHT_SUPER) {
+            return;
+        }
+
+        const input::KeyTrigger trigger{key, mods, false};
+        input_bindings_->setBinding(*rebinding_action_, trigger);
+        rebinding_action_.reset();
+    }
+
+    void MenuBar::captureMouseButton(const int button, const int mods) {
+        if (!rebinding_action_.has_value() || !input_bindings_) {
+            return;
+        }
+
+        const auto mouse_btn = static_cast<input::MouseButton>(button);
+        const input::MouseDragTrigger trigger{mouse_btn, mods};
+        input_bindings_->setBinding(*rebinding_action_, trigger);
+        rebinding_action_.reset();
+    }
+
+    void MenuBar::cancelCapture() {
+        rebinding_action_.reset();
+    }
+
+    void MenuBar::renderInputSettingsWindow() {
+        if (!show_input_settings_) {
+            cancelCapture();
+            return;
+        }
+
+        constexpr ImGuiWindowFlags WINDOW_FLAGS = ImGuiWindowFlags_NoDocking;
+        ImGui::SetNextWindowSize(ImVec2(600, 600), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSizeConstraints(ImVec2(400, 300), ImVec2(FLT_MAX, FLT_MAX));
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 10.0f));
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.11f, 0.11f, 0.13f, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_TitleBg, ImVec4(0.15f, 0.15f, 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_TitleBgActive, ImVec4(0.2f, 0.2f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_Border, ImVec4(0.26f, 0.59f, 0.98f, 0.3f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.16f, 0.16f, 0.18f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, ImVec4(0.2f, 0.2f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, ImVec4(0.25f, 0.25f, 0.28f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, ImVec4(0.12f, 0.12f, 0.14f, 0.98f));
+        ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(0.26f, 0.59f, 0.98f, 0.3f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(0.26f, 0.59f, 0.98f, 0.5f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, ImVec4(0.26f, 0.59f, 0.98f, 0.7f));
+        ImGui::PushStyleColor(ImGuiCol_TableHeaderBg, ImVec4(0.2f, 0.2f, 0.24f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_TableBorderStrong, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+
+        if (ImGui::Begin("Input Settings", &show_input_settings_, WINDOW_FLAGS)) {
+            ImGui::TextColored(ImVec4(0.26f, 0.59f, 0.98f, 1.0f), "INPUT PROFILE");
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (input_bindings_) {
+                ImGui::Text("Active Profile:");
+                ImGui::SameLine();
+
+                const auto profiles = input_bindings_->getAvailableProfiles();
+                const auto& current = input_bindings_->getCurrentProfileName();
+                const bool is_rebinding = rebinding_action_.has_value();
+
+                if (is_rebinding) {
+                    ImGui::BeginDisabled();
+                }
+
+                if (ImGui::BeginCombo("##profile", current.c_str())) {
+                    for (const auto& profile : profiles) {
+                        const bool is_selected = (profile == current);
+                        if (ImGui::Selectable(profile.c_str(), is_selected)) {
+                            input_bindings_->loadProfile(profile);
+                        }
+                        if (is_selected) {
+                            ImGui::SetItemDefaultFocus();
+                        }
+                    }
+                    ImGui::EndCombo();
+                }
+
+                if (is_rebinding) {
+                    ImGui::EndDisabled();
+                }
+
+                ImGui::Spacing();
+                ImGui::Spacing();
+
+                ImGui::TextColored(ImVec4(0.26f, 0.59f, 0.98f, 1.0f), "CURRENT BINDINGS");
+                ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Click Rebind, then press key or mouse button");
+                ImGui::Spacing();
+
+                constexpr ImGuiTableFlags TABLE_FLAGS = ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY;
+                const float available_height = ImGui::GetContentRegionAvail().y - 100.0f;
+                const float table_height = std::max(200.0f, available_height);
+
+                if (ImGui::BeginTable("bindings_table", 3, TABLE_FLAGS, ImVec2(0, table_height))) {
+                    ImGui::TableSetupColumn("Action", ImGuiTableColumnFlags_WidthFixed, 180.0f);
+                    ImGui::TableSetupColumn("Binding", ImGuiTableColumnFlags_WidthStretch);
+                    ImGui::TableSetupColumn("", ImGuiTableColumnFlags_WidthFixed, 70.0f);
+                    ImGui::TableHeadersRow();
+
+                    static constexpr ImU32 SECTION_BG_COLOR = IM_COL32(40, 60, 80, 255);
+                    static constexpr ImVec4 SECTION_TEXT_COLOR{0.5f, 0.8f, 1.0f, 1.0f};
+
+                    const auto renderSectionHeader = [](const char* title) {
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, SECTION_BG_COLOR);
+                        ImGui::TextColored(SECTION_TEXT_COLOR, "%s", title);
+                        ImGui::TableNextColumn();
+                        ImGui::TableNextColumn();
+                    };
+
+                    renderSectionHeader("NAVIGATION");
+                    renderBindingRow(input::Action::CAMERA_ORBIT);
+                    renderBindingRow(input::Action::CAMERA_PAN);
+                    renderBindingRow(input::Action::CAMERA_ZOOM);
+                    renderBindingRow(input::Action::CAMERA_MOVE_FORWARD);
+                    renderBindingRow(input::Action::CAMERA_MOVE_BACKWARD);
+                    renderBindingRow(input::Action::CAMERA_MOVE_LEFT);
+                    renderBindingRow(input::Action::CAMERA_MOVE_RIGHT);
+                    renderBindingRow(input::Action::CAMERA_MOVE_UP);
+                    renderBindingRow(input::Action::CAMERA_MOVE_DOWN);
+                    renderBindingRow(input::Action::CAMERA_RESET_HOME);
+                    renderBindingRow(input::Action::CAMERA_NEXT_VIEW);
+                    renderBindingRow(input::Action::CAMERA_PREV_VIEW);
+                    renderBindingRow(input::Action::CAMERA_SPEED_UP);
+                    renderBindingRow(input::Action::CAMERA_SPEED_DOWN);
+                    renderBindingRow(input::Action::ZOOM_SPEED_UP);
+                    renderBindingRow(input::Action::ZOOM_SPEED_DOWN);
+
+                    renderSectionHeader("SELECTION");
+                    renderBindingRow(input::Action::SELECTION_ADD);
+                    renderBindingRow(input::Action::SELECTION_REMOVE);
+                    renderBindingRow(input::Action::SELECT_MODE_CENTERS);
+                    renderBindingRow(input::Action::SELECT_MODE_RECTANGLE);
+                    renderBindingRow(input::Action::SELECT_MODE_POLYGON);
+                    renderBindingRow(input::Action::SELECT_MODE_LASSO);
+                    renderBindingRow(input::Action::SELECT_MODE_RINGS);
+                    renderBindingRow(input::Action::TOGGLE_DEPTH_MODE);
+                    renderBindingRow(input::Action::DEPTH_ADJUST_FAR);
+                    renderBindingRow(input::Action::DEPTH_ADJUST_SIDE);
+
+                    renderSectionHeader("EDITING");
+                    renderBindingRow(input::Action::DELETE_SELECTED);
+                    renderBindingRow(input::Action::UNDO);
+                    renderBindingRow(input::Action::REDO);
+                    renderBindingRow(input::Action::INVERT_SELECTION);
+                    renderBindingRow(input::Action::DESELECT_ALL);
+                    renderBindingRow(input::Action::APPLY_CROP_BOX);
+                    renderBindingRow(input::Action::CANCEL_POLYGON);
+                    renderBindingRow(input::Action::CYCLE_BRUSH_MODE);
+
+                    renderSectionHeader("VIEW");
+                    renderBindingRow(input::Action::TOGGLE_SPLIT_VIEW);
+                    renderBindingRow(input::Action::TOGGLE_GT_COMPARISON);
+                    renderBindingRow(input::Action::CYCLE_PLY);
+                    renderBindingRow(input::Action::CYCLE_SELECTION_VIS);
+
+                    ImGui::EndTable();
+                }
+            } else {
+                ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f), "Input bindings not available");
+            }
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            if (input_bindings_) {
+                static constexpr ImVec4 BTN_SAVE{0.2f, 0.5f, 0.2f, 1.0f};
+                static constexpr ImVec4 BTN_SAVE_HOVER{0.3f, 0.6f, 0.3f, 1.0f};
+                static constexpr ImVec4 BTN_SAVE_ACTIVE{0.25f, 0.55f, 0.25f, 1.0f};
+                static constexpr ImVec4 BTN_RESET{0.5f, 0.2f, 0.2f, 1.0f};
+                static constexpr ImVec4 BTN_RESET_HOVER{0.6f, 0.3f, 0.3f, 1.0f};
+                static constexpr ImVec4 BTN_RESET_ACTIVE{0.55f, 0.25f, 0.25f, 1.0f};
+
+                ImGui::PushStyleColor(ImGuiCol_Button, BTN_SAVE);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, BTN_SAVE_HOVER);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, BTN_SAVE_ACTIVE);
+                if (ImGui::Button("Save Current Profile")) {
+                    input_bindings_->saveProfile(input_bindings_->getCurrentProfileName());
+                }
+                ImGui::PopStyleColor(3);
+
+                ImGui::SameLine();
+
+                ImGui::PushStyleColor(ImGuiCol_Button, BTN_RESET);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, BTN_RESET_HOVER);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, BTN_RESET_ACTIVE);
+                if (ImGui::Button("Reset to Default")) {
+                    const auto config_dir = input::InputBindings::getConfigDir();
+                    const auto saved_path = config_dir / "Default.json";
+                    if (std::filesystem::exists(saved_path)) {
+                        std::filesystem::remove(saved_path);
+                    }
+                    input_bindings_->loadProfile("Default");
+                    // Save hardcoded defaults to disk
+                    input_bindings_->saveProfile("Default");
+                }
+                ImGui::PopStyleColor(3);
+
+                ImGui::Spacing();
+
+                static constexpr ImVec4 BTN_IO{0.3f, 0.3f, 0.5f, 1.0f};
+                static constexpr ImVec4 BTN_IO_HOVER{0.4f, 0.4f, 0.6f, 1.0f};
+                static constexpr ImVec4 BTN_IO_ACTIVE{0.35f, 0.35f, 0.55f, 1.0f};
+
+                ImGui::PushStyleColor(ImGuiCol_Button, BTN_IO);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, BTN_IO_HOVER);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, BTN_IO_ACTIVE);
+                if (ImGui::Button("Export...")) {
+                    const auto path = SaveJsonFileDialog("input_bindings");
+                    if (!path.empty()) {
+                        input_bindings_->saveProfileToFile(path);
+                    }
+                }
+                ImGui::PopStyleColor(3);
+
+                ImGui::SameLine();
+
+                ImGui::PushStyleColor(ImGuiCol_Button, BTN_IO);
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, BTN_IO_HOVER);
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, BTN_IO_ACTIVE);
+                if (ImGui::Button("Import...")) {
+                    if (const auto path = OpenJsonFileDialog(); !path.empty() && std::filesystem::exists(path)) {
+                        input_bindings_->loadProfileFromFile(path);
+                    }
+                }
+                ImGui::PopStyleColor(3);
+
+                ImGui::Spacing();
+            }
+
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "Save to persist custom bindings");
+        }
+        ImGui::End();
+
+        ImGui::PopStyleColor(14);
+        ImGui::PopStyleVar(3);
     }
 
 } // namespace lfs::vis::gui

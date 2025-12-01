@@ -37,6 +37,7 @@ add_library(lfs_visualizer STATIC
 
         # Input handling
         input/input_controller.cpp
+        input/input_bindings.cpp
 
         # Training integration
         training/training_manager.cpp

@@ -106,6 +106,10 @@ namespace lfs::vis {
             return selection_tool_.get();
         }
 
+        InputController* getInputController() {
+            return input_controller_.get();
+        }
+
         // Undo/Redo
         command::CommandHistory& getCommandHistory() { return command_history_; }
         void undo();

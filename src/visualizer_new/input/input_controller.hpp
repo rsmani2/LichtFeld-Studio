@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core_new/events.hpp"
+#include "input/input_bindings.hpp"
 #include "input/input_types.hpp"
 #include "internal/viewport.hpp"
 #include "training/training_manager.hpp"
@@ -80,6 +81,11 @@ namespace lfs::vis {
             point_cloud_mode_ = enabled;
         }
 
+        // Input bindings (customizable hotkeys/mouse)
+        input::InputBindings& getBindings() { return bindings_; }
+        const input::InputBindings& getBindings() const { return bindings_; }
+        void loadInputProfile(const std::string& name) { bindings_.loadProfile(name); }
+
         // Update function for continuous input (WASD movement and inertia)
         void update(float delta_time);
 
@@ -135,6 +141,9 @@ namespace lfs::vis {
         RenderingManager* rendering_manager_ = nullptr;
         gui::GuiManager* gui_manager_ = nullptr;
 
+        // Input bindings for customizable hotkeys
+        input::InputBindings bindings_;
+
         // Tool support
         std::shared_ptr<tools::BrushTool> brush_tool_;
         std::shared_ptr<tools::AlignTool> align_tool_;
@@ -157,6 +166,7 @@ namespace lfs::vis {
             Brush
         };
         DragMode drag_mode_ = DragMode::None;
+        int drag_button_ = -1;
         glm::dvec2 last_mouse_pos_{0, 0};
         float splitter_start_pos_ = 0.5f;
         double splitter_start_x_ = 0.0;
@@ -195,7 +205,7 @@ namespace lfs::vis {
         GLFWcursor* hand_cursor_ = nullptr;
 
         // Camera frustum interaction
-        int last_camview = -1;
+        int last_camview_ = -1;
         int hovered_camera_id_ = -1;
         int last_clicked_camera_id_ = -1;
         std::chrono::steady_clock::time_point last_click_time_;

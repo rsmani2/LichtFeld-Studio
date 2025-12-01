@@ -23,6 +23,7 @@
 #include "gui/windows/file_browser.hpp"
 #include "gui/windows/project_changed_dialog_box.hpp"
 
+#include "input/input_controller.hpp"
 #include "internal/resource_paths.hpp"
 #include "tools/align_tool.hpp"
 #include "tools/brush_tool.hpp"
@@ -162,9 +163,7 @@ namespace lfs::vis::gui {
             auto font_path = lfs::vis::getAssetPath("JetBrainsMono-Regular.ttf");
             io.Fonts->AddFontFromFileTTF(font_path.string().c_str(), 14.0f * xscale);
         } catch (const std::exception& e) {
-            // If font loading fails, just use the default font
             LOG_WARN("Could not load custom font: {}", e.what());
-            LOG_DEBUG("Using default ImGui font");
         }
 
         applyDefaultStyle();
@@ -228,6 +227,13 @@ namespace lfs::vis::gui {
         ImGuizmo::BeginFrame();
 
         if (menu_bar_) {
+            // Lazily connect input bindings (input controller may not be ready during init)
+            if (!menu_bar_input_bindings_set_) {
+                if (auto* input_controller = viewer_->getInputController()) {
+                    menu_bar_->setInputBindings(&input_controller->getBindings());
+                    menu_bar_input_bindings_set_ = true;
+                }
+            }
             menu_bar_->render();
         }
 
@@ -1083,12 +1089,9 @@ namespace lfs::vis::gui {
                 .crop_inverse = settings.crop_inverse
             };
 
-            // Create undo command
             auto cmd = std::make_unique<command::CropBoxCommand>(
                 render_manager, old_state, new_state);
             viewer_->getCommandHistory().execute(std::move(cmd));
-
-            LOG_INFO("Crop inverse mode: {}", settings.crop_inverse);
         });
 
         // Handle Save PLY As command
@@ -1117,6 +1120,26 @@ namespace lfs::vis::gui {
     void GuiManager::setSelectionSubMode(panels::SelectionSubMode mode) {
         if (gizmo_toolbar_state_.current_tool == panels::ToolMode::Selection) {
             gizmo_toolbar_state_.selection_mode = mode;
+        }
+    }
+
+    bool GuiManager::isCapturingInput() const {
+        return menu_bar_ && menu_bar_->isCapturingInput();
+    }
+
+    bool GuiManager::isModalWindowOpen() const {
+        return menu_bar_ && menu_bar_->isInputSettingsOpen();
+    }
+
+    void GuiManager::captureKey(int key, int mods) {
+        if (menu_bar_) {
+            menu_bar_->captureKey(key, mods);
+        }
+    }
+
+    void GuiManager::captureMouseButton(int button, int mods) {
+        if (menu_bar_) {
+            menu_bar_->captureMouseButton(button, mods);
         }
     }
 
@@ -1164,6 +1187,10 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::renderCropBoxGizmo(const UIContext& ctx) {
+        // Don't render gizmo over modal windows
+        if (isModalWindowOpen())
+            return;
+
         auto* render_manager = ctx.viewer->getRenderingManager();
         if (!render_manager)
             return;
@@ -1345,6 +1372,10 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::renderNodeTransformGizmo(const UIContext& ctx) {
+        // Don't render gizmo over modal windows
+        if (isModalWindowOpen())
+            return;
+
         // Only show gizmo if enabled
         if (!show_node_gizmo_)
             return;

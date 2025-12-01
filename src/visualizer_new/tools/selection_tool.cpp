@@ -5,6 +5,7 @@
 #include "tools/selection_tool.hpp"
 #include "command/command_history.hpp"
 #include "command/commands/selection_command.hpp"
+#include "input/input_bindings.hpp"
 #include "internal/viewport.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "scene/scene_manager.hpp"
@@ -123,7 +124,7 @@ namespace lfs::vis::tools {
             }
         }
 
-        // Modifier suffix: Shift=add, Ctrl=remove (only when modifier held alone)
+        // Modifier suffix: show + for add, - for remove based on current bindings
         const char* mod_suffix = "";
         if (tool_context_) {
             GLFWwindow* const win = tool_context_->getWindow();
@@ -131,10 +132,25 @@ namespace lfs::vis::tools {
                                glfwGetKey(win, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
             const bool ctrl = glfwGetKey(win, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
                               glfwGetKey(win, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-            const bool alt = glfwGetKey(win, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
-                             glfwGetKey(win, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
-            if (shift && !ctrl && !alt) mod_suffix = " +";
-            else if (ctrl && !shift && !alt) mod_suffix = " -";
+
+            // Build modifier flags matching GLFW format
+            int mods = 0;
+            if (shift) mods |= GLFW_MOD_SHIFT;
+            if (ctrl) mods |= GLFW_MOD_CONTROL;
+
+            if (input_bindings_ && mods != 0) {
+                // Check if current modifiers match add/remove bindings
+                if (const auto action = input_bindings_->getActionForDrag(input::MouseButton::LEFT, mods)) {
+                    if (*action == input::Action::SELECTION_ADD) mod_suffix = " +";
+                    else if (*action == input::Action::SELECTION_REMOVE) mod_suffix = " -";
+                }
+            } else if (!input_bindings_) {
+                // Fallback display
+                const bool alt = glfwGetKey(win, GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+                                 glfwGetKey(win, GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+                if (shift && !ctrl && !alt) mod_suffix = " +";
+                else if (ctrl && !shift && !alt) mod_suffix = " -";
+            }
         }
 
         // Build label
@@ -185,14 +201,24 @@ namespace lfs::vis::tools {
         const auto* const rm = ctx.getRenderingManager();
         const auto sel_mode = rm ? rm->getSelectionMode() : lfs::rendering::SelectionMode::Centers;
 
-        // Right-click removes last vertex in polygon mode (only when not closed)
-        if (button == GLFW_MOUSE_BUTTON_RIGHT && action == GLFW_PRESS) {
-            if (sel_mode == lfs::rendering::SelectionMode::Polygon && !polygon_closed_ && !polygon_points_.empty()) {
+        // Check for undo polygon vertex action via bindings
+        if (action == GLFW_PRESS && sel_mode == lfs::rendering::SelectionMode::Polygon &&
+            !polygon_closed_ && !polygon_points_.empty()) {
+            const auto mouse_btn = static_cast<input::MouseButton>(button);
+            if (input_bindings_) {
+                if (const auto bound_action = input_bindings_->getActionForDrag(mouse_btn, mods)) {
+                    if (*bound_action == input::Action::UNDO_POLYGON_VERTEX) {
+                        polygon_points_.pop_back();
+                        ctx.requestRender();
+                        return true;
+                    }
+                }
+            } else if (button == GLFW_MOUSE_BUTTON_RIGHT) {
+                // Fallback when no bindings
                 polygon_points_.pop_back();
                 ctx.requestRender();
                 return true;
             }
-            return false;
         }
 
         if (button != GLFW_MOUSE_BUTTON_LEFT) return false;
@@ -202,40 +228,54 @@ namespace lfs::vis::tools {
         const bool is_polygon_mode = (sel_mode == lfs::rendering::SelectionMode::Polygon);
 
         if (action == GLFW_PRESS) {
-            const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
-            const bool shift = (mods & GLFW_MOD_SHIFT) != 0;
+            // Determine selection action via bindings or fallback
+            bool is_remove_mode = false;
+            bool replace_mode = true;
 
-            // Determine selection action:
-            // - No modifier: Replace (clear existing, then add)
-            // - Shift: Add to existing
-            // - Ctrl: Remove from existing
-            const bool replace_mode = !ctrl && !shift;
+            if (input_bindings_) {
+                const auto mouse_btn = static_cast<input::MouseButton>(button);
+                if (const auto bound_action = input_bindings_->getActionForDrag(mouse_btn, mods)) {
+                    if (*bound_action == input::Action::SELECTION_ADD) {
+                        is_remove_mode = false;
+                        replace_mode = false;
+                    } else if (*bound_action == input::Action::SELECTION_REMOVE) {
+                        is_remove_mode = true;
+                        replace_mode = false;
+                    }
+                }
+            } else {
+                // Fallback to hardcoded modifiers when no bindings
+                const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
+                const bool shift = (mods & GLFW_MOD_SHIFT) != 0;
+                is_remove_mode = ctrl;
+                replace_mode = !ctrl && !shift;
+            }
 
             if (is_polygon_mode) {
                 const float px = static_cast<float>(x);
                 const float py = static_cast<float>(y);
-                current_action_ = ctrl ? SelectionAction::Remove : SelectionAction::Add;
+                current_action_ = is_remove_mode ? SelectionAction::Remove : SelectionAction::Add;
 
                 if (polygon_closed_) {
                     const int vi = findPolygonVertexAt(px, py);
 
-                    // Ctrl+click on vertex: delete it (keep min 3)
-                    if (ctrl && vi >= 0 && polygon_points_.size() > 3) {
+                    // Remove mode + click on vertex: delete it (keep min 3)
+                    if (is_remove_mode && vi >= 0 && polygon_points_.size() > 3) {
                         polygon_points_.erase(polygon_points_.begin() + vi);
                         updatePolygonPreview(ctx);
                         ctx.requestRender();
                         return true;
                     }
 
-                    // Shift+click on vertex: drag it
-                    if (shift && vi >= 0) {
+                    // Add mode (non-replace) + click on vertex: drag it
+                    if (!replace_mode && !is_remove_mode && vi >= 0) {
                         polygon_dragged_vertex_ = vi;
                         ctx.requestRender();
                         return true;
                     }
 
-                    // Shift+click on edge: insert vertex
-                    if (shift) {
+                    // Add mode (non-replace) + click on edge: insert vertex
+                    if (!replace_mode && !is_remove_mode) {
                         float t = 0.0f;
                         if (const int ei = findPolygonEdgeAt(px, py, t); ei >= 0) {
                             const auto& a = polygon_points_[ei];
@@ -288,7 +328,7 @@ namespace lfs::vis::tools {
                     lasso_points_.clear();
                     lasso_points_.emplace_back(static_cast<float>(x), static_cast<float>(y));
                 }
-                current_action_ = ctrl ? SelectionAction::Remove : SelectionAction::Add;
+                current_action_ = is_remove_mode ? SelectionAction::Remove : SelectionAction::Add;
 
                 auto* const sm = ctx.getSceneManager();
                 if (sm) {
@@ -309,8 +349,8 @@ namespace lfs::vis::tools {
                 return true;
             }
 
-            // Brush/Ring mode: no modifier=Replace, Shift=Add, Ctrl=Remove
-            const SelectionAction action_type = ctrl ? SelectionAction::Remove : SelectionAction::Add;
+            // Brush/Ring mode
+            const SelectionAction action_type = is_remove_mode ? SelectionAction::Remove : SelectionAction::Add;
             beginStroke(x, y, action_type, replace_mode, ctx);
             updateSelectionAtPoint(x, y, ctx);
             return true;
@@ -392,25 +432,47 @@ namespace lfs::vis::tools {
 
         const bool ctrl = (mods & GLFW_MOD_CONTROL) != 0;
         const bool shift = (mods & GLFW_MOD_SHIFT) != 0;
-        const bool alt = glfwGetKey(ctx.getWindow(), GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
-                         glfwGetKey(ctx.getWindow(), GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
 
         const auto* const rm = ctx.getRenderingManager();
         const auto mode = rm ? rm->getSelectionMode() : lfs::rendering::SelectionMode::Centers;
 
-        // Alt+Scroll: depth filter adjustment
-        if (alt && depth_filter_enabled_ && mode != lfs::rendering::SelectionMode::Rings) {
-            const float scale = (y_offset > 0) ? ADJUST_FACTOR : (1.0f / ADJUST_FACTOR);
+        // Depth filter adjustment via bindings
+        if (depth_filter_enabled_ && mode != lfs::rendering::SelectionMode::Rings) {
+            // Check if bindings are available
+            if (input_bindings_) {
+                if (auto action = input_bindings_->getActionForScroll(mods)) {
+                    const float scale = (y_offset > 0) ? ADJUST_FACTOR : (1.0f / ADJUST_FACTOR);
 
-            if (ctrl) {
-                frustum_half_width_ = std::clamp(frustum_half_width_ * scale, WIDTH_MIN, WIDTH_MAX);
+                    if (*action == input::Action::DEPTH_ADJUST_SIDE) {
+                        frustum_half_width_ = std::clamp(frustum_half_width_ * scale, WIDTH_MIN, WIDTH_MAX);
+                        updateSelectionCropBox(ctx);
+                        ctx.requestRender();
+                        return true;
+                    } else if (*action == input::Action::DEPTH_ADJUST_FAR) {
+                        depth_far_ = std::clamp(depth_far_ * scale, DEPTH_MIN, DEPTH_MAX);
+                        updateSelectionCropBox(ctx);
+                        ctx.requestRender();
+                        return true;
+                    }
+                }
             } else {
-                depth_far_ = std::clamp(depth_far_ * scale, DEPTH_MIN, DEPTH_MAX);
-            }
+                // Fallback to hardcoded Alt+Scroll behavior if no bindings
+                const bool alt = glfwGetKey(ctx.getWindow(), GLFW_KEY_LEFT_ALT) == GLFW_PRESS ||
+                                 glfwGetKey(ctx.getWindow(), GLFW_KEY_RIGHT_ALT) == GLFW_PRESS;
+                if (alt) {
+                    const float scale = (y_offset > 0) ? ADJUST_FACTOR : (1.0f / ADJUST_FACTOR);
 
-            updateSelectionCropBox(ctx);
-            ctx.requestRender();
-            return true;
+                    if (ctrl) {
+                        frustum_half_width_ = std::clamp(frustum_half_width_ * scale, WIDTH_MIN, WIDTH_MAX);
+                    } else {
+                        depth_far_ = std::clamp(depth_far_ * scale, DEPTH_MIN, DEPTH_MAX);
+                    }
+
+                    updateSelectionCropBox(ctx);
+                    ctx.requestRender();
+                    return true;
+                }
+            }
         }
 
         // Brush radius adjustment only for brush/center mode

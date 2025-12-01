@@ -70,6 +70,12 @@ namespace lfs::vis {
 
             bool isForceExit() const { return force_exit_; }
 
+            // Input capture for key rebinding
+            bool isCapturingInput() const;
+            bool isModalWindowOpen() const;
+            void captureKey(int key, int mods);
+            void captureMouseButton(int button, int mods);
+
         private:
             void setupEventHandlers();
             void applyDefaultStyle();
@@ -123,6 +129,7 @@ namespace lfs::vis {
 
             std::unique_ptr<SaveProjectBrowser> save_project_browser_;
             std::unique_ptr<MenuBar> menu_bar_;
+            bool menu_bar_input_bindings_set_ = false;
 
             // Node transform gizmo state
             bool show_node_gizmo_ = true;

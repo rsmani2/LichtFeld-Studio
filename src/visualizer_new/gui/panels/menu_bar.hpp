@@ -4,7 +4,9 @@
 
 #pragma once
 
+#include "input/input_bindings.hpp"
 #include <functional>
+#include <optional>
 
 namespace lfs::vis::gui {
 
@@ -27,13 +29,25 @@ namespace lfs::vis::gui {
         // Render separate windows (call these in your main render loop)
         void renderGettingStartedWindow();
         void renderAboutWindow();
-        void renderControlsAndShortcutsWindow();
+        void renderInputSettingsWindow();
 
         void setIsProjectTemp(bool is_temp) { is_project_temp_ = is_temp; }
         [[nodiscard]] bool getIsProjectTemp() const { return is_project_temp_; }
 
+        // Input bindings for settings window
+        void setInputBindings(input::InputBindings* bindings) { input_bindings_ = bindings; }
+
+        // Key capture for rebinding - returns true if capturing
+        bool isCapturingInput() const { return rebinding_action_.has_value(); }
+        bool isInputSettingsOpen() const { return show_input_settings_; }
+        void captureKey(int key, int mods);
+        void captureMouseButton(int button, int mods);
+        void cancelCapture();
+
     private:
         void openURL(const char* url);
+        void renderBindingRow(input::Action action);
+
         // Callbacks
         std::function<void()> on_import_dataset_;
         std::function<void()> on_open_project_;
@@ -44,10 +58,16 @@ namespace lfs::vis::gui {
 
         // Window states
         bool show_about_window_ = false;
-        bool show_controls_and_shortcuts_ = false;
         bool show_getting_started_ = false;
+        bool show_input_settings_ = false;
 
         bool is_project_temp_ = true;
+
+        // Input bindings pointer
+        input::InputBindings* input_bindings_ = nullptr;
+
+        // Key capture state for rebinding
+        std::optional<input::Action> rebinding_action_;
     };
 
 } // namespace lfs::vis::gui

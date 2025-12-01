@@ -197,4 +197,82 @@ namespace lfs::vis::gui {
 
 #endif // WIN32
 
+    namespace {
+#ifndef _WIN32
+        // Execute dialog command and return trimmed output
+        std::string runDialogCommand(const std::string& primary_cmd, const std::string& fallback_cmd) {
+            FILE* pipe = popen(primary_cmd.c_str(), "r");
+            if (!pipe && !fallback_cmd.empty()) {
+                pipe = popen(fallback_cmd.c_str(), "r");
+            }
+            if (!pipe) return {};
+
+            char buffer[4096];
+            std::string result;
+            while (fgets(buffer, sizeof(buffer), pipe)) {
+                result += buffer;
+            }
+            pclose(pipe);
+
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
+                result.pop_back();
+            }
+            return result;
+        }
+#endif
+    } // namespace
+
+    std::filesystem::path SaveJsonFileDialog(const std::string& defaultName) {
+#ifdef _WIN32
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] = {{L"JSON File", L"*.json"}};
+        const std::wstring wDefaultName(defaultName.begin(), defaultName.end());
+
+        if (SUCCEEDED(utils::saveFileNative(filePath, rgSpec, 1, wDefaultName.c_str()))) {
+            std::filesystem::path result(filePath);
+            CoTaskMemFree(filePath);
+            if (result.extension() != ".json") {
+                result += ".json";
+            }
+            return result;
+        }
+        return {};
+#else
+        const std::string primary = "zenity --file-selection --save --confirm-overwrite "
+                                    "--file-filter='JSON files|*.json' "
+                                    "--filename='" + defaultName + ".json' 2>/dev/null";
+        const std::string fallback = "kdialog --getsavefilename . 'JSON files (*.json)' 2>/dev/null";
+
+        const std::string result = runDialogCommand(primary, fallback);
+        if (result.empty()) return {};
+
+        std::filesystem::path path(result);
+        if (path.extension() != ".json") {
+            path += ".json";
+        }
+        return path;
+#endif
+    }
+
+    std::filesystem::path OpenJsonFileDialog() {
+#ifdef _WIN32
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] = {{L"JSON File", L"*.json"}};
+
+        if (SUCCEEDED(utils::selectFileNative(filePath, rgSpec, 1, false))) {
+            std::filesystem::path result(filePath);
+            CoTaskMemFree(filePath);
+            return result;
+        }
+        return {};
+#else
+        const std::string primary = "zenity --file-selection --file-filter='JSON files|*.json' 2>/dev/null";
+        const std::string fallback = "kdialog --getopenfilename . 'JSON files (*.json)' 2>/dev/null";
+
+        const std::string result = runDialogCommand(primary, fallback);
+        if (result.empty()) return {};
+        return std::filesystem::path(result);
+#endif
+    }
+
 } // namespace lfs::vis::gui
