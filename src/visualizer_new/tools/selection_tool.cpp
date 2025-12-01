@@ -441,6 +441,11 @@ namespace lfs::vis::tools {
             preview_selection_ = lfs::core::Tensor();
             cumulative_selection_ = lfs::core::Tensor();
             selection_before_stroke_.reset();
+
+            if (depth_filter_enabled_ && tool_context_) {
+                disableDepthFilter(*tool_context_);
+            }
+            depth_filter_enabled_ = false;
         }
 
         if (tool_context_) {

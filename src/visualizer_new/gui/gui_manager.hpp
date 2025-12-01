@@ -139,6 +139,9 @@ namespace lfs::vis {
             panels::ToolMode previous_tool_ = panels::ToolMode::None;
             panels::SelectionSubMode previous_selection_mode_ = panels::SelectionSubMode::Centers;
 
+            // Tool cleanup
+            void deactivateAllTools();
+
             // Save PLY dialog state
             bool show_save_ply_dialog_ = false;
             std::string save_ply_node_name_;

@@ -957,41 +957,39 @@ namespace lfs::vis::gui {
         ImGui::PopStyleColor(2);
     }
 
+    void GuiManager::deactivateAllTools() {
+        if (auto* const t = viewer_->getSelectionTool()) t->setEnabled(false);
+        if (auto* const t = viewer_->getBrushTool()) t->setEnabled(false);
+        if (auto* const t = viewer_->getAlignTool()) t->setEnabled(false);
+
+        if (auto* const sm = viewer_->getSceneManager()) {
+            sm->applyDeleted();
+        }
+
+        if (gizmo_toolbar_state_.current_tool == panels::ToolMode::CropBox) {
+            if (auto* const rm = viewer_->getRenderingManager()) {
+                auto settings = rm->getSettings();
+                settings.show_crop_box = false;
+                settings.use_crop_box = false;
+                rm->updateSettings(settings);
+            }
+        }
+
+        gizmo_toolbar_state_.current_tool = panels::ToolMode::Translate;
+        gizmo_toolbar_state_.current_operation = ImGuizmo::TRANSLATE;
+    }
+
     void GuiManager::setupEventHandlers() {
         using namespace lfs::core::events;
 
-        // Handle window visibility
         cmd::ShowWindow::when([this](const auto& e) {
             showWindow(e.window_name, e.show);
         });
 
-        // Switch to translate tool when node is selected/deselected
-        ui::NodeSelected::when([this](const auto&) {
-            if (gizmo_toolbar_state_.current_tool == panels::ToolMode::Selection ||
-                gizmo_toolbar_state_.current_tool == panels::ToolMode::Brush) {
-                // Immediately disable tools to clear selection
-                if (auto* selection_tool = viewer_->getSelectionTool()) {
-                    selection_tool->setEnabled(false);
-                }
-                if (auto* brush_tool = viewer_->getBrushTool()) {
-                    brush_tool->setEnabled(false);
-                }
-                gizmo_toolbar_state_.current_tool = panels::ToolMode::Translate;
-                gizmo_toolbar_state_.current_operation = ImGuizmo::TRANSLATE;
-            }
-        });
-
-        ui::NodeDeselected::when([this](const auto&) {
-            // Clear selection when node is deselected
-            if (auto* selection_tool = viewer_->getSelectionTool()) {
-                selection_tool->setEnabled(false);
-            }
-            if (auto* brush_tool = viewer_->getBrushTool()) {
-                brush_tool->setEnabled(false);
-            }
-            gizmo_toolbar_state_.current_tool = panels::ToolMode::Translate;
-            gizmo_toolbar_state_.current_operation = ImGuizmo::TRANSLATE;
-        });
+        ui::NodeSelected::when([this](const auto&) { deactivateAllTools(); });
+        ui::NodeDeselected::when([this](const auto&) { deactivateAllTools(); });
+        state::PLYRemoved::when([this](const auto&) { deactivateAllTools(); });
+        state::SceneCleared::when([this](const auto&) { deactivateAllTools(); });
 
         // Handle speed change events
         ui::SpeedChanged::when([this](const auto& e) {
