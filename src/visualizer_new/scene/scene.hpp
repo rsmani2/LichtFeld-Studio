@@ -14,6 +14,15 @@
 
 namespace lfs::vis {
 
+    // Selection group with ID, name, and color
+    struct SelectionGroup {
+        uint8_t id = 0;              // 1-255, 0 means unselected
+        std::string name;
+        glm::vec3 color{1.0f, 0.0f, 0.0f};
+        size_t count = 0;            // Number of selected Gaussians
+        bool locked = false;         // If true, painting with other groups won't overwrite
+    };
+
     class Scene {
     public:
         struct Node {
@@ -25,7 +34,7 @@ namespace lfs::vis {
             glm::vec3 centroid{0.0f};  // Cached centroid, computed once when model is loaded
         };
 
-        Scene() = default;
+        Scene();
         ~Scene() = default;
 
         // Delete copy operations
@@ -73,6 +82,21 @@ namespace lfs::vis {
         // Check if any Gaussians are selected
         bool hasSelection() const;
 
+        // Selection groups management
+        uint8_t addSelectionGroup(const std::string& name, const glm::vec3& color);
+        void removeSelectionGroup(uint8_t id);
+        void renameSelectionGroup(uint8_t id, const std::string& name);
+        void setSelectionGroupColor(uint8_t id, const glm::vec3& color);
+        void setSelectionGroupLocked(uint8_t id, bool locked);
+        [[nodiscard]] bool isSelectionGroupLocked(uint8_t id) const;
+        void setActiveSelectionGroup(uint8_t id) { active_selection_group_ = id; }
+        [[nodiscard]] uint8_t getActiveSelectionGroup() const { return active_selection_group_; }
+        [[nodiscard]] const std::vector<SelectionGroup>& getSelectionGroups() const { return selection_groups_; }
+        [[nodiscard]] const SelectionGroup* getSelectionGroup(uint8_t id) const;
+        void updateSelectionGroupCounts();
+        void clearSelectionGroup(uint8_t id);
+        void resetSelectionState();  // Full reset: clear mask, remove all groups, create default
+
         // Direct queries
         size_t getNodeCount() const { return nodes_.size(); }
         size_t getTotalGaussianCount() const;
@@ -100,11 +124,21 @@ namespace lfs::vis {
         mutable std::vector<glm::mat4> cached_transforms_;
         mutable bool cache_valid_ = false;
 
-        mutable std::shared_ptr<lfs::core::Tensor> selection_mask_; // UInt8 [N], 1=selected
+        // Selection mask: UInt8 [N], value = group ID (0=unselected, 1-255=group ID)
+        mutable std::shared_ptr<lfs::core::Tensor> selection_mask_;
         mutable bool has_selection_ = false;
+
+        // Selection groups (ID 0 is reserved for "unselected")
+        std::vector<SelectionGroup> selection_groups_;
+        uint8_t active_selection_group_ = 1;  // Default to group 1
+        uint8_t next_group_id_ = 1;
 
         void invalidateCache() { cache_valid_ = false; }
         void rebuildCacheIfNeeded() const;
+
+        // Helper to find group by ID
+        SelectionGroup* findGroup(uint8_t id);
+        const SelectionGroup* findGroup(uint8_t id) const;
     };
 
 } // namespace lfs::vis

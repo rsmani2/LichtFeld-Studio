@@ -13,6 +13,7 @@
 #include "core_new/tensor.hpp"
 #include "rendering_new/rasterizer/rasterization/include/forward.h"
 #include "rendering_new/rasterizer/rasterization/include/rasterization_api_tensor.h"
+#include <cuda_runtime.h>
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
@@ -490,34 +491,28 @@ namespace lfs::vis::tools {
     }
 
     void SelectionTool::onEnabledChanged(const bool enabled) {
-        if (!enabled) {
-            is_painting_ = false;
-            is_rect_dragging_ = false;
-            is_lasso_dragging_ = false;
-            lasso_points_.clear();
-            resetPolygon();
-            preview_selection_ = lfs::core::Tensor();
-            cumulative_selection_ = lfs::core::Tensor();
-            selection_before_stroke_.reset();
+        is_painting_ = false;
+        is_rect_dragging_ = false;
+        is_lasso_dragging_ = false;
+        lasso_points_.clear();
+        resetPolygon();
+        preview_selection_ = lfs::core::Tensor();
+        cumulative_selection_ = lfs::core::Tensor();
+        selection_before_stroke_.reset();
 
-            if (depth_filter_enabled_ && tool_context_) {
-                disableDepthFilter(*tool_context_);
-            }
-            depth_filter_enabled_ = false;
+        if (depth_filter_enabled_ && tool_context_) {
+            disableDepthFilter(*tool_context_);
         }
+        depth_filter_enabled_ = false;
 
         if (tool_context_) {
-            if (!enabled) {
-                if (auto* const sm = tool_context_->getSceneManager()) {
-                    sm->getScene().clearSelection();
-                }
+            if (auto* const sm = tool_context_->getSceneManager()) {
+                sm->getScene().resetSelectionState();
             }
             if (auto* const rm = tool_context_->getRenderingManager()) {
                 rm->setOutputScreenPositions(enabled);
-                if (!enabled) {
-                    rm->clearBrushState();
-                    rm->clearPreviewSelection();
-                }
+                rm->clearBrushState();
+                rm->clearPreviewSelection();
                 rm->markDirty();
             }
         }
@@ -544,54 +539,29 @@ namespace lfs::vis::tools {
 
         if (clear_existing) {
             sm->getScene().clearSelection();
-            cumulative_selection_ = lfs::core::Tensor::zeros(
-                {num_gaussians}, lfs::core::Device::CUDA, lfs::core::DataType::Bool);
-        } else {
-            if (existing && existing->is_valid() && existing->size(0) == num_gaussians) {
-                cumulative_selection_ = existing->to(lfs::core::DataType::Bool);
-            } else {
-                cumulative_selection_ = lfs::core::Tensor::zeros(
-                    {num_gaussians}, lfs::core::Device::CUDA, lfs::core::DataType::Bool);
-            }
         }
+
+        // Always start with empty cumulative selection - we only track NEW strokes
+        // The existing selection mask (with group IDs) is preserved separately
+        cumulative_selection_ = lfs::core::Tensor::zeros(
+            {num_gaussians}, lfs::core::Device::CUDA, lfs::core::DataType::Bool);
     }
 
     void SelectionTool::endStroke() {
         is_painting_ = false;
 
-        std::shared_ptr<lfs::core::Tensor> new_selection;
+        if (!tool_context_) return;
 
-        if (tool_context_) {
-            auto* const rm = tool_context_->getRenderingManager();
-            if (rm) {
-                rm->clearPreviewSelection();
-                rm->clearBrushState();
-            }
-
-            if (cumulative_selection_.is_valid()) {
-                auto* const sm = tool_context_->getSceneManager();
-                if (sm) {
-                    auto mask = cumulative_selection_.to(lfs::core::DataType::UInt8);
-                    new_selection = std::make_shared<lfs::core::Tensor>(mask.clone());
-                    sm->getScene().setSelectionMask(std::make_shared<lfs::core::Tensor>(std::move(mask)));
-                }
-            }
-
-            if (new_selection && new_selection->is_valid()) {
-                auto* const ch = tool_context_->getCommandHistory();
-                auto* const sm = tool_context_->getSceneManager();
-
-                if (ch && sm) {
-                    auto cmd = std::make_unique<command::SelectionCommand>(
-                        sm, selection_before_stroke_, new_selection);
-                    ch->execute(std::move(cmd));
-                }
-            }
-
-            if (auto* const rm2 = tool_context_->getRenderingManager())
-                rm2->markDirty();
+        if (auto* const rm = tool_context_->getRenderingManager()) {
+            rm->clearPreviewSelection();
+            rm->clearBrushState();
         }
-        selection_before_stroke_.reset();
+
+        applySelectionToScene(*tool_context_);
+
+        if (auto* const rm = tool_context_->getRenderingManager()) {
+            rm->markDirty();
+        }
     }
 
     void SelectionTool::updateSelectionAtPoint(const double x, const double y, const ToolContext& ctx) {
@@ -665,11 +635,13 @@ namespace lfs::vis::tools {
 
     void SelectionTool::selectInRectangle(const ToolContext& ctx) {
         auto* const rm = ctx.getRenderingManager();
-        auto* const sm = ctx.getSceneManager();
-        if (!rm || !sm || !cumulative_selection_.is_valid()) return;
+        if (!rm) return;
 
         const auto screen_positions = rm->getScreenPositions();
         if (!screen_positions || !screen_positions->is_valid()) return;
+
+        const size_t n = screen_positions->size(0);
+        cumulative_selection_ = lfs::core::Tensor::zeros({n}, lfs::core::Device::CUDA, lfs::core::DataType::Bool);
 
         const auto& bounds = ctx.getViewportBounds();
         const auto& viewport = ctx.getViewport();
@@ -685,30 +657,24 @@ namespace lfs::vis::tools {
         const float x1 = (std::max(rect_start_.x, rect_end_.x) - bounds.x) * scale_x;
         const float y1 = (std::max(rect_start_.y, rect_end_.y) - bounds.y) * scale_y;
 
-        const bool add_mode = (current_action_ == SelectionAction::Add);
-        lfs::rendering::rect_select_mode_tensor(*screen_positions, x0, y0, x1, y1, cumulative_selection_, add_mode);
+        // Mark only what's inside the rectangle
+        lfs::rendering::rect_select_tensor(*screen_positions, x0, y0, x1, y1, cumulative_selection_);
 
-        auto mask = cumulative_selection_.to(lfs::core::DataType::UInt8);
-        auto new_selection = std::make_shared<lfs::core::Tensor>(mask.clone());
-        sm->getScene().setSelectionMask(std::make_shared<lfs::core::Tensor>(std::move(mask)));
-
-        if (auto* const ch = ctx.getCommandHistory()) {
-            ch->execute(std::make_unique<command::SelectionCommand>(
-                sm, selection_before_stroke_, new_selection));
-        }
-        selection_before_stroke_.reset();
+        applySelectionToScene(ctx);
         rm->clearBrushState();
         rm->markDirty();
     }
 
     void SelectionTool::selectInLasso(const ToolContext& ctx) {
         auto* const rm = ctx.getRenderingManager();
-        auto* const sm = ctx.getSceneManager();
-        if (!rm || !sm || !cumulative_selection_.is_valid()) return;
+        if (!rm) return;
         if (lasso_points_.size() < 3) return;
 
         const auto screen_positions = rm->getScreenPositions();
         if (!screen_positions || !screen_positions->is_valid()) return;
+
+        const size_t n = screen_positions->size(0);
+        cumulative_selection_ = lfs::core::Tensor::zeros({n}, lfs::core::Device::CUDA, lfs::core::DataType::Bool);
 
         const auto& bounds = ctx.getViewportBounds();
         const auto& viewport = ctx.getViewport();
@@ -729,18 +695,10 @@ namespace lfs::vis::tools {
         }
         const auto poly_gpu = poly_cpu.cuda();
 
-        auto selection = cumulative_selection_.to(lfs::core::DataType::Bool).cuda();
-        const bool add_mode = (current_action_ == SelectionAction::Add);
-        lfs::rendering::polygon_select_mode_tensor(*screen_positions, poly_gpu, selection, add_mode);
+        // Mark only what's inside the lasso
+        lfs::rendering::polygon_select_tensor(*screen_positions, poly_gpu, cumulative_selection_);
 
-        auto new_selection = std::make_shared<lfs::core::Tensor>(selection.clone());
-        sm->getScene().setSelectionMask(std::make_shared<lfs::core::Tensor>(std::move(selection)));
-
-        if (auto* const ch = ctx.getCommandHistory()) {
-            ch->execute(std::make_unique<command::SelectionCommand>(
-                sm, selection_before_stroke_, new_selection));
-        }
-        selection_before_stroke_.reset();
+        applySelectionToScene(ctx);
         rm->clearBrushState();
         rm->markDirty();
     }
@@ -749,11 +707,13 @@ namespace lfs::vis::tools {
         if (!polygon_closed_ || polygon_points_.size() < 3) return;
 
         auto* const rm = ctx.getRenderingManager();
-        auto* const sm = ctx.getSceneManager();
-        if (!rm || !sm || !cumulative_selection_.is_valid()) return;
+        if (!rm) return;
 
         const auto positions = rm->getScreenPositions();
         if (!positions || !positions->is_valid()) return;
+
+        const size_t n = positions->size(0);
+        cumulative_selection_ = lfs::core::Tensor::zeros({n}, lfs::core::Device::CUDA, lfs::core::DataType::Bool);
 
         const auto& bounds = ctx.getViewportBounds();
         const auto& viewport = ctx.getViewport();
@@ -772,18 +732,10 @@ namespace lfs::vis::tools {
         }
         const auto poly_gpu = poly_cpu.cuda();
 
-        auto selection = cumulative_selection_.to(lfs::core::DataType::Bool).cuda();
-        const bool add_mode = (current_action_ == SelectionAction::Add);
-        lfs::rendering::polygon_select_mode_tensor(*positions, poly_gpu, selection, add_mode);
+        // Mark only what's inside the polygon
+        lfs::rendering::polygon_select_tensor(*positions, poly_gpu, cumulative_selection_);
 
-        auto new_selection = std::make_shared<lfs::core::Tensor>(selection.clone());
-        sm->getScene().setSelectionMask(std::make_shared<lfs::core::Tensor>(std::move(selection)));
-
-        if (auto* const ch = ctx.getCommandHistory()) {
-            ch->execute(std::make_unique<command::SelectionCommand>(
-                sm, selection_before_stroke_, new_selection));
-        }
-        selection_before_stroke_.reset();
+        applySelectionToScene(ctx);
         rm->clearBrushState();
         rm->markDirty();
     }
@@ -828,14 +780,6 @@ namespace lfs::vis::tools {
     void SelectionTool::preparePreviewBuffer(const size_t n) {
         if (!preview_selection_.is_valid() || preview_selection_.size(0) != n) {
             preview_selection_ = lfs::core::Tensor::zeros({n}, lfs::core::Device::CUDA, lfs::core::DataType::Bool);
-        }
-
-        auto* const sm = tool_context_ ? tool_context_->getSceneManager() : nullptr;
-        const auto committed = sm ? sm->getScene().getSelectionMask() : nullptr;
-
-        if (committed && committed->is_valid() && committed->size(0) == n) {
-            // UInt8 and Bool are both 1 byte, direct memcpy (0/1 maps to false/true)
-            cudaMemcpy(preview_selection_.raw_ptr(), committed->raw_ptr(), n, cudaMemcpyDeviceToDevice);
         } else {
             preview_selection_.fill_(false);
         }
@@ -863,8 +807,8 @@ namespace lfs::vis::tools {
 
         preparePreviewBuffer(screen_positions->size(0));
         const bool add_mode = (current_action_ == SelectionAction::Add);
-        lfs::rendering::rect_select_mode_tensor(*screen_positions, x0, y0, x1, y1, preview_selection_, add_mode);
-        rm->setPreviewSelection(&preview_selection_);
+        lfs::rendering::rect_select_tensor(*screen_positions, x0, y0, x1, y1, preview_selection_);
+        rm->setPreviewSelection(&preview_selection_, add_mode);
     }
 
     void SelectionTool::updateLassoPreview(const ToolContext& ctx) {
@@ -895,8 +839,8 @@ namespace lfs::vis::tools {
 
         preparePreviewBuffer(screen_positions->size(0));
         const bool add_mode = (current_action_ == SelectionAction::Add);
-        lfs::rendering::polygon_select_mode_tensor(*screen_positions, poly_gpu, preview_selection_, add_mode);
-        rm->setPreviewSelection(&preview_selection_);
+        lfs::rendering::polygon_select_tensor(*screen_positions, poly_gpu, preview_selection_);
+        rm->setPreviewSelection(&preview_selection_, add_mode);
     }
 
     void SelectionTool::prepareSelectionState(const ToolContext& ctx, const bool add_to_existing) {
@@ -947,8 +891,8 @@ namespace lfs::vis::tools {
 
         preparePreviewBuffer(positions->size(0));
         const bool add_mode = (current_action_ == SelectionAction::Add);
-        lfs::rendering::polygon_select_mode_tensor(*positions, poly_gpu, preview_selection_, add_mode);
-        rm->setPreviewSelection(&preview_selection_);
+        lfs::rendering::polygon_select_tensor(*positions, poly_gpu, preview_selection_);
+        rm->setPreviewSelection(&preview_selection_, add_mode);
     }
 
     int SelectionTool::findPolygonVertexAt(const float x, const float y) const {
@@ -984,6 +928,63 @@ namespace lfs::vis::tools {
             }
         }
         return -1;
+    }
+
+    std::shared_ptr<lfs::core::Tensor> SelectionTool::applySelectionToScene(const ToolContext& ctx) {
+        if (!cumulative_selection_.is_valid()) return nullptr;
+
+        auto* const sm = ctx.getSceneManager();
+        if (!sm) return nullptr;
+
+        Scene& scene = sm->getScene();
+        const uint8_t group_id = scene.getActiveSelectionGroup();
+        const auto existing_mask = scene.getSelectionMask();
+        const size_t n = cumulative_selection_.numel();
+
+        // Build locked groups bitmask (256 bits = 8 uint32s)
+        uint32_t locked_bitmask[8] = {0};
+        for (const auto& group : scene.getSelectionGroups()) {
+            if (group.locked) {
+                locked_bitmask[group.id / 32] |= (1u << (group.id % 32));
+            }
+        }
+
+        // Upload locked bitmask to GPU (small constant size)
+        uint32_t* d_locked = nullptr;
+        cudaMalloc(&d_locked, sizeof(locked_bitmask));
+        cudaMemcpy(d_locked, locked_bitmask, sizeof(locked_bitmask), cudaMemcpyHostToDevice);
+
+        // Create output mask on GPU
+        auto output_mask = lfs::core::Tensor::empty({n}, lfs::core::Device::CUDA, lfs::core::DataType::UInt8);
+
+        // Get existing mask (already on GPU, or empty)
+        const lfs::core::Tensor empty_mask;
+        const lfs::core::Tensor& existing_ref = (existing_mask && existing_mask->is_valid())
+            ? *existing_mask : empty_mask;
+
+        // Apply selection entirely on GPU
+        const bool add_mode = (current_action_ == SelectionAction::Add);
+        lfs::rendering::apply_selection_group_tensor(
+            cumulative_selection_,
+            existing_ref,
+            output_mask,
+            group_id,
+            d_locked,
+            add_mode);
+
+        cudaFree(d_locked);
+
+        auto new_selection = std::make_shared<lfs::core::Tensor>(std::move(output_mask));
+        scene.setSelectionMask(new_selection);
+
+        // Create undo command
+        if (auto* const ch = ctx.getCommandHistory()) {
+            ch->execute(std::make_unique<command::SelectionCommand>(
+                sm, selection_before_stroke_, new_selection));
+        }
+
+        selection_before_stroke_.reset();
+        return new_selection;
     }
 
     bool SelectionTool::handleKeyPress(const int key, const int mods, const ToolContext& ctx) {

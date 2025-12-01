@@ -311,4 +311,63 @@ namespace lfs::rendering {
             add_mode);
     }
 
+    __global__ void apply_selection_group_kernel(
+        const bool* __restrict__ cumulative,
+        const uint8_t* __restrict__ existing,
+        uint8_t* __restrict__ output,
+        const int n,
+        const uint8_t group_id,
+        const uint32_t* __restrict__ locked_groups,
+        const bool add_mode) {
+
+        const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= n) return;
+
+        const uint8_t existing_group = existing ? existing[idx] : 0;
+        const bool selected = cumulative[idx];
+
+        if (add_mode) {
+            if (selected) {
+                // Check if existing group is locked (bit test)
+                const bool is_locked = existing_group != 0 &&
+                                       existing_group != group_id &&
+                                       locked_groups &&
+                                       (locked_groups[existing_group / 32] & (1u << (existing_group % 32)));
+                output[idx] = is_locked ? existing_group : group_id;
+            } else {
+                output[idx] = existing_group;
+            }
+        } else {
+            // Remove mode: only clear if selected AND belongs to this group
+            output[idx] = (selected && existing_group == group_id) ? 0 : existing_group;
+        }
+    }
+
+    void apply_selection_group_tensor(
+        const Tensor& cumulative_selection,
+        const Tensor& existing_mask,
+        Tensor& output_mask,
+        const uint8_t group_id,
+        const uint32_t* locked_groups,
+        const bool add_mode) {
+
+        if (!cumulative_selection.is_valid() || cumulative_selection.size(0) == 0) return;
+
+        const int n = static_cast<int>(cumulative_selection.size(0));
+        constexpr int BLOCK_SIZE = 256;
+        const int grid_size = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+
+        const uint8_t* existing_ptr = (existing_mask.is_valid() && existing_mask.numel() == static_cast<size_t>(n))
+            ? existing_mask.ptr<uint8_t>() : nullptr;
+
+        apply_selection_group_kernel<<<grid_size, BLOCK_SIZE>>>(
+            cumulative_selection.ptr<bool>(),
+            existing_ptr,
+            output_mask.ptr<uint8_t>(),
+            n,
+            group_id,
+            locked_groups,
+            add_mode);
+    }
+
 } // namespace lfs::rendering

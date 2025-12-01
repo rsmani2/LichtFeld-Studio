@@ -6,14 +6,19 @@
 #include "core_new/logger.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <functional>
 #include <glm/gtc/quaternion.hpp>
 #include <numeric>
-#include <print>
 #include <ranges>
 
 namespace lfs::vis {
+
+    Scene::Scene() {
+        // Create default selection group
+        addSelectionGroup("Group 1", glm::vec3(0.0f));
+    }
 
     // Helper to compute centroid from model (GPU computation, single copy)
     static glm::vec3 computeCentroid(const lfs::core::SplatData* model) {
@@ -64,8 +69,7 @@ namespace lfs::vis {
         }
 
         invalidateCache();
-        std::println("Scene: Added node '{}' with {} gaussians, centroid ({:.2f}, {:.2f}, {:.2f})",
-                     name, gaussian_count, centroid.x, centroid.y, centroid.z);
+        LOG_DEBUG("Added node '{}': {} gaussians", name, gaussian_count);
     }
 
     void Scene::removeNode(const std::string& name) {
@@ -75,27 +79,24 @@ namespace lfs::vis {
         if (it != nodes_.end()) {
             nodes_.erase(it);
             invalidateCache();
-            std::println("Scene: Removed node '{}'", name);
+            LOG_DEBUG("Removed node '{}'", name);
         }
     }
 
     void Scene::replaceNodeModel(const std::string& name, std::unique_ptr<lfs::core::SplatData> model) {
-        auto it = std::find_if(nodes_.begin(), nodes_.end(),
+        const auto it = std::find_if(nodes_.begin(), nodes_.end(),
                                [&name](const Node& node) { return node.name == name; });
 
         if (it != nodes_.end()) {
             const size_t gaussian_count = static_cast<size_t>(model->size());
             const glm::vec3 centroid = computeCentroid(model.get());
-            LOG_INFO("Scene::replaceNodeModel '{}': old model {} gaussians, new model {} gaussians",
-                     name, it->gaussian_count, gaussian_count);
+            LOG_DEBUG("replaceNodeModel '{}': {} -> {} gaussians", name, it->gaussian_count, gaussian_count);
             it->model = std::move(model);
             it->gaussian_count = gaussian_count;
             it->centroid = centroid;
-            LOG_INFO("Scene::replaceNodeModel invalidating cache, cache_valid_={}", cache_valid_);
             invalidateCache();
-            LOG_INFO("Scene::replaceNodeModel after invalidate, cache_valid_={}", cache_valid_);
         } else {
-            LOG_WARN("Scene::replaceNodeModel: node '{}' not found", name);
+            LOG_WARN("replaceNodeModel: node '{}' not found", name);
         }
     }
 
@@ -169,9 +170,6 @@ namespace lfs::vis {
 
     const lfs::core::SplatData* Scene::getCombinedModel() const {
         rebuildCacheIfNeeded();
-        LOG_DEBUG("Scene::getCombinedModel returning ptr={}, size={}",
-                  (void*)cached_combined_.get(),
-                  cached_combined_ ? cached_combined_->size() : 0);
         return cached_combined_.get();
     }
 
@@ -224,7 +222,7 @@ namespace lfs::vis {
         if (cache_valid_)
             return;
 
-        LOG_INFO("Scene::rebuildCacheIfNeeded - REBUILDING CACHE");
+        LOG_DEBUG("rebuildCacheIfNeeded - rebuilding");
 
         // Collect visible nodes (we need both model and transform)
         auto visible_nodes = nodes_ | std::views::filter([](const auto& node) {
@@ -369,8 +367,6 @@ namespace lfs::vis {
             cached_combined_->deleted() = std::move(deleted);
         }
 
-        LOG_DEBUG("rebuildCache: ptr={}, size={}, has_deleted={}",
-                  (void*)cached_combined_.get(), cached_combined_->size(), has_any_deleted);
         cache_valid_ = true;
     }
 
@@ -496,4 +492,144 @@ namespace lfs::vis {
 
         return total_removed;
     }
+
+    // Selection group color palette
+    static constexpr std::array<glm::vec3, 8> GROUP_COLOR_PALETTE = {{
+        {1.0f, 0.3f, 0.3f},  // Red
+        {0.3f, 1.0f, 0.3f},  // Green
+        {0.3f, 0.5f, 1.0f},  // Blue
+        {1.0f, 1.0f, 0.3f},  // Yellow
+        {1.0f, 0.5f, 0.0f},  // Orange
+        {0.8f, 0.3f, 1.0f},  // Purple
+        {0.3f, 1.0f, 1.0f},  // Cyan
+        {1.0f, 0.5f, 0.8f},  // Pink
+    }};
+
+    SelectionGroup* Scene::findGroup(const uint8_t id) {
+        const auto it = std::find_if(selection_groups_.begin(), selection_groups_.end(),
+                                     [id](const SelectionGroup& g) { return g.id == id; });
+        return (it != selection_groups_.end()) ? &(*it) : nullptr;
+    }
+
+    const SelectionGroup* Scene::findGroup(const uint8_t id) const {
+        const auto it = std::find_if(selection_groups_.begin(), selection_groups_.end(),
+                                     [id](const SelectionGroup& g) { return g.id == id; });
+        return (it != selection_groups_.end()) ? &(*it) : nullptr;
+    }
+
+    uint8_t Scene::addSelectionGroup(const std::string& name, const glm::vec3& color) {
+        if (next_group_id_ == 0) {
+            LOG_WARN("Maximum selection groups reached");
+            return 0;
+        }
+
+        SelectionGroup group;
+        group.id = next_group_id_++;
+        group.name = name.empty() ? "Group " + std::to_string(group.id) : name;
+        group.color = (color == glm::vec3(0.0f))
+            ? GROUP_COLOR_PALETTE[(group.id - 1) % GROUP_COLOR_PALETTE.size()]
+            : color;
+        group.count = 0;
+
+        selection_groups_.push_back(group);
+        active_selection_group_ = group.id;
+
+        LOG_DEBUG("Added selection group '{}' (ID {})", group.name, group.id);
+        return group.id;
+    }
+
+    void Scene::removeSelectionGroup(const uint8_t id) {
+        const auto it = std::find_if(selection_groups_.begin(), selection_groups_.end(),
+                                     [id](const SelectionGroup& g) { return g.id == id; });
+        if (it == selection_groups_.end()) return;
+
+        clearSelectionGroup(id);
+        const std::string name = it->name;
+        selection_groups_.erase(it);
+
+        if (active_selection_group_ == id) {
+            active_selection_group_ = selection_groups_.empty() ? 0 : selection_groups_.back().id;
+        }
+
+        LOG_DEBUG("Removed selection group '{}' (ID {})", name, id);
+    }
+
+    void Scene::renameSelectionGroup(const uint8_t id, const std::string& name) {
+        if (auto* group = findGroup(id)) {
+            group->name = name;
+        }
+    }
+
+    void Scene::setSelectionGroupColor(const uint8_t id, const glm::vec3& color) {
+        if (auto* group = findGroup(id)) {
+            group->color = color;
+        }
+    }
+
+    void Scene::setSelectionGroupLocked(const uint8_t id, const bool locked) {
+        if (auto* group = findGroup(id)) {
+            group->locked = locked;
+        }
+    }
+
+    bool Scene::isSelectionGroupLocked(const uint8_t id) const {
+        const auto* group = findGroup(id);
+        return group ? group->locked : false;
+    }
+
+    const SelectionGroup* Scene::getSelectionGroup(const uint8_t id) const {
+        return findGroup(id);
+    }
+
+    void Scene::updateSelectionGroupCounts() {
+        for (auto& group : selection_groups_) {
+            group.count = 0;
+        }
+
+        if (!selection_mask_ || !selection_mask_->is_valid()) return;
+
+        const auto mask_cpu = selection_mask_->cpu();
+        const uint8_t* data = mask_cpu.ptr<uint8_t>();
+        const size_t n = mask_cpu.numel();
+
+        for (size_t i = 0; i < n; ++i) {
+            const uint8_t group_id = data[i];
+            if (auto* group = findGroup(group_id)) {
+                group->count++;
+            }
+        }
+    }
+
+    void Scene::clearSelectionGroup(const uint8_t id) {
+        if (!selection_mask_ || !selection_mask_->is_valid()) return;
+
+        auto mask_cpu = selection_mask_->cpu();
+        uint8_t* data = mask_cpu.ptr<uint8_t>();
+        const size_t n = mask_cpu.numel();
+
+        bool any_remaining = false;
+        for (size_t i = 0; i < n; ++i) {
+            if (data[i] == id) {
+                data[i] = 0;
+            } else if (data[i] > 0) {
+                any_remaining = true;
+            }
+        }
+
+        *selection_mask_ = mask_cpu.cuda();
+        has_selection_ = any_remaining;
+
+        if (auto* group = findGroup(id)) {
+            group->count = 0;
+        }
+    }
+
+    void Scene::resetSelectionState() {
+        selection_mask_.reset();
+        has_selection_ = false;
+        selection_groups_.clear();
+        next_group_id_ = 1;
+        addSelectionGroup("Group 1", glm::vec3(0.0f));
+    }
+
 } // namespace lfs::vis

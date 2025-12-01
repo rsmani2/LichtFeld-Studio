@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core_new/events.hpp"
+#include "gui/ui_context.hpp"
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -22,7 +23,7 @@ namespace lfs::vis {
             ScenePanel(std::shared_ptr<const TrainerManager> trainer_manager);
             ~ScenePanel();
 
-            void render(bool* p_open);
+            void render(bool* p_open, const UIContext* ctx = nullptr);
             void setOnDatasetLoad(std::function<void(const std::filesystem::path&)> callback);
 
         private:

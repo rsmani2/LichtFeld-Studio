@@ -212,7 +212,11 @@ namespace lfs::vis {
         void clearBrushState();
 
         // Preview selection
-        void setPreviewSelection(lfs::core::Tensor* preview) { preview_selection_ = preview; markDirty(); }
+        void setPreviewSelection(lfs::core::Tensor* preview, bool add_mode = true) {
+            preview_selection_ = preview;
+            brush_add_mode_ = add_mode;
+            markDirty();
+        }
         void clearPreviewSelection() { preview_selection_ = nullptr; markDirty(); }
 
         // Selection mode for brush tool
@@ -221,6 +225,9 @@ namespace lfs::vis {
         [[nodiscard]] int getHoveredGaussianId() const { return hovered_gaussian_id_; }
         void adjustSaturation(float mouse_x, float mouse_y, float radius, float saturation_delta,
                               lfs::core::Tensor& sh0_tensor);
+
+        // Sync selection group colors to GPU constant memory
+        void syncSelectionGroupColor(int group_id, const glm::vec3& color);
 
     private:
         void doFullRender(const RenderContext& context, SceneManager* scene_manager, const lfs::core::SplatData* model);

@@ -329,6 +329,8 @@ namespace lfs::vis::gui {
                 ImGui::Separator();
                 panels::DrawRenderingSettings(ctx);
                 ImGui::Separator();
+                panels::DrawSelectionGroups(ctx);
+                ImGui::Separator();
                 panels::DrawToolsPanel(ctx);
                 panels::DrawSystemConsoleButton(ctx);
             }
@@ -357,7 +359,7 @@ namespace lfs::vis::gui {
 
         // Draw Scene panel
         if (window_states_["scene_panel"]) {
-            scene_panel_->render(&window_states_["scene_panel"]);
+            scene_panel_->render(&window_states_["scene_panel"], &ctx);
         }
 
         // Render floating windows (these remain movable)

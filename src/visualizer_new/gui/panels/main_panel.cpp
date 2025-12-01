@@ -7,8 +7,11 @@
 #include "gui/panels/tools_panel.hpp"
 #include "gui/panels/training_panel.hpp"
 #include "gui/ui_widgets.hpp"
+#include "scene/scene_manager.hpp"
+#include "tools/selection_tool.hpp"
 #include "visualizer_impl.hpp"
 #include <algorithm>
+#include <format>
 #include <imgui.h>
 #ifdef WIN32
 #include <windows.h>
@@ -340,6 +343,110 @@ namespace lfs::vis::gui::panels {
 #else
         ImGui::Text("Render Mode: CPU Copy");
 #endif
+    }
+
+    void DrawSelectionGroups(const UIContext& ctx) {
+        // Only show when selection tool is active
+        auto* selection_tool = ctx.viewer->getSelectionTool();
+        if (!selection_tool || !selection_tool->isEnabled()) return;
+
+        auto* scene_manager = ctx.viewer->getSceneManager();
+        if (!scene_manager) return;
+
+        Scene& scene = scene_manager->getScene();
+
+        if (!ImGui::CollapsingHeader("Selection Groups", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+        const float button_width = ImGui::GetContentRegionAvail().x;
+
+        if (ImGui::Button("+ Add Group", ImVec2(button_width, 0))) {
+            if (selection_tool->hasActivePolygon()) {
+                selection_tool->clearPolygon();
+            }
+            scene.addSelectionGroup("", glm::vec3(0.0f));
+        }
+
+        const auto& groups = scene.getSelectionGroups();
+        const uint8_t active_id = scene.getActiveSelectionGroup();
+
+        if (groups.empty()) {
+            ImGui::TextColored(ImVec4(0.6f, 0.6f, 0.6f, 1.0f), "No selection groups");
+        } else {
+            scene.updateSelectionGroupCounts();
+
+            for (const auto& group : groups) {
+                ImGui::PushID(group.id);
+
+                const bool is_active = (group.id == active_id);
+
+                // Highlight active group with colored background
+                if (is_active) {
+                    ImGui::PushStyleColor(ImGuiCol_Header, ImVec4(group.color.r * 0.4f, group.color.g * 0.4f, group.color.b * 0.4f, 0.6f));
+                    ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(group.color.r * 0.5f, group.color.g * 0.5f, group.color.b * 0.5f, 0.7f));
+                }
+
+                // Lock button
+                const bool is_locked = group.locked;
+                if (is_locked) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.0f, 0.8f, 0.2f, 1.0f));
+                }
+                if (ImGui::SmallButton(is_locked ? "L" : "U")) {
+                    scene.setSelectionGroupLocked(group.id, !is_locked);
+                }
+                if (is_locked) {
+                    ImGui::PopStyleColor();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(is_locked ? "Locked: other groups cannot overwrite" : "Unlocked: can be overwritten");
+                }
+                ImGui::SameLine();
+
+                // Color picker
+                ImVec4 color(group.color.r, group.color.g, group.color.b, 1.0f);
+                if (ImGui::ColorEdit3("##color", &color.x,
+                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoAlpha)) {
+                    scene.setSelectionGroupColor(group.id, glm::vec3(color.x, color.y, color.z));
+                }
+                ImGui::SameLine();
+
+                // Selectable group - show active marker
+                const std::string label = is_active
+                    ? std::format("> {} ({})", group.name, group.count)
+                    : std::format("  {} ({})", group.name, group.count);
+                if (ImGui::Selectable(label.c_str(), is_active)) {
+                    if (selection_tool->hasActivePolygon()) {
+                        selection_tool->clearPolygon();
+                    }
+                    scene.setActiveSelectionGroup(group.id);
+                }
+
+                if (is_active) {
+                    ImGui::PopStyleColor(2);
+                }
+
+                // Context menu
+                if (ImGui::BeginPopupContextItem("##ctx")) {
+                    if (ImGui::MenuItem(is_locked ? "Unlock" : "Lock")) {
+                        scene.setSelectionGroupLocked(group.id, !is_locked);
+                    }
+                    if (ImGui::MenuItem("Clear")) {
+                        if (is_active && selection_tool->hasActivePolygon()) {
+                            selection_tool->clearPolygon();
+                        }
+                        scene.clearSelectionGroup(group.id);
+                    }
+                    if (ImGui::MenuItem("Delete")) {
+                        if (is_active && selection_tool->hasActivePolygon()) {
+                            selection_tool->clearPolygon();
+                        }
+                        scene.removeSelectionGroup(group.id);
+                    }
+                    ImGui::EndPopup();
+                }
+
+                ImGui::PopID();
+            }
+        }
     }
 
     void DrawProgressInfo(const UIContext& ctx) {

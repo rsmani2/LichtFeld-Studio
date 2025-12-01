@@ -26,12 +26,13 @@ namespace lfs::rendering::config {
     DEF int block_size_blend = tile_width * tile_height;
     DEF int n_sequential_threshold = 4;
 
-    // Selection colors in CUDA constant memory (defined in forward.cu)
-    extern __constant__ float3 SELECTION_COLOR_COMMITTED;
+    // Selection group colors: index 0 = center marker, 1-255 = group colors
+    constexpr int MAX_SELECTION_GROUPS = 256;
+    extern __constant__ float3 SELECTION_GROUP_COLORS[MAX_SELECTION_GROUPS];
     extern __constant__ float3 SELECTION_COLOR_PREVIEW;
-    extern __constant__ float3 SELECTION_COLOR_CENTER_MARKER;
 
-    void setSelectionColors(const float3 committed, const float3 preview, const float3 center_marker);
+    void setSelectionGroupColor(int group_id, float3 color);
+    void setSelectionPreviewColor(float3 color);
 } // namespace lfs::rendering::config
 
 namespace config = lfs::rendering::config;

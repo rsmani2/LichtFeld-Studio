@@ -127,4 +127,22 @@ namespace lfs::rendering {
         Tensor& selection_out,
         bool add_mode);
 
+    /**
+     * @brief Apply selection to group mask on GPU
+     *
+     * @param cumulative_selection Bool mask of selected gaussians [N]
+     * @param existing_mask Current group mask [N] (uint8, 0=unselected, 1-255=group)
+     * @param output_mask Output group mask [N] (uint8)
+     * @param group_id Group ID to assign (1-255)
+     * @param locked_groups Bitmask of locked groups (256 bits = 32 bytes)
+     * @param add_mode If true, add to group; if false, remove from group
+     */
+    void apply_selection_group_tensor(
+        const Tensor& cumulative_selection,
+        const Tensor& existing_mask,
+        Tensor& output_mask,
+        uint8_t group_id,
+        const uint32_t* locked_groups,
+        bool add_mode);
+
 } // namespace lfs::rendering

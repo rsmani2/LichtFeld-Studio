@@ -218,7 +218,7 @@ namespace lfs::vis::gui {
         return !m_plyNodes.empty();
     }
 
-    void ScenePanel::render(bool* p_open) {
+    void ScenePanel::render(bool* p_open, const UIContext* /*ctx*/) {
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.5f, 0.5f, 0.5f, 0.8f));
 
         if (!ImGui::Begin("Scene", p_open)) {

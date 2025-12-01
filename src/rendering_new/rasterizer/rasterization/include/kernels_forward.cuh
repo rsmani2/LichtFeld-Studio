@@ -15,6 +15,12 @@ namespace cg = cooperative_groups;
 
 namespace lfs::rendering::kernels::forward {
 
+    // Selection status encoding: bits 0-6 = group ID, bit 7 = preview flag
+    constexpr uint8_t SELECTION_PREVIEW_FLAG = 0x80;
+    constexpr uint8_t SELECTION_GROUP_MASK = 0x7F;
+    constexpr float SELECTION_PREVIEW_BLEND = 0.9f;
+    constexpr float SELECTION_COMMITTED_BLEND = 0.8f;
+
     __global__ void preprocess_cu(
         const float3* means,
         const float3* raw_scales,
@@ -307,9 +313,9 @@ namespace lfs::rendering::kernels::forward {
             under_brush = (dx * dx + dy * dy <= brush_radius_sq);
         }
 
-        // Brush selection
+        // Mark gaussians under brush for selection (add/remove determined by endStroke)
         if (under_brush && brush_selection_out != nullptr && selectable) {
-            brush_selection_out[primitive_idx] = brush_add_mode;
+            brush_selection_out[primitive_idx] = true;
         }
 
         // Saturation preview
@@ -347,19 +353,22 @@ namespace lfs::rendering::kernels::forward {
             }
         }
 
-        // Selection status: 0=none, 1=committed, 2=preview
+        // Encode selection status
         uint8_t sel_status = 0;
         if (!brush_saturation_mode) {
-            const bool is_committed = selection_mask && selection_mask[primitive_idx];
-            const bool has_preview = brush_selection_out != nullptr;
-            const bool is_in_preview = has_preview && brush_selection_out[primitive_idx];
-            const bool is_preview = (is_in_preview && !is_committed) ||
-                                    (under_brush && selectable && brush_add_mode && !is_committed) ||
-                                    (is_committed && has_preview && !is_in_preview) ||
-                                    (under_brush && selectable && !brush_add_mode && is_committed) ||
-                                    (selection_mode_rings && selectable && highlight_gaussian_id == static_cast<int>(primitive_idx));
+            const uint8_t group_id = selection_mask ? selection_mask[primitive_idx] : 0;
+            const bool is_committed = group_id > 0;
+            const bool is_in_preview = brush_selection_out && brush_selection_out[primitive_idx];
+            const bool is_ring_highlight = selection_mode_rings && selectable &&
+                                           highlight_gaussian_id == static_cast<int>(primitive_idx);
 
-            sel_status = is_preview ? 2 : ((is_committed || is_in_preview) ? 1 : 0);
+            const bool is_preview = (is_in_preview && !is_committed && brush_add_mode) ||
+                                    (is_in_preview && is_committed && !brush_add_mode) ||
+                                    (under_brush && selectable && brush_add_mode && !is_committed) ||
+                                    (under_brush && selectable && !brush_add_mode && is_committed) ||
+                                    is_ring_highlight;
+
+            sel_status = (group_id & SELECTION_GROUP_MASK) | (is_preview ? SELECTION_PREVIEW_FLAG : 0);
         }
 
         primitive_color[primitive_idx] = color;
@@ -614,6 +623,8 @@ namespace lfs::rendering::kernels::forward {
 
                 float3 final_color = collected_color[j];
                 const uint8_t sel_status = collected_selection_status[j];
+                const uint8_t group_id = sel_status & SELECTION_GROUP_MASK;
+                const bool is_preview = (sel_status & SELECTION_PREVIEW_FLAG) != 0;
 
                 // Center markers mode
                 if (show_center_markers && !is_outside) {
@@ -625,10 +636,8 @@ namespace lfs::rendering::kernels::forward {
                     if (dist_sq > OUTER_RADIUS_SQ)
                         continue;
 
-                    final_color = (sel_status == 2) ? config::SELECTION_COLOR_PREVIEW :
-                                  (sel_status == 1) ? config::SELECTION_COLOR_COMMITTED :
-                                                      config::SELECTION_COLOR_CENTER_MARKER;
-
+                    final_color = is_preview ? config::SELECTION_COLOR_PREVIEW
+                                             : config::SELECTION_GROUP_COLORS[group_id];
                     if (dist_sq > INNER_RADIUS_SQ)
                         final_color = final_color * OUTLINE_DARKEN;
 
@@ -638,11 +647,11 @@ namespace lfs::rendering::kernels::forward {
                     continue;
                 }
 
-                // Selection coloring for normal/ring modes
-                if (sel_status == 2) {
-                    final_color = lerp(final_color, config::SELECTION_COLOR_PREVIEW, 0.5f);
-                } else if (sel_status == 1) {
-                    final_color = config::SELECTION_COLOR_COMMITTED;
+                // Selection coloring
+                if (is_preview) {
+                    final_color = lerp(final_color, config::SELECTION_COLOR_PREVIEW, SELECTION_PREVIEW_BLEND);
+                } else if (group_id > 0) {
+                    final_color = lerp(final_color, config::SELECTION_GROUP_COLORS[group_id], SELECTION_COMMITTED_BLEND);
                 }
 
                 color_pixel += transmittance * alpha * final_color;

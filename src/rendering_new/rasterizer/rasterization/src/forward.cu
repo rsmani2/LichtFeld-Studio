@@ -12,15 +12,28 @@
 #include <functional>
 
 namespace lfs::rendering::config {
-    // Selection colors (RGB: committed=219,83,83 preview=0,222,76 center=0,154,187)
-    __constant__ float3 SELECTION_COLOR_COMMITTED = {0.859f, 0.325f, 0.325f};
+    __constant__ float3 SELECTION_GROUP_COLORS[MAX_SELECTION_GROUPS] = {
+        {0.0f, 0.604f, 0.733f},   // 0: center marker (cyan)
+        {1.0f, 0.3f, 0.3f},       // 1: red
+        {0.3f, 1.0f, 0.3f},       // 2: green
+        {0.3f, 0.5f, 1.0f},       // 3: blue
+        {1.0f, 1.0f, 0.3f},       // 4: yellow
+        {1.0f, 0.5f, 0.0f},       // 5: orange
+        {0.8f, 0.3f, 1.0f},       // 6: purple
+        {0.3f, 1.0f, 1.0f},       // 7: cyan
+        {1.0f, 0.5f, 0.8f},       // 8: pink
+    };
     __constant__ float3 SELECTION_COLOR_PREVIEW = {0.0f, 0.871f, 0.298f};
-    __constant__ float3 SELECTION_COLOR_CENTER_MARKER = {0.0f, 0.604f, 0.733f};
 
-    void setSelectionColors(const float3 committed, const float3 preview, const float3 center_marker) {
-        cudaMemcpyToSymbol(SELECTION_COLOR_COMMITTED, &committed, sizeof(float3));
-        cudaMemcpyToSymbol(SELECTION_COLOR_PREVIEW, &preview, sizeof(float3));
-        cudaMemcpyToSymbol(SELECTION_COLOR_CENTER_MARKER, &center_marker, sizeof(float3));
+    void setSelectionGroupColor(const int group_id, const float3 color) {
+        if (group_id >= 0 && group_id < MAX_SELECTION_GROUPS) {
+            cudaMemcpyToSymbol(SELECTION_GROUP_COLORS, &color, sizeof(float3),
+                               static_cast<size_t>(group_id) * sizeof(float3));
+        }
+    }
+
+    void setSelectionPreviewColor(const float3 color) {
+        cudaMemcpyToSymbol(SELECTION_COLOR_PREVIEW, &color, sizeof(float3));
     }
 }
 

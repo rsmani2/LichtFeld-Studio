@@ -393,19 +393,16 @@ namespace lfs::vis {
     void RenderingManager::updateSettings(const RenderSettings& new_settings) {
         std::lock_guard<std::mutex> lock(settings_mutex_);
 
-        const bool colors_changed =
-            settings_.selection_color_committed != new_settings.selection_color_committed ||
-            settings_.selection_color_preview != new_settings.selection_color_preview ||
-            settings_.selection_color_center_marker != new_settings.selection_color_center_marker;
-
-        if (colors_changed) {
-            const auto& c = new_settings.selection_color_committed;
+        // Update preview color if changed
+        if (settings_.selection_color_preview != new_settings.selection_color_preview) {
             const auto& p = new_settings.selection_color_preview;
+            lfs::rendering::config::setSelectionPreviewColor(make_float3(p.x, p.y, p.z));
+        }
+
+        // Update center marker color (group 0) if changed
+        if (settings_.selection_color_center_marker != new_settings.selection_color_center_marker) {
             const auto& m = new_settings.selection_color_center_marker;
-            lfs::rendering::config::setSelectionColors(
-                make_float3(c.x, c.y, c.z),
-                make_float3(p.x, p.y, p.z),
-                make_float3(m.x, m.y, m.z));
+            lfs::rendering::config::setSelectionGroupColor(0, make_float3(m.x, m.y, m.z));
         }
 
         settings_ = new_settings;
@@ -436,6 +433,11 @@ namespace lfs::vis {
     void RenderingManager::setScalingModifier(float s) {
         std::lock_guard<std::mutex> lock(settings_mutex_);
         settings_.scaling_modifier = s;
+        markDirty();
+    }
+
+    void RenderingManager::syncSelectionGroupColor(const int group_id, const glm::vec3& color) {
+        lfs::rendering::config::setSelectionGroupColor(group_id, make_float3(color.x, color.y, color.z));
         markDirty();
     }
 
@@ -658,6 +660,14 @@ namespace lfs::vis {
 
         if (!initialized_) {
             initialize();
+        }
+
+        // Sync selection group colors to GPU constant memory
+        if (scene_manager) {
+            for (const auto& group : scene_manager->getScene().getSelectionGroups()) {
+                lfs::rendering::config::setSelectionGroupColor(
+                    group.id, make_float3(group.color.x, group.color.y, group.color.z));
+            }
         }
 
         // Calculate current render size

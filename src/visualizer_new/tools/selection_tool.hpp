@@ -99,6 +99,9 @@ namespace lfs::vis::tools {
         int findPolygonVertexAt(float x, float y) const;
         int findPolygonEdgeAt(float x, float y, float& t_out) const;
 
+        // Apply selection to scene and create undo command
+        std::shared_ptr<lfs::core::Tensor> applySelectionToScene(const ToolContext& ctx);
+
         // Depth filter state
         bool depth_filter_enabled_ = false;
         float depth_far_ = 100.0f;
