@@ -154,10 +154,27 @@ namespace lfs::rendering {
         const Tensor* transform_indices = nullptr,
         int target_node_index = -1);
 
-    // Filter bool selection mask by node index (clears selection for non-matching nodes)
+    // Apply selection with node mask (supports groups)
+    void apply_selection_group_tensor_mask(
+        const Tensor& cumulative_selection,
+        const Tensor& existing_mask,
+        Tensor& output_mask,
+        uint8_t group_id,
+        const uint32_t* locked_groups,
+        bool add_mode,
+        const Tensor* transform_indices,
+        const std::vector<bool>& valid_nodes);
+
+    // Filter selection by single node index
     void filter_selection_by_node(
         Tensor& selection,
         const Tensor& transform_indices,
         int target_node_index);
+
+    // Filter selection by node mask (supports groups)
+    void filter_selection_by_node_mask(
+        Tensor& selection,
+        const Tensor& transform_indices,
+        const std::vector<bool>& valid_nodes);
 
 } // namespace lfs::rendering

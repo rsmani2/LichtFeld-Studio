@@ -424,6 +424,100 @@ namespace lfs::rendering {
             target_node_index);
     }
 
+    namespace {
+        constexpr int KERNEL_BLOCK_SIZE = 256;
+
+        // Upload bool vector to GPU (small data, typically < 100 nodes)
+        inline Tensor upload_bool_mask(const std::vector<bool>& mask) {
+            const size_t n = mask.size();
+            auto tensor = Tensor::empty({n}, lfs::core::Device::CPU, lfs::core::DataType::UInt8);
+            auto* const ptr = tensor.ptr<uint8_t>();
+            for (size_t i = 0; i < n; ++i) {
+                ptr[i] = mask[i] ? 1 : 0;
+            }
+            return tensor.cuda();
+        }
+    }
+
+    __global__ void apply_selection_group_mask_kernel(
+        const bool* __restrict__ cumulative,
+        const uint8_t* __restrict__ existing,
+        uint8_t* __restrict__ output,
+        const int n,
+        const uint8_t group_id,
+        const uint32_t* __restrict__ locked_groups,
+        const bool add_mode,
+        const int* __restrict__ node_indices,
+        const bool* __restrict__ valid_nodes,
+        const int num_nodes) {
+
+        const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= n) return;
+
+        const uint8_t existing_group = existing ? existing[idx] : 0;
+
+        if (node_indices && valid_nodes) {
+            const int node_idx = node_indices[idx];
+            if (node_idx < 0 || node_idx >= num_nodes || !valid_nodes[node_idx]) {
+                output[idx] = existing_group;
+                return;
+            }
+        }
+
+        const bool selected = cumulative[idx];
+        if (add_mode) {
+            if (selected) {
+                const bool is_locked = existing_group != 0 &&
+                                       existing_group != group_id &&
+                                       locked_groups &&
+                                       (locked_groups[existing_group / 32] & (1u << (existing_group % 32)));
+                output[idx] = is_locked ? existing_group : group_id;
+            } else {
+                output[idx] = existing_group;
+            }
+        } else {
+            output[idx] = (selected && existing_group == group_id) ? 0 : existing_group;
+        }
+    }
+
+    void apply_selection_group_tensor_mask(
+        const Tensor& cumulative_selection,
+        const Tensor& existing_mask,
+        Tensor& output_mask,
+        const uint8_t group_id,
+        const uint32_t* locked_groups,
+        const bool add_mode,
+        const Tensor* transform_indices,
+        const std::vector<bool>& valid_nodes) {
+
+        if (!cumulative_selection.is_valid() || cumulative_selection.size(0) == 0) return;
+        if (valid_nodes.empty()) return;
+
+        const int n = static_cast<int>(cumulative_selection.size(0));
+        const int num_nodes = static_cast<int>(valid_nodes.size());
+
+        const uint8_t* const existing_ptr = (existing_mask.is_valid() &&
+            existing_mask.numel() == static_cast<size_t>(n)) ? existing_mask.ptr<uint8_t>() : nullptr;
+
+        const int* const node_indices_ptr = (transform_indices && transform_indices->is_valid() &&
+            transform_indices->numel() == static_cast<size_t>(n)) ? transform_indices->ptr<int>() : nullptr;
+
+        const Tensor valid_nodes_gpu = upload_bool_mask(valid_nodes);
+        const int grid_size = (n + KERNEL_BLOCK_SIZE - 1) / KERNEL_BLOCK_SIZE;
+
+        apply_selection_group_mask_kernel<<<grid_size, KERNEL_BLOCK_SIZE>>>(
+            cumulative_selection.ptr<bool>(),
+            existing_ptr,
+            output_mask.ptr<uint8_t>(),
+            n,
+            group_id,
+            locked_groups,
+            add_mode,
+            node_indices_ptr,
+            reinterpret_cast<const bool*>(valid_nodes_gpu.ptr<uint8_t>()),
+            num_nodes);
+    }
+
     __global__ void filter_selection_by_node_kernel(
         bool* __restrict__ selection,
         const int* __restrict__ node_indices,
@@ -457,6 +551,45 @@ namespace lfs::rendering {
             transform_indices.ptr<int>(),
             n,
             target_node_index);
+    }
+
+    __global__ void filter_selection_by_node_mask_kernel(
+        bool* __restrict__ selection,
+        const int* __restrict__ node_indices,
+        const bool* __restrict__ valid_nodes,
+        const int n,
+        const int num_nodes) {
+
+        const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= n) return;
+
+        const int node_idx = node_indices[idx];
+        if (node_idx < 0 || node_idx >= num_nodes || !valid_nodes[node_idx]) {
+            selection[idx] = false;
+        }
+    }
+
+    void filter_selection_by_node_mask(
+        Tensor& selection,
+        const Tensor& transform_indices,
+        const std::vector<bool>& valid_nodes) {
+
+        if (!selection.is_valid() || !transform_indices.is_valid()) return;
+        if (valid_nodes.empty()) return;
+
+        const int n = static_cast<int>(selection.size(0));
+        if (transform_indices.numel() != static_cast<size_t>(n)) return;
+
+        const int num_nodes = static_cast<int>(valid_nodes.size());
+        const Tensor valid_nodes_gpu = upload_bool_mask(valid_nodes);
+        const int grid_size = (n + KERNEL_BLOCK_SIZE - 1) / KERNEL_BLOCK_SIZE;
+
+        filter_selection_by_node_mask_kernel<<<grid_size, KERNEL_BLOCK_SIZE>>>(
+            selection.ptr<bool>(),
+            transform_indices.ptr<int>(),
+            reinterpret_cast<const bool*>(valid_nodes_gpu.ptr<uint8_t>()),
+            n,
+            num_nodes);
     }
 
 } // namespace lfs::rendering

@@ -435,6 +435,11 @@ namespace lfs::vis {
         return scene_.getVisibleNodeIndex(selected_node_);
     }
 
+    std::vector<bool> SceneManager::getSelectedNodeMask() const {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        return scene_.getSelectedNodeMask(selected_node_);
+    }
+
     // ========== Node Transforms ==========
 
     void SceneManager::setNodeTransform(const std::string& name, const glm::mat4& transform) {

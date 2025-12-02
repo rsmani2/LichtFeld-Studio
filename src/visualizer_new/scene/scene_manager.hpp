@@ -118,6 +118,7 @@ namespace lfs::vis {
         bool hasSelectedNode() const;
         bool isSelectedNodeLocked() const;  // Check if selected node is locked
         int getSelectedNodeIndex() const;  // Index in combined model, -1 if none
+        std::vector<bool> getSelectedNodeMask() const;  // Valid node mask for selection (supports groups)
 
         // Node transforms
         void setNodeTransform(const std::string& name, const glm::mat4& transform);

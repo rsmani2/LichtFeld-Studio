@@ -569,8 +569,8 @@ namespace lfs::vis::tools {
         auto* const sm = ctx.getSceneManager();
         if (!rm || !sm) return;
 
-        const int target_node = sm->getSelectedNodeIndex();
-        if (target_node < 0) return;
+        const auto node_mask = sm->getSelectedNodeMask();
+        if (node_mask.empty()) return;
 
         const auto& bounds = ctx.getViewportBounds();
         const auto& viewport = ctx.getViewport();
@@ -595,7 +595,7 @@ namespace lfs::vis::tools {
             if (hovered_id >= 0 && cumulative_selection_.is_valid()) {
                 lfs::rendering::set_selection_element(cumulative_selection_.ptr<bool>(), hovered_id, add_mode);
                 if (transform_indices) {
-                    lfs::rendering::filter_selection_by_node(cumulative_selection_, *transform_indices, target_node);
+                    lfs::rendering::filter_selection_by_node_mask(cumulative_selection_, *transform_indices, node_mask);
                 }
             }
             rm->setBrushState(true, image_x, image_y, 0.0f, add_mode, nullptr, false, 0.0f);
@@ -604,7 +604,7 @@ namespace lfs::vis::tools {
             const float scaled_radius = brush_radius_ * scale_x;
             rm->setBrushState(true, image_x, image_y, scaled_radius, add_mode, &cumulative_selection_);
             if (transform_indices) {
-                lfs::rendering::filter_selection_by_node(cumulative_selection_, *transform_indices, target_node);
+                lfs::rendering::filter_selection_by_node_mask(cumulative_selection_, *transform_indices, node_mask);
             }
             rm->setPreviewSelection(&cumulative_selection_, add_mode);
         }
@@ -802,8 +802,8 @@ namespace lfs::vis::tools {
         auto* const sm = ctx.getSceneManager();
         if (!rm || !sm) return;
 
-        const int target_node = sm->getSelectedNodeIndex();
-        if (target_node < 0) return;
+        const auto node_mask = sm->getSelectedNodeMask();
+        if (node_mask.empty()) return;
 
         const auto screen_positions = rm->getScreenPositions();
         if (!screen_positions || !screen_positions->is_valid()) return;
@@ -826,7 +826,7 @@ namespace lfs::vis::tools {
         lfs::rendering::rect_select_tensor(*screen_positions, x0, y0, x1, y1, preview_selection_);
 
         if (const auto indices = sm->getScene().getTransformIndices()) {
-            lfs::rendering::filter_selection_by_node(preview_selection_, *indices, target_node);
+            lfs::rendering::filter_selection_by_node_mask(preview_selection_, *indices, node_mask);
         }
         rm->setPreviewSelection(&preview_selection_, add_mode);
     }
@@ -838,8 +838,8 @@ namespace lfs::vis::tools {
         auto* const sm = ctx.getSceneManager();
         if (!rm || !sm) return;
 
-        const int target_node = sm->getSelectedNodeIndex();
-        if (target_node < 0) return;
+        const auto node_mask = sm->getSelectedNodeMask();
+        if (node_mask.empty()) return;
 
         const auto screen_positions = rm->getScreenPositions();
         if (!screen_positions || !screen_positions->is_valid()) return;
@@ -866,7 +866,7 @@ namespace lfs::vis::tools {
         lfs::rendering::polygon_select_tensor(*screen_positions, poly_gpu, preview_selection_);
 
         if (const auto indices = sm->getScene().getTransformIndices()) {
-            lfs::rendering::filter_selection_by_node(preview_selection_, *indices, target_node);
+            lfs::rendering::filter_selection_by_node_mask(preview_selection_, *indices, node_mask);
         }
         rm->setPreviewSelection(&preview_selection_, add_mode);
     }
@@ -964,15 +964,15 @@ namespace lfs::vis::tools {
         auto* const sm = ctx.getSceneManager();
         if (!sm) return nullptr;
 
-        const int target_node = sm->getSelectedNodeIndex();
-        if (target_node < 0) return nullptr;
+        const auto node_mask = sm->getSelectedNodeMask();
+        if (node_mask.empty()) return nullptr;
 
         auto& scene = sm->getScene();
         const uint8_t group_id = scene.getActiveSelectionGroup();
         const auto existing_mask = scene.getSelectionMask();
         const size_t n = cumulative_selection_.numel();
 
-        // Build locked groups bitmask (256 bits = 8 uint32s)
+        // Build locked groups bitmask
         uint32_t locked_bitmask[8] = {0};
         for (const auto& group : scene.getSelectionGroups()) {
             if (group.locked) {
@@ -980,24 +980,19 @@ namespace lfs::vis::tools {
             }
         }
 
-        // Upload locked bitmask to GPU (small constant size)
         uint32_t* d_locked = nullptr;
         cudaMalloc(&d_locked, sizeof(locked_bitmask));
         cudaMemcpy(d_locked, locked_bitmask, sizeof(locked_bitmask), cudaMemcpyHostToDevice);
 
-        // Create output mask on GPU
         auto output_mask = lfs::core::Tensor::empty({n}, lfs::core::Device::CUDA, lfs::core::DataType::UInt8);
 
-        // Get existing mask (already on GPU, or empty)
-        const lfs::core::Tensor empty_mask;
+        const lfs::core::Tensor EMPTY_MASK;
         const lfs::core::Tensor& existing_ref = (existing_mask && existing_mask->is_valid())
-            ? *existing_mask : empty_mask;
+            ? *existing_mask : EMPTY_MASK;
 
         const auto transform_indices = scene.getTransformIndices();
-
-        // Apply selection entirely on GPU
         const bool add_mode = (current_action_ == SelectionAction::Add);
-        lfs::rendering::apply_selection_group_tensor(
+        lfs::rendering::apply_selection_group_tensor_mask(
             cumulative_selection_,
             existing_ref,
             output_mask,
@@ -1005,7 +1000,7 @@ namespace lfs::vis::tools {
             d_locked,
             add_mode,
             transform_indices.get(),
-            target_node);
+            node_mask);
 
         cudaFree(d_locked);
 
