@@ -237,7 +237,7 @@ namespace lfs::rendering {
             BufferBinder<GL_ARRAY_BUFFER> bind(instance_vbo_);
             {
                 LOG_TIMER_TRACE("glBufferData");
-                glBufferData(GL_ARRAY_BUFFER, cpu_data.bytes(), cpu_data.raw_ptr(), GL_DYNAMIC_DRAW);
+                glBufferData(GL_ARRAY_BUFFER, cpu_data.bytes(), cpu_data.data_ptr(), GL_DYNAMIC_DRAW);
             }
         }
 

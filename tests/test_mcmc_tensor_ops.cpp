@@ -103,7 +103,7 @@ TEST(MCMCTensorOps, IndexSelectInt64Basic) {
     ASSERT_EQ(result.numel(), 3);
     ASSERT_EQ(result.dtype(), DataType::Int64);
 
-    const int64_t* result_ptr = static_cast<const int64_t*>(result.raw_ptr());
+    const int64_t* result_ptr = static_cast<const int64_t*>(result.data_ptr());
     EXPECT_EQ(result_ptr[0], 2);
     EXPECT_EQ(result_ptr[1], 5);
     EXPECT_EQ(result_ptr[2], 8);
@@ -133,7 +133,7 @@ TEST(MCMCTensorOps, IndexSelectInt64MCMCScenario) {
     ASSERT_EQ(sampled_idxs.numel(), 5);
     ASSERT_EQ(sampled_idxs.dtype(), DataType::Int64);
 
-    const int64_t* result_ptr = static_cast<const int64_t*>(sampled_idxs.raw_ptr());
+    const int64_t* result_ptr = static_cast<const int64_t*>(sampled_idxs.data_ptr());
 
     // Should get: [5, 10, 15, 20, 25] (the indices from alive_indices)
     EXPECT_EQ(result_ptr[0], 5);
@@ -166,7 +166,7 @@ TEST(MCMCTensorOps, IndexSelectInt64LargeIndices) {
     ASSERT_EQ(result.numel(), 3);
     ASSERT_EQ(result.dtype(), DataType::Int64);
 
-    const int64_t* result_ptr = static_cast<const int64_t*>(result.raw_ptr());
+    const int64_t* result_ptr = static_cast<const int64_t*>(result.data_ptr());
     EXPECT_EQ(result_ptr[0], 50000) << "Got garbage: " << result_ptr[0];
     EXPECT_EQ(result_ptr[1], 75000) << "Got garbage: " << result_ptr[1];
     EXPECT_EQ(result_ptr[2], 99999) << "Got garbage: " << result_ptr[2];

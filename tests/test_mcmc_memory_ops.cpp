@@ -165,9 +165,9 @@ TEST(InplaceCat, MCMCMultipleAttributes) {
     Tensor new_opacity = Tensor::ones({new_gaussians, 1}, Device::CUDA);
 
     // Perform in-place concatenations
-    void* means_ptr_before = attrs.means.raw_ptr();
+    void* means_ptr_before = attrs.means.data_ptr();
     attrs.means = Tensor::cat({attrs.means, new_means}, 0);
-    void* means_ptr_after = attrs.means.raw_ptr();
+    void* means_ptr_after = attrs.means.data_ptr();
 
     // Verify in-place optimization was used (pointer unchanged)
     EXPECT_EQ(means_ptr_before, means_ptr_after) << "In-place optimization not used for means";
@@ -197,15 +197,15 @@ TEST(InplaceCat, MultipleSequentialAdds) {
     auto tensor = Tensor::zeros({initial_size, 3}, Device::CUDA);
     tensor.reserve(max_capacity);
 
-    void* initial_ptr = tensor.raw_ptr();
+    void* initial_ptr = tensor.data_ptr();
 
     for (int i = 0; i < num_adds; i++) {
         auto new_data = Tensor::ones({add_size, 3}, Device::CUDA);
-        void* before_ptr = tensor.raw_ptr();
+        void* before_ptr = tensor.data_ptr();
 
         tensor = Tensor::cat({tensor, new_data}, 0);
 
-        void* after_ptr = tensor.raw_ptr();
+        void* after_ptr = tensor.data_ptr();
 
         // Verify pointer stays the same (in-place optimization)
         EXPECT_EQ(before_ptr, after_ptr) << "Add operation " << (i+1) << " reallocated";
@@ -409,18 +409,18 @@ TEST(MCMCIntegration, FullAddNewParamsSequence) {
         auto new_values = Tensor::ones(TensorShape(new_dims), Device::CUDA);
 
         // Parameter concatenation (would use append_gather in real code)
-        void* param_ptr_before = pg.param.raw_ptr();
+        void* param_ptr_before = pg.param.data_ptr();
         pg.param = Tensor::cat({pg.param, new_values}, 0);
-        void* param_ptr_after = pg.param.raw_ptr();
+        void* param_ptr_after = pg.param.data_ptr();
 
         EXPECT_EQ(param_ptr_before, param_ptr_after)
             << pg.name << " param: in-place optimization not used";
 
         // Gradient concatenation with zeros (would use append_zeros in real code)
         auto zeros_grad = Tensor::zeros(TensorShape(new_dims), Device::CUDA);
-        void* grad_ptr_before = pg.grad.raw_ptr();
+        void* grad_ptr_before = pg.grad.data_ptr();
         pg.grad = Tensor::cat({pg.grad, zeros_grad}, 0);
-        void* grad_ptr_after = pg.grad.raw_ptr();
+        void* grad_ptr_after = pg.grad.data_ptr();
 
         EXPECT_EQ(grad_ptr_before, grad_ptr_after)
             << pg.name << " grad: in-place optimization not used";

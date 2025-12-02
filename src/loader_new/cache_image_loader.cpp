@@ -829,7 +829,7 @@ namespace lfs::loader {
                 DataType::UInt8);
 
             // Copy image data to tensor
-            std::memcpy(cpu_tensor.raw_ptr(), img_data, height * width * channels);
+            std::memcpy(cpu_tensor.data_ptr(), img_data, height * width * channels);
             lfs::core::free_image(img_data);
 
             // Convert to GPU [C, H, W] float32
@@ -863,7 +863,7 @@ namespace lfs::loader {
                 DataType::UInt8);
 
             // Copy image data to tensor
-            std::memcpy(cpu_tensor.raw_ptr(), img_data, height * width * channels);
+            std::memcpy(cpu_tensor.data_ptr(), img_data, height * width * channels);
             lfs::core::free_image(img_data);
 
             // Convert to GPU [C, H, W] float32

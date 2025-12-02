@@ -310,13 +310,13 @@ namespace lfs::core {
                 size_t other_bytes = other.bytes();
 
                 if (device_ == Device::CUDA) {
-                    cudaMemcpy(result.raw_ptr(), raw_ptr(), self_bytes, cudaMemcpyDeviceToDevice);
-                    cudaMemcpy(static_cast<char*>(result.raw_ptr()) + self_bytes,
-                               other.raw_ptr(), other_bytes, cudaMemcpyDeviceToDevice);
+                    cudaMemcpy(result.data_ptr(), data_ptr(), self_bytes, cudaMemcpyDeviceToDevice);
+                    cudaMemcpy(static_cast<char*>(result.data_ptr()) + self_bytes,
+                               other.data_ptr(), other_bytes, cudaMemcpyDeviceToDevice);
                 } else {
-                    std::memcpy(result.raw_ptr(), raw_ptr(), self_bytes);
-                    std::memcpy(static_cast<char*>(result.raw_ptr()) + self_bytes,
-                                other.raw_ptr(), other_bytes);
+                    std::memcpy(result.data_ptr(), data_ptr(), self_bytes);
+                    std::memcpy(static_cast<char*>(result.data_ptr()) + self_bytes,
+                                other.data_ptr(), other_bytes);
                 }
 
                 return result;

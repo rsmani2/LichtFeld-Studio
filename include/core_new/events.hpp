@@ -59,6 +59,7 @@ namespace lfs::core {
             EVENT(ReparentNode, std::string node_name; std::string new_parent_name;);  // Empty parent = root
             EVENT(AddGroup, std::string name; std::string parent_name;);  // Create empty group node
             EVENT(DuplicateNode, std::string name;);  // Duplicate node (and children if group)
+            EVENT(MergeGroup, std::string name;);  // Merge group children into single PLY
             EVENT(SetNodeLocked, std::string name; bool locked;);  // Lock/unlock node for editing
             EVENT(CropPLY, lfs::geometry::BoundingBox crop_box; bool inverse;);
             EVENT(ApplyCropBox, );

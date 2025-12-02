@@ -124,6 +124,7 @@ set(OPTIONAL_TEST_FILES
     test_tensor_index_select_bool.cpp  # Tests for index_select with boolean masks
     test_tensor_uint8_inversion.cpp    # Tests for UInt8 mask inversion
     test_tensor_serialization.cpp      # Tests for tensor serialization with << and >> operators
+    test_tensor_cat_reduction_bug.cpp  # Tests for cat+reduction bug (min/max on concatenated tensors)
 )
 
 foreach(TEST_FILE ${OPTIONAL_TEST_FILES})

@@ -37,7 +37,7 @@ TEST_F(TensorSlicingSafetyTest, SliceIsZeroCopy) {
     const size_t N = 1000;
     Tensor full = Tensor::zeros({N, 3}, Device::CUDA);
 
-    void* full_ptr = full.raw_ptr();
+    void* full_ptr = full.data_ptr();
 
     // Get memory before slicing
     size_t free_before, total;
@@ -56,7 +56,7 @@ TEST_F(TensorSlicingSafetyTest, SliceIsZeroCopy) {
         << "Slicing allocated memory! Expected zero-copy.";
 
     // Verify slice shares same base pointer
-    void* slice_ptr = slice.raw_ptr();
+    void* slice_ptr = slice.data_ptr();
     EXPECT_EQ(slice_ptr, full_ptr)
         << "Slice pointer differs from original! Not zero-copy.";
 }
@@ -153,10 +153,10 @@ TEST_F(TensorSlicingSafetyTest, MultipleSlicesShareBuffer) {
     Tensor slice3 = full.slice(0, 500, 1000); // [500:1000]
 
     // All should share same base pointer
-    void* base_ptr = full.raw_ptr();
-    EXPECT_EQ(slice1.raw_ptr(), base_ptr);
-    EXPECT_EQ(slice2.raw_ptr(), base_ptr);
-    EXPECT_EQ(slice3.raw_ptr(), base_ptr);
+    void* base_ptr = full.data_ptr();
+    EXPECT_EQ(slice1.data_ptr(), base_ptr);
+    EXPECT_EQ(slice2.data_ptr(), base_ptr);
+    EXPECT_EQ(slice3.data_ptr(), base_ptr);
 
     // Modify through slice1
     slice1.fill_(10.0f);
@@ -195,7 +195,7 @@ TEST_F(TensorSlicingSafetyTest, SlicingDifferentShapes) {
         }
 
         // Verify zero-copy
-        EXPECT_EQ(slice.raw_ptr(), full.raw_ptr());
+        EXPECT_EQ(slice.data_ptr(), full.data_ptr());
     }
 }
 
@@ -266,11 +266,11 @@ TEST_F(TensorSlicingSafetyTest, ContiguousCreatesCopy) {
 
     if (allocation_happened) {
         // Verify new tensor has different pointer
-        EXPECT_NE(contig.raw_ptr(), full.raw_ptr())
+        EXPECT_NE(contig.data_ptr(), full.data_ptr())
             << "contiguous() allocated but didn't create new tensor!";
     } else {
         // Verify same tensor returned
-        EXPECT_EQ(contig.raw_ptr(), slice.raw_ptr())
+        EXPECT_EQ(contig.data_ptr(), slice.data_ptr())
             << "contiguous() created copy when slice was already contiguous!";
     }
 }

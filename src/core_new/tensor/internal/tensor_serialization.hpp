@@ -78,7 +78,7 @@ inline std::istream& operator>>(std::istream& is, Tensor& tensor) {
     }
 
     tensor = Tensor::empty(shape, Device::CPU, dtype);
-    is.read(reinterpret_cast<char*>(tensor.raw_ptr()), tensor.bytes());
+    is.read(reinterpret_cast<char*>(tensor.data_ptr()), tensor.bytes());
 
     if (!is) {
         throw std::runtime_error("Failed to read tensor");

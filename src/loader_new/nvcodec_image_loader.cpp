@@ -272,7 +272,7 @@ namespace lfs::loader {
             Device::CUDA,
             DataType::UInt8);
 
-        void* gpu_uint8_buffer = uint8_tensor.raw_ptr();
+        void* gpu_uint8_buffer = uint8_tensor.data_ptr();
         size_t decoded_size = src_width * src_height * 3;
 
         // Create nvImageCodec image descriptor for GPU buffer

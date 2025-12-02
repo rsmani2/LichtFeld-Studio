@@ -177,7 +177,7 @@ Tensor lanczos_resize(
         DataType::Float32);
 
     // Zero-initialize output
-    cudaMemsetAsync(output.raw_ptr(), 0, output.bytes(), cuda_stream);
+    cudaMemsetAsync(output.data_ptr(), 0, output.bytes(), cuda_stream);
 
     // Calculate coefficient buffer sizes
     const uint32_t offset_step_x = (uint32_t)(kernel_size * (1.0 * input_w / output_w) * 2 + 1 + 0.5f);

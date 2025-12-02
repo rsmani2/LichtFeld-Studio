@@ -1198,11 +1198,11 @@ namespace lfs::core {
                 // Get ACTUAL count from CUB (not Thrust which may differ!)
                 if (dtype_ == DataType::Bool) {
                     actual_count = tensor_ops::launch_nonzero_bool(ptr<unsigned char>(),
-                                                                   reinterpret_cast<int64_t*>(temp.raw_ptr()),
+                                                                   reinterpret_cast<int64_t*>(temp.data_ptr()),
                                                                    numel(), numel(), stream_);
                 } else {
                     actual_count = tensor_ops::launch_nonzero(ptr<float>(),
-                                                              reinterpret_cast<int64_t*>(temp.raw_ptr()),
+                                                              reinterpret_cast<int64_t*>(temp.data_ptr()),
                                                               numel(), numel(), stream_);
                 }
 
@@ -1221,7 +1221,7 @@ namespace lfs::core {
                 }
                 // No sync - tensor operation
             } else {
-                int64_t* indices = reinterpret_cast<int64_t*>(temp.raw_ptr());
+                int64_t* indices = reinterpret_cast<int64_t*>(temp.data_ptr());
                 size_t write_idx = 0;
 
                 if (dtype_ == DataType::Bool) {
@@ -1272,7 +1272,7 @@ namespace lfs::core {
             auto cpu_result = cpu_tensor.nonzero();
             result = cpu_result.to(Device::CUDA);
         } else {
-            int64_t* indices = reinterpret_cast<int64_t*>(result.raw_ptr());
+            int64_t* indices = reinterpret_cast<int64_t*>(result.data_ptr());
             size_t write_idx = 0;
 
             auto strides = shape_.strides();
@@ -1421,9 +1421,9 @@ namespace lfs::core {
 
         if (t.numel() > 0 && data.data() != nullptr) {
             if (device == Device::CUDA) {
-                cudaMemcpy(t.raw_ptr(), data.data(), t.bytes(), cudaMemcpyHostToDevice);
+                cudaMemcpy(t.data_ptr(), data.data(), t.bytes(), cudaMemcpyHostToDevice);
             } else {
-                std::memcpy(t.raw_ptr(), data.data(), t.bytes());
+                std::memcpy(t.data_ptr(), data.data(), t.bytes());
             }
         }
         return t;

@@ -142,9 +142,9 @@ namespace lfs::core {
             LOG_DEBUG("  Creating scalar index tensor with Int64...");
             auto idx = Tensor::empty({1}, Device::CPU, DataType::Int64);
             LOG_DEBUG("  Idx tensor created, bytes: {}", idx.bytes());
-            LOG_DEBUG("  Idx tensor raw_ptr: {}", static_cast<void*>(idx.raw_ptr()));
+            LOG_DEBUG("  Idx tensor data_ptr: {}", static_cast<void*>(idx.data_ptr()));
 
-            int64_t* idx_ptr = reinterpret_cast<int64_t*>(idx.raw_ptr());
+            int64_t* idx_ptr = reinterpret_cast<int64_t*>(idx.data_ptr());
             LOG_DEBUG("  Idx pointer obtained: {}", static_cast<void*>(idx_ptr));
             LOG_DEBUG("  Setting index value to: {}", static_cast<int64_t>(min_idx));
             *idx_ptr = static_cast<int64_t>(min_idx);
@@ -203,7 +203,7 @@ namespace lfs::core {
         float* vals = values.ptr<float>();
         LOG_DEBUG("  Values pointer: {}", static_cast<void*>(vals));
 
-        int64_t* idxs = reinterpret_cast<int64_t*>(indices.raw_ptr());
+        int64_t* idxs = reinterpret_cast<int64_t*>(indices.data_ptr());
         LOG_DEBUG("  Indices pointer: {}", static_cast<void*>(idxs));
 
         // 2D optimized path
@@ -354,7 +354,7 @@ namespace lfs::core {
             val = val.squeeze();
 
             auto idx = Tensor::empty({1}, Device::CPU, DataType::Int64);
-            int64_t* idx_ptr = reinterpret_cast<int64_t*>(idx.raw_ptr());
+            int64_t* idx_ptr = reinterpret_cast<int64_t*>(idx.data_ptr());
             *idx_ptr = static_cast<int64_t>(max_idx);
             idx = idx.squeeze();
 
@@ -384,7 +384,7 @@ namespace lfs::core {
 
         const float* data = cpu_tensor.ptr<float>();
         float* val_data = values.ptr<float>();
-        int64_t* idx_data = reinterpret_cast<int64_t*>(indices.raw_ptr());
+        int64_t* idx_data = reinterpret_cast<int64_t*>(indices.data_ptr());
 
         LOG_DEBUG("  Pointers - data: {}, val_data: {}, idx_data: {}",
                   static_cast<const void*>(data),
@@ -513,7 +513,7 @@ namespace lfs::core {
         if (ndim() == 1 && dim == 0) {
             if (device_ == Device::CUDA) {
                 tensor_ops::launch_sort_1d(sorted.ptr<float>(),
-                                           reinterpret_cast<int64_t*>(indices.raw_ptr()),
+                                           reinterpret_cast<int64_t*>(indices.data_ptr()),
                                            numel(), descending, 0);
                 // No sync - returns tensors
             } else {
@@ -531,7 +531,7 @@ namespace lfs::core {
                 }
 
                 float* sorted_data = sorted.ptr<float>();
-                int64_t* idx_data = reinterpret_cast<int64_t*>(indices.raw_ptr());
+                int64_t* idx_data = reinterpret_cast<int64_t*>(indices.data_ptr());
 
                 for (size_t i = 0; i < idx_vec.size(); ++i) {
                     sorted_data[i] = values_vec[idx_vec[i]];
@@ -556,7 +556,7 @@ namespace lfs::core {
 
         if (device_ == Device::CUDA) {
             tensor_ops::launch_sort_2d(sorted.ptr<float>(),
-                                       reinterpret_cast<int64_t*>(indices.raw_ptr()),
+                                       reinterpret_cast<int64_t*>(indices.data_ptr()),
                                        outer_size, dim_size, inner_size,
                                        dim, descending, 0);
             // No sync - returns tensors
@@ -564,7 +564,7 @@ namespace lfs::core {
             // CPU implementation
             const float* src_data = ptr<float>();
             float* sorted_data = sorted.ptr<float>();
-            int64_t* idx_data = reinterpret_cast<int64_t*>(indices.raw_ptr());
+            int64_t* idx_data = reinterpret_cast<int64_t*>(indices.data_ptr());
 
             // Sort each slice independently
             for (size_t outer = 0; outer < outer_size; ++outer) {

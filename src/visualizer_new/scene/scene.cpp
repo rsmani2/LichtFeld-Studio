@@ -101,12 +101,16 @@ namespace lfs::vis {
     }
 
     void Scene::removeNode(const std::string& name, const bool keep_children) {
+        removeNodeInternal(name, keep_children, false);
+    }
+
+    void Scene::removeNodeInternal(const std::string& name, const bool keep_children, const bool force) {
         const auto it = std::find_if(nodes_.begin(), nodes_.end(),
                                [&name](const std::unique_ptr<Node>& node) { return node->name == name; });
         if (it == nodes_.end()) return;
 
-        // Prevent deletion of CROPBOX nodes - they should be recalculated instead
-        if ((*it)->type == NodeType::CROPBOX) {
+        // Prevent direct deletion of CROPBOX nodes (but allow when deleting parent)
+        if (!force && (*it)->type == NodeType::CROPBOX) {
             LOG_WARN("Cannot delete CROPBOX node '{}' - use recalculate instead", name);
             return;
         }
@@ -137,12 +141,11 @@ namespace lfs::vis {
                 }
             }
         } else {
-            // Recursively remove children
-            // Copy children list since removeNode modifies it
+            // Recursively remove children (force=true to allow CROPBOX deletion)
             const std::vector<NodeId> children_copy = (*it)->children;
             for (const NodeId child_id : children_copy) {
                 if (const auto* child = getNodeById(child_id)) {
-                    removeNode(child->name, false);
+                    removeNodeInternal(child->name, false, true);
                 }
             }
         }
@@ -967,6 +970,236 @@ namespace lfs::vis {
         invalidateCache();
         LOG_DEBUG("Duplicated node '{}' as '{}'", name, result_name);
         return result_name;
+    }
+
+    std::string Scene::mergeGroup(const std::string& group_name) {
+        LOG_INFO("mergeGroup: START group_name='{}'", group_name);
+
+        const auto* group_node = getNode(group_name);
+        if (!group_node || group_node->type != NodeType::GROUP) {
+            LOG_WARN("mergeGroup: '{}' is not a group", group_name);
+            return "";
+        }
+
+        LOG_INFO("mergeGroup: found group id={}", group_node->id);
+
+        // Collect all descendant SPLAT nodes
+        std::vector<std::pair<const lfs::core::SplatData*, glm::mat4>> splats;
+        size_t total_gaussians = 0;
+        int max_sh = 0;
+
+        std::function<void(NodeId)> collect = [&](const NodeId id) {
+            const auto* node = getNodeById(id);
+            if (!node) return;
+            if (node->type == NodeType::SPLAT && node->model && node->visible) {
+                const glm::mat4 wt = getWorldTransform(id);
+                LOG_INFO("mergeGroup: collecting SPLAT '{}' id={} gaussians={} world_transform[3]=({},{},{})",
+                         node->name, id, node->model->size(),
+                         wt[3][0], wt[3][1], wt[3][2]);
+                splats.emplace_back(node->model.get(), wt);
+                total_gaussians += node->model->size();
+                max_sh = std::max(max_sh, node->model->get_max_sh_degree());
+            }
+            for (const NodeId cid : node->children) collect(cid);
+        };
+
+        const NodeId group_id = group_node->id;
+        const NodeId parent_id = group_node->parent_id;
+        collect(group_id);
+
+        if (splats.empty()) {
+            LOG_WARN("mergeGroup: No visible SPLAT children in '{}'", group_name);
+            return "";
+        }
+
+        LOG_INFO("mergeGroup: Merging {} SPLATs ({} gaussians) from '{}'", splats.size(), total_gaussians, group_name);
+
+        // Transform each splat and collect into a vector
+        std::vector<lfs::core::SplatData> transformed_splats;
+        transformed_splats.reserve(splats.size());
+
+        for (const auto& [model, world_transform] : splats) {
+            // Clone the splat data
+            lfs::core::SplatData cloned(
+                model->get_max_sh_degree(),
+                model->means_raw().clone(),
+                model->sh0_raw().clone(),
+                model->shN_raw().is_valid() ? model->shN_raw().clone() : lfs::core::Tensor(),
+                model->scaling_raw().clone(),
+                model->rotation_raw().clone(),
+                model->opacity_raw().clone(),
+                model->get_scene_scale());
+            cloned.set_active_sh_degree(model->get_active_sh_degree());
+
+            // Debug: check bounds before transform
+            glm::vec3 min_before, max_before;
+            lfs::core::compute_bounds(cloned, min_before, max_before);
+            LOG_INFO("mergeGroup: BEFORE transform - bounds min=({},{},{}) max=({},{},{})",
+                     min_before.x, min_before.y, min_before.z,
+                     max_before.x, max_before.y, max_before.z);
+
+            // Apply world transform
+            lfs::core::transform(cloned, world_transform);
+
+            // Debug: check bounds after transform
+            glm::vec3 min_after, max_after;
+            lfs::core::compute_bounds(cloned, min_after, max_after);
+            LOG_INFO("mergeGroup: AFTER transform - bounds min=({},{},{}) max=({},{},{})",
+                     min_after.x, min_after.y, min_after.z,
+                     max_after.x, max_after.y, max_after.z);
+
+            transformed_splats.push_back(std::move(cloned));
+        }
+
+        // Concatenate all transformed splats using Tensor::cat
+        const int shN_coeffs = (max_sh > 0) ? ((max_sh + 1) * (max_sh + 1) - 1) : 0;
+
+        // Collect tensors for concatenation
+        std::vector<lfs::core::Tensor> means_list;
+        std::vector<lfs::core::Tensor> sh0_list;
+        std::vector<lfs::core::Tensor> shN_list;
+        std::vector<lfs::core::Tensor> scaling_list;
+        std::vector<lfs::core::Tensor> rotation_list;
+        std::vector<lfs::core::Tensor> opacity_list;
+
+        means_list.reserve(transformed_splats.size());
+        sh0_list.reserve(transformed_splats.size());
+        if (shN_coeffs > 0) shN_list.reserve(transformed_splats.size());
+        scaling_list.reserve(transformed_splats.size());
+        rotation_list.reserve(transformed_splats.size());
+        opacity_list.reserve(transformed_splats.size());
+
+        float total_scale = 0.0f;
+        int splat_idx = 0;
+
+        for (const auto& splat : transformed_splats) {
+            LOG_INFO("mergeGroup: collecting splat {} ({} gaussians)", splat_idx, splat.size());
+
+            means_list.push_back(splat.means_raw().clone());
+            sh0_list.push_back(splat.sh0_raw().clone());
+            scaling_list.push_back(splat.scaling_raw().clone());
+            rotation_list.push_back(splat.rotation_raw().clone());
+            opacity_list.push_back(splat.opacity_raw().clone());
+
+            if (shN_coeffs > 0) {
+                if (splat.shN_raw().is_valid() && splat.shN_raw().size(1) > 0) {
+                    const int src_coeffs = static_cast<int>(splat.shN_raw().size(1));
+                    if (src_coeffs == shN_coeffs) {
+                        shN_list.push_back(splat.shN_raw().clone());
+                    } else {
+                        // Pad or truncate shN to match target size
+                        auto padded = lfs::core::Tensor::zeros(
+                            {splat.size(), static_cast<size_t>(shN_coeffs), 3},
+                            lfs::core::Device::CUDA);
+                        const int copy_coeffs = std::min(src_coeffs, shN_coeffs);
+                        // Copy what we can (this is a workaround - ideally we'd have a proper pad operation)
+                        padded.slice(1, 0, copy_coeffs).copy_from(splat.shN_raw().slice(1, 0, copy_coeffs));
+                        shN_list.push_back(std::move(padded));
+                    }
+                } else {
+                    // No shN data, create zeros
+                    shN_list.push_back(lfs::core::Tensor::zeros(
+                        {splat.size(), static_cast<size_t>(shN_coeffs), 3},
+                        lfs::core::Device::CUDA));
+                }
+            }
+
+            total_scale += splat.get_scene_scale();
+            splat_idx++;
+        }
+
+        LOG_INFO("mergeGroup: concatenating {} splats with Tensor::cat", transformed_splats.size());
+
+        // Debug: check bounds of each tensor in means_list before cat
+        for (size_t i = 0; i < means_list.size(); ++i) {
+            // Create temporary SplatData to compute bounds for this tensor
+            auto temp = lfs::core::SplatData(0, means_list[i].clone(),
+                sh0_list[i].clone(), lfs::core::Tensor(),
+                scaling_list[i].clone(), rotation_list[i].clone(),
+                opacity_list[i].clone(), 1.0f);
+            glm::vec3 tmin, tmax;
+            lfs::core::compute_bounds(temp, tmin, tmax);
+            LOG_INFO("mergeGroup: means_list[{}] shape=[{}] bounds min=({},{},{}) max=({},{},{})",
+                     i, means_list[i].shape().str(),
+                     tmin.x, tmin.y, tmin.z, tmax.x, tmax.y, tmax.z);
+        }
+
+        // Use Tensor::cat to concatenate along dimension 0
+        auto means = lfs::core::Tensor::cat(means_list, 0);
+        auto sh0 = lfs::core::Tensor::cat(sh0_list, 0);
+        auto shN = (shN_coeffs > 0) ? lfs::core::Tensor::cat(shN_list, 0) : lfs::core::Tensor();
+        auto scaling = lfs::core::Tensor::cat(scaling_list, 0);
+        auto rotation = lfs::core::Tensor::cat(rotation_list, 0);
+        auto opacity = lfs::core::Tensor::cat(opacity_list, 0);
+
+        LOG_INFO("mergeGroup: concatenated means shape = [{}]", means.shape().str());
+
+        // Debug: check first and last few values of means tensor
+        {
+            auto means_cpu = means.to(lfs::core::Device::CPU);
+            const float* data = means_cpu.ptr<float>();
+            const size_t n = means.size(0);
+            LOG_INFO("mergeGroup: means[0] = ({},{},{})", data[0], data[1], data[2]);
+            LOG_INFO("mergeGroup: means[{}] = ({},{},{})", n/2, data[(n/2)*3], data[(n/2)*3+1], data[(n/2)*3+2]);
+            LOG_INFO("mergeGroup: means[{}] = ({},{},{})", n-1, data[(n-1)*3], data[(n-1)*3+1], data[(n-1)*3+2]);
+
+            // Check tensor properties
+            LOG_INFO("mergeGroup: means is_contiguous={} is_view={}", means.is_contiguous(), means.is_view());
+
+            // Compute min/max directly on CPU to verify
+            float min_x = data[0], max_x = data[0];
+            for (size_t i = 0; i < n; ++i) {
+                float x = data[i * 3];
+                min_x = std::min(min_x, x);
+                max_x = std::max(max_x, x);
+            }
+            LOG_INFO("mergeGroup: CPU-computed X bounds: min={} max={}", min_x, max_x);
+        }
+
+        // Debug: check bounds of final merged means tensor
+        {
+            auto temp_splat = lfs::core::SplatData(max_sh, means.clone(), sh0.clone(),
+                shN.is_valid() ? shN.clone() : lfs::core::Tensor(),
+                scaling.clone(), rotation.clone(), opacity.clone(), 1.0f);
+            glm::vec3 final_min, final_max;
+            lfs::core::compute_bounds(temp_splat, final_min, final_max);
+            LOG_INFO("mergeGroup: FINAL concatenated bounds min=({},{},{}) max=({},{},{})",
+                     final_min.x, final_min.y, final_min.z, final_max.x, final_max.y, final_max.z);
+        }
+
+        // Create merged model
+        auto merged = std::make_unique<lfs::core::SplatData>(
+            max_sh, std::move(means), std::move(sh0), std::move(shN),
+            std::move(scaling), std::move(rotation), std::move(opacity),
+            total_scale / static_cast<float>(splats.size()));
+        merged->set_active_sh_degree(max_sh);
+
+        // Remove group and add merged splat
+        LOG_INFO("mergeGroup: removing old group '{}'", group_name);
+        removeNode(group_name, false);
+
+        LOG_INFO("mergeGroup: adding merged splat '{}' with parent_id={}", group_name, parent_id);
+        const NodeId new_id = addSplat(group_name, std::move(merged), parent_id);
+
+        // Log the new node's info
+        const auto* new_node = getNodeById(new_id);
+        if (new_node) {
+            LOG_INFO("mergeGroup: new node id={} name='{}' gaussians={} centroid=({},{},{})",
+                     new_node->id, new_node->name, new_node->gaussian_count,
+                     new_node->centroid.x, new_node->centroid.y, new_node->centroid.z);
+
+            glm::vec3 min_b, max_b;
+            if (getNodeBounds(new_id, min_b, max_b)) {
+                const glm::vec3 center = (min_b + max_b) * 0.5f;
+                LOG_INFO("mergeGroup: new node bounds min=({},{},{}) max=({},{},{}) center=({},{},{})",
+                         min_b.x, min_b.y, min_b.z, max_b.x, max_b.y, max_b.z,
+                         center.x, center.y, center.z);
+            }
+        }
+
+        invalidateCache();
+        LOG_INFO("mergeGroup: END - Merged '{}' into single SPLAT with {} gaussians", group_name, total_gaussians);
+        return group_name;
     }
 
     void Scene::reparent(const NodeId node_id, const NodeId new_parent) {

@@ -742,7 +742,7 @@ TEST(MCMCCriticalBugs_TensorCat, MultipleReferencesSimulation) {
     Tensor& optimizer_ref = shared_data;
 
     // Verify they point to the same data
-    EXPECT_EQ(splat_ref.raw_ptr(), optimizer_ref.raw_ptr());
+    EXPECT_EQ(splat_ref.data_ptr(), optimizer_ref.data_ptr());
 
     // Do concatenation through optimizer reference
     Tensor new_data = Tensor::ones({25, 1}, Device::CUDA) * 999.0f;
@@ -774,12 +774,12 @@ TEST(MCMCCriticalBugs_TensorCat, InPlaceVsNewAllocation) {
     with_capacity.reserve(500);
     Tensor& ref_with_capacity = with_capacity;
 
-    void* original_ptr = ref_with_capacity.raw_ptr();
+    void* original_ptr = ref_with_capacity.data_ptr();
 
     Tensor new_vals1 = Tensor::zeros({50, 3}, Device::CUDA);
     ref_with_capacity = Tensor::cat({ref_with_capacity, new_vals1}, 0);
 
-    bool used_inplace = (ref_with_capacity.raw_ptr() == original_ptr);
+    bool used_inplace = (ref_with_capacity.data_ptr() == original_ptr);
 
     auto result1_cpu = ref_with_capacity.cpu();
     float sum1 = 0.0f;

@@ -1017,8 +1017,17 @@ namespace lfs::core {
             return static_cast<const T*>(static_cast<const void*>(data_ptr));
         }
 
-        void* raw_ptr() { return data_; }
-        const void* raw_ptr() const { return data_; }
+        // Pointer to tensor data (accounts for storage_offset)
+        void* data_ptr() noexcept {
+            return static_cast<char*>(data_) + storage_offset_ * dtype_size(dtype_);
+        }
+        const void* data_ptr() const noexcept {
+            return static_cast<const char*>(data_) + storage_offset_ * dtype_size(dtype_);
+        }
+
+        // Base of allocation (for memory management only)
+        void* storage_ptr() noexcept { return data_; }
+        const void* storage_ptr() const noexcept { return data_; }
 
         // Properties - FIXED: Check validity before accessing shape
         const TensorShape& shape() const { return shape_; }
@@ -2513,7 +2522,7 @@ namespace lfs::core {
 
                 // Calculate proper offset based on dtype
                 size_t type_size = dtype_size(tensor_->dtype());
-                const void* src_ptr = static_cast<const char*>(tensor_->raw_ptr()) + row_index_ * type_size;
+                const void* src_ptr = static_cast<const char*>(tensor_->data_ptr()) + row_index_ * type_size;
 
                 cudaError_t err = cudaMemcpy(
                     &value,
@@ -2547,7 +2556,7 @@ namespace lfs::core {
                     }
                 } else if (tensor_->dtype() == DataType::Int64) {
                     // Proper Int64 handling
-                    const int64_t* data = reinterpret_cast<const int64_t*>(tensor_->raw_ptr());
+                    const int64_t* data = reinterpret_cast<const int64_t*>(tensor_->data_ptr());
                     if constexpr (std::is_same_v<T, int64_t>) {
                         return data[row_index_];
                     } else if constexpr (std::is_same_v<T, int>) {
@@ -2613,8 +2622,8 @@ namespace lfs::core {
                 // Perform deep copy of row data
                 if (tensor_->device() == Device::CUDA) {
                     cudaError_t err = cudaMemcpy(
-                        result.raw_ptr(),
-                        static_cast<const char*>(tensor_->raw_ptr()) + byte_offset,
+                        result.data_ptr(),
+                        static_cast<const char*>(tensor_->data_ptr()) + byte_offset,
                         copy_bytes,
                         cudaMemcpyDeviceToDevice);
                     if (err != cudaSuccess) {
@@ -2624,8 +2633,8 @@ namespace lfs::core {
                     }
                 } else {
                     std::memcpy(
-                        result.raw_ptr(),
-                        static_cast<const char*>(tensor_->raw_ptr()) + byte_offset,
+                        result.data_ptr(),
+                        static_cast<const char*>(tensor_->data_ptr()) + byte_offset,
                         copy_bytes);
                 }
 
@@ -2638,7 +2647,7 @@ namespace lfs::core {
             auto result = Tensor::empty({1}, tensor_->device(), tensor_->dtype());
 
             if (tensor_->device() == Device::CUDA) {
-                cudaMemcpy(result.raw_ptr(), &val, sizeof(float), cudaMemcpyHostToDevice);
+                cudaMemcpy(result.data_ptr(), &val, sizeof(float), cudaMemcpyHostToDevice);
             } else {
                 *result.ptr<float>() = val;
             }
@@ -2703,8 +2712,8 @@ namespace lfs::core {
                 // Copy data based on device
                 if (tensor_->device() == Device::CUDA) {
                     cudaError_t err = cudaMemcpy(
-                        static_cast<char*>(tensor_->raw_ptr()) + byte_offset,
-                        other_copy.raw_ptr(),
+                        static_cast<char*>(tensor_->data_ptr()) + byte_offset,
+                        other_copy.data_ptr(),
                         copy_bytes,
                         cudaMemcpyDeviceToDevice);
                     if (err != cudaSuccess) {
@@ -2713,8 +2722,8 @@ namespace lfs::core {
                     }
                 } else {
                     std::memcpy(
-                        static_cast<char*>(tensor_->raw_ptr()) + byte_offset,
-                        other_copy.raw_ptr(),
+                        static_cast<char*>(tensor_->data_ptr()) + byte_offset,
+                        other_copy.data_ptr(),
                         copy_bytes);
                 }
             } else {

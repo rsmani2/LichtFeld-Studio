@@ -323,23 +323,22 @@ namespace lfs::core {
         // Create new tensor with same properties
         auto result = empty(shape_, device_, dtype_);
 
-        // Copy data (accounting for storage offset)
-        size_t bytes = this->bytes();
-        const char* src = static_cast<const char*>(data_) + storage_offset_ * dtype_size(dtype_);
+        // Copy data using data_ptr() which accounts for storage_offset
+        size_t num_bytes = this->bytes();
 
         if (device_ == Device::CUDA) {
-            cudaError_t err = cudaMemcpy(result.data_, src, bytes, cudaMemcpyDeviceToDevice);
+            cudaError_t err = cudaMemcpy(result.data_ptr(), data_ptr(), num_bytes, cudaMemcpyDeviceToDevice);
             if (err != cudaSuccess) {
                 LOG_ERROR("CUDA memcpy failed in clone(): {}", cudaGetErrorString(err));
                 return Tensor();
             }
         } else {
-            std::memcpy(result.data_, src, bytes);
+            std::memcpy(result.data_ptr(), data_ptr(), num_bytes);
         }
 
         if (profiling_enabled_) {
             LOG_DEBUG("Deep clone: tensor #{} from #{}: copied {} bytes",
-                      result.id_, id_, bytes);
+                      result.id_, id_, num_bytes);
         }
 
         return result;
@@ -908,9 +907,9 @@ namespace lfs::core {
             auto result = empty(shape_, device_, dtype);
             if (numel() > 0) {
                 if (device_ == Device::CUDA) {
-                    CHECK_CUDA(cudaMemcpy(const_cast<void*>(result.raw_ptr()), raw_ptr(), bytes(), cudaMemcpyDeviceToDevice));
+                    CHECK_CUDA(cudaMemcpy(const_cast<void*>(result.data_ptr()), data_ptr(), bytes(), cudaMemcpyDeviceToDevice));
                 } else {
-                    std::memcpy(const_cast<void*>(result.raw_ptr()), raw_ptr(), bytes());
+                    std::memcpy(const_cast<void*>(result.data_ptr()), data_ptr(), bytes());
                 }
             }
             return result;
@@ -1309,13 +1308,13 @@ namespace lfs::core {
         }
 
         if (device_ == Device::CUDA && other.device_ == Device::CUDA) {
-            CHECK_CUDA(cudaMemcpy(data_, other.data_, bytes(), cudaMemcpyDeviceToDevice));
+            CHECK_CUDA(cudaMemcpy(data_ptr(), other.data_ptr(), bytes(), cudaMemcpyDeviceToDevice));
         } else if (device_ == Device::CUDA && other.device_ == Device::CPU) {
-            CHECK_CUDA(cudaMemcpy(data_, other.data_, bytes(), cudaMemcpyHostToDevice));
+            CHECK_CUDA(cudaMemcpy(data_ptr(), other.data_ptr(), bytes(), cudaMemcpyHostToDevice));
         } else if (device_ == Device::CPU && other.device_ == Device::CUDA) {
-            CHECK_CUDA(cudaMemcpy(data_, other.data_, bytes(), cudaMemcpyDeviceToHost));
+            CHECK_CUDA(cudaMemcpy(data_ptr(), other.data_ptr(), bytes(), cudaMemcpyDeviceToHost));
         } else {
-            std::memcpy(data_, other.data_, bytes());
+            std::memcpy(data_ptr(), other.data_ptr(), bytes());
         }
 
         return *this;
@@ -1469,7 +1468,7 @@ namespace lfs::core {
         auto result = clone();
 
         if (device_ == Device::CUDA) {
-            tensor_ops::launch_cumsum(result.raw_ptr(), shape_.dims().data(),
+            tensor_ops::launch_cumsum(result.data_ptr(), shape_.dims().data(),
                                       shape_.rank(), dim, dtype_, nullptr);
             // No sync - returns tensor, not API boundary
         } else {
@@ -1824,8 +1823,8 @@ namespace lfs::core {
 
         std::vector<float> result(numel());
 
-        // Account for storage offset
-        const char* src = static_cast<const char*>(data_) + storage_offset_ * dtype_size(dtype_);
+        // Use data_ptr() which accounts for storage_offset
+        const void* src = data_ptr();
 
         if (device_ == Device::CUDA) {
             // API BOUNDARY: Sync before reading from GPU
@@ -1865,11 +1864,11 @@ namespace lfs::core {
 
         if (device_ == Device::CUDA) {
             LOG_DEBUG("Copying from CUDA to CPU, bytes: {}", bytes());
-            CHECK_CUDA(cudaMemcpy(result.data(), data_, bytes(), cudaMemcpyDeviceToHost));
+            CHECK_CUDA(cudaMemcpy(result.data(), data_ptr(), bytes(), cudaMemcpyDeviceToHost));
             LOG_DEBUG("CUDA copy complete");
         } else {
             LOG_DEBUG("Copying from CPU memory, bytes: {}", bytes());
-            std::memcpy(result.data(), data_, bytes());
+            std::memcpy(result.data(), data_ptr(), bytes());
             LOG_DEBUG("CPU copy complete");
         }
 
@@ -1908,9 +1907,9 @@ namespace lfs::core {
         std::vector<int> result(numel());
 
         if (device_ == Device::CUDA) {
-            CHECK_CUDA(cudaMemcpy(result.data(), data_, bytes(), cudaMemcpyDeviceToHost));
+            CHECK_CUDA(cudaMemcpy(result.data(), data_ptr(), bytes(), cudaMemcpyDeviceToHost));
         } else {
-            std::memcpy(result.data(), data_, bytes());
+            std::memcpy(result.data(), data_ptr(), bytes());
         }
 
         return result;
@@ -1966,9 +1965,9 @@ namespace lfs::core {
             std::vector<uint8_t> result(numel());
 
             if (device_ == Device::CUDA) {
-                CHECK_CUDA(cudaMemcpy(result.data(), data_, bytes(), cudaMemcpyDeviceToHost));
+                CHECK_CUDA(cudaMemcpy(result.data(), data_ptr(), bytes(), cudaMemcpyDeviceToHost));
             } else {
-                std::memcpy(result.data(), data_, bytes());
+                std::memcpy(result.data(), data_ptr(), bytes());
             }
 
             return result;
@@ -1979,7 +1978,7 @@ namespace lfs::core {
             std::vector<uint8_t> result(numel());
 
             if (device_ == Device::CUDA) {
-                CHECK_CUDA(cudaMemcpy(result.data(), data_, bytes(), cudaMemcpyDeviceToHost));
+                CHECK_CUDA(cudaMemcpy(result.data(), data_ptr(), bytes(), cudaMemcpyDeviceToHost));
             } else {
                 const unsigned char* src = ptr<unsigned char>();
                 for (size_t i = 0; i < numel(); ++i) {

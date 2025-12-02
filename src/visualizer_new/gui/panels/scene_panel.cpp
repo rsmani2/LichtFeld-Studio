@@ -625,10 +625,15 @@ namespace lfs::vis::gui {
                     return;  // Skip the rest of the menu for cropbox
                 }
 
-                if (node.is_group && ImGui::MenuItem("Add Group...")) {
-                    cmd::AddGroup{.name = "New Group", .parent_name = node.name}.emit();
+                if (node.is_group) {
+                    if (ImGui::MenuItem("Add Group...")) {
+                        cmd::AddGroup{.name = "New Group", .parent_name = node.name}.emit();
+                    }
+                    if (ImGui::MenuItem("Merge to Single PLY")) {
+                        cmd::MergeGroup{.name = node.name}.emit();
+                    }
+                    ImGui::Separator();
                 }
-                if (node.is_group) ImGui::Separator();
                 if (!node.is_group && ImGui::MenuItem("Save As...")) {
                     cmd::SavePLYAs{.name = node.name}.emit();
                 }

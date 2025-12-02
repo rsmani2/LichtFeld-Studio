@@ -168,151 +168,150 @@ namespace lfs::core::tensor_ops {
         }
     }
 
-    /**
-     * @brief OLD single-stage sum reduction (kept for small tensors)
-     *
-     * Uses atomics. Only use for very small reductions where two-stage overhead isn't worth it.
-     */
+    // Single-stage sum reduction with grid-stride loop
     __global__ void warp_reduce_sum_kernel(
         const float* __restrict__ input,
         float* __restrict__ output,
-        size_t n,
-        bool use_vectorized) {
-        size_t vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
-        size_t idx = vec_idx * 4;
-
+        const size_t n,
+        const bool use_vectorized) {
+        constexpr size_t VECTOR_SIZE = 4;
+        const size_t total_threads = gridDim.x * blockDim.x;
         float val = 0.0f;
 
-        // Only use vectorized loads if data is properly aligned
-        if (use_vectorized && idx + 3 < n) {
-            // Load 4 floats in one transaction (assumes 16-byte alignment)
-            float4 vals = reinterpret_cast<const float4*>(input)[vec_idx];
-            val = vals.x + vals.y + vals.z + vals.w;
-        } else if (idx < n) {
-            // Scalar fallback for unaligned data or remainder
-            for (size_t i = idx; i < n && i < idx + 4; ++i) {
-                val += input[i];
+        for (size_t vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
+             vec_idx * VECTOR_SIZE < n;
+             vec_idx += total_threads) {
+            const size_t idx = vec_idx * VECTOR_SIZE;
+
+            if (use_vectorized && idx + 3 < n) {
+                const float4 vals = reinterpret_cast<const float4*>(input)[vec_idx];
+                val += vals.x + vals.y + vals.z + vals.w;
+            } else if (idx < n) {
+                for (size_t i = idx; i < n && i < idx + VECTOR_SIZE; ++i) {
+                    val += input[i];
+                }
             }
         }
 
-        // Warp-level reduction
         val = warp_ops::block_reduce_sum(val);
 
-        // First thread writes result
         if (threadIdx.x == 0) {
             atomicAdd(output, val);
         }
     }
 
-    /**
-     * @brief Specialized max reduction kernel with vectorized loads + warp shuffles
-     */
+    // Max reduction with grid-stride loop
     __global__ void warp_reduce_max_kernel(
         const float* __restrict__ input,
         float* __restrict__ output,
-        size_t n,
-        bool use_vectorized) {
-        size_t vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
-        size_t idx = vec_idx * 4;
-
+        const size_t n,
+        const bool use_vectorized) {
+        constexpr size_t VECTOR_SIZE = 4;
+        const size_t total_threads = gridDim.x * blockDim.x;
         float val = -INFINITY;
 
-        if (use_vectorized && idx + 3 < n) {
-            float4 vals = reinterpret_cast<const float4*>(input)[vec_idx];
-            val = fmaxf(fmaxf(vals.x, vals.y), fmaxf(vals.z, vals.w));
-        } else if (idx < n) {
-            for (size_t i = idx; i < n && i < idx + 4; ++i) {
-                val = fmaxf(val, input[i]);
+        for (size_t vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
+             vec_idx * VECTOR_SIZE < n;
+             vec_idx += total_threads) {
+            const size_t idx = vec_idx * VECTOR_SIZE;
+
+            if (use_vectorized && idx + 3 < n) {
+                const float4 vals = reinterpret_cast<const float4*>(input)[vec_idx];
+                val = fmaxf(val, fmaxf(fmaxf(vals.x, vals.y), fmaxf(vals.z, vals.w)));
+            } else if (idx < n) {
+                for (size_t i = idx; i < n && i < idx + VECTOR_SIZE; ++i) {
+                    val = fmaxf(val, input[i]);
+                }
             }
         }
 
         val = warp_ops::block_reduce_max(val);
 
         if (threadIdx.x == 0) {
-            // Use atomicMax for float by casting to int
             int* output_as_int = reinterpret_cast<int*>(output);
             int old = *output_as_int;
             int assumed;
             do {
                 assumed = old;
-                float assumed_float = __int_as_float(assumed);
-                float new_val = fmaxf(assumed_float, val);
+                const float new_val = fmaxf(__int_as_float(assumed), val);
                 old = atomicCAS(output_as_int, assumed, __float_as_int(new_val));
             } while (assumed != old);
         }
     }
 
-    /**
-     * @brief Specialized min reduction kernel with vectorized loads + warp shuffles
-     */
+    // Min reduction with grid-stride loop
     __global__ void warp_reduce_min_kernel(
         const float* __restrict__ input,
         float* __restrict__ output,
-        size_t n,
-        bool use_vectorized) {
-        size_t vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
-        size_t idx = vec_idx * 4;
-
+        const size_t n,
+        const bool use_vectorized) {
+        constexpr size_t VECTOR_SIZE = 4;
+        const size_t total_threads = gridDim.x * blockDim.x;
         float val = INFINITY;
 
-        if (use_vectorized && idx + 3 < n) {
-            float4 vals = reinterpret_cast<const float4*>(input)[vec_idx];
-            val = fminf(fminf(vals.x, vals.y), fminf(vals.z, vals.w));
-        } else if (idx < n) {
-            for (size_t i = idx; i < n && i < idx + 4; ++i) {
-                val = fminf(val, input[i]);
+        for (size_t vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
+             vec_idx * VECTOR_SIZE < n;
+             vec_idx += total_threads) {
+            const size_t idx = vec_idx * VECTOR_SIZE;
+
+            if (use_vectorized && idx + 3 < n) {
+                const float4 vals = reinterpret_cast<const float4*>(input)[vec_idx];
+                val = fminf(val, fminf(fminf(vals.x, vals.y), fminf(vals.z, vals.w)));
+            } else if (idx < n) {
+                for (size_t i = idx; i < n && i < idx + VECTOR_SIZE; ++i) {
+                    val = fminf(val, input[i]);
+                }
             }
         }
 
         val = warp_ops::block_reduce_min(val);
 
         if (threadIdx.x == 0) {
-            // Use atomicMin for float by casting to int
             int* output_as_int = reinterpret_cast<int*>(output);
             int old = *output_as_int;
             int assumed;
             do {
                 assumed = old;
-                float assumed_float = __int_as_float(assumed);
-                float new_val = fminf(assumed_float, val);
+                const float new_val = fminf(__int_as_float(assumed), val);
                 old = atomicCAS(output_as_int, assumed, __float_as_int(new_val));
             } while (assumed != old);
         }
     }
 
-    /**
-     * @brief Specialized product reduction kernel with vectorized loads + warp shuffles
-     */
+    // Product reduction with grid-stride loop
     __global__ void warp_reduce_prod_kernel(
         const float* __restrict__ input,
         float* __restrict__ output,
-        size_t n,
-        bool use_vectorized) {
-        size_t vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
-        size_t idx = vec_idx * 4;
-
+        const size_t n,
+        const bool use_vectorized) {
+        constexpr size_t VECTOR_SIZE = 4;
+        const size_t total_threads = gridDim.x * blockDim.x;
         float val = 1.0f;
 
-        if (use_vectorized && idx + 3 < n) {
-            float4 vals = reinterpret_cast<const float4*>(input)[vec_idx];
-            val = vals.x * vals.y * vals.z * vals.w;
-        } else if (idx < n) {
-            for (size_t i = idx; i < n && i < idx + 4; ++i) {
-                val *= input[i];
+        for (size_t vec_idx = blockIdx.x * blockDim.x + threadIdx.x;
+             vec_idx * VECTOR_SIZE < n;
+             vec_idx += total_threads) {
+            const size_t idx = vec_idx * VECTOR_SIZE;
+
+            if (use_vectorized && idx + 3 < n) {
+                const float4 vals = reinterpret_cast<const float4*>(input)[vec_idx];
+                val *= vals.x * vals.y * vals.z * vals.w;
+            } else if (idx < n) {
+                for (size_t i = idx; i < n && i < idx + VECTOR_SIZE; ++i) {
+                    val *= input[i];
+                }
             }
         }
 
         val = warp_ops::block_reduce_prod(val);
 
         if (threadIdx.x == 0) {
-            // Atomic multiply using CAS
             int* output_as_int = reinterpret_cast<int*>(output);
             int old = *output_as_int;
             int assumed;
             do {
                 assumed = old;
-                float assumed_float = __int_as_float(assumed);
-                float new_val = assumed_float * val;
+                const float new_val = __int_as_float(assumed) * val;
                 old = atomicCAS(output_as_int, assumed, __float_as_int(new_val));
             } while (assumed != old);
         }

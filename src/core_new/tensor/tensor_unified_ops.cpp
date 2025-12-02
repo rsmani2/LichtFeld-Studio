@@ -742,18 +742,18 @@ namespace lfs::core {
             if (input->device_ == Device::CUDA) {
                 if (out_dtype == DataType::Float32) {
                     std::vector<float> temp(result.numel(), identity_value);
-                    cudaMemcpy(result.raw_ptr(), temp.data(),
+                    cudaMemcpy(result.data_ptr(), temp.data(),
                                result.bytes(), cudaMemcpyHostToDevice);
                 } else if (out_dtype == DataType::Bool) {
                     unsigned char bool_val = (identity_value != 0.0f) ? 1 : 0;
-                    cudaMemset(result.raw_ptr(), bool_val, result.bytes());
+                    cudaMemset(result.data_ptr(), bool_val, result.bytes());
                 }
             } else {
                 if (out_dtype == DataType::Float32) {
-                    float* ptr = static_cast<float*>(result.raw_ptr());
+                    float* ptr = static_cast<float*>(result.data_ptr());
                     std::fill_n(ptr, result.numel(), identity_value);
                 } else if (out_dtype == DataType::Bool) {
-                    unsigned char* ptr = static_cast<unsigned char*>(result.raw_ptr());
+                    unsigned char* ptr = static_cast<unsigned char*>(result.data_ptr());
                     std::fill_n(ptr, result.numel(), identity_value != 0.0f ? 1 : 0);
                 }
             }
@@ -762,7 +762,7 @@ namespace lfs::core {
 
         if (input->device_ == Device::CUDA) {
             tensor_ops::launch_reduce_op(
-                input->raw_ptr(), result.raw_ptr(),
+                input->data_ptr(), result.data_ptr(),
                 input->shape_.dims().data(), input->shape_.rank(),
                 axes.data(), axes.size(),
                 args.keepdim, op,
@@ -773,8 +773,8 @@ namespace lfs::core {
 
             // Handle Int32 dtype
             if (input->dtype_ == DataType::Int32) {
-                const int* src = static_cast<const int*>(input->raw_ptr());
-                int* dst = static_cast<int*>(result.raw_ptr());
+                const int* src = static_cast<const int*>(input->data_ptr());
+                int* dst = static_cast<int*>(result.data_ptr());
 
                 // Full reduction to scalar (only mode supported for Int32)
                 if (axes.size() == input->shape_.rank()) {
@@ -816,8 +816,8 @@ namespace lfs::core {
             }
 
             // Float32 implementation
-            const float* src = static_cast<const float*>(input->raw_ptr());
-            float* dst = static_cast<float*>(result.raw_ptr());
+            const float* src = static_cast<const float*>(input->data_ptr());
+            float* dst = static_cast<float*>(result.data_ptr());
 
             // Full reduction to scalar
             if (axes.size() == input->shape_.rank()) {
@@ -1076,10 +1076,10 @@ namespace lfs::core {
             // No sync - tensor operation
         } else {
             // CPU implementation of where operation
-            const unsigned char* cond = static_cast<const unsigned char*>(a_broadcast.raw_ptr());
-            const float* x = static_cast<const float*>(b_broadcast.raw_ptr());
-            const float* y = static_cast<const float*>(c_broadcast.raw_ptr());
-            float* dst = static_cast<float*>(result.raw_ptr());
+            const unsigned char* cond = static_cast<const unsigned char*>(a_broadcast.data_ptr());
+            const float* x = static_cast<const float*>(b_broadcast.data_ptr());
+            const float* y = static_cast<const float*>(c_broadcast.data_ptr());
+            float* dst = static_cast<float*>(result.data_ptr());
 
             for (size_t i = 0; i < result.numel(); ++i) {
                 dst[i] = cond[i] ? x[i] : y[i];
@@ -1377,7 +1377,7 @@ namespace lfs::core {
                 for (size_t i = 1; i < tensors.size(); ++i) {
                     const size_t bytes = tensors[i].bytes();
                     const size_t tensor_rows = tensors[i].shape()[0];
-                    const void* src_ptr = tensors[i].raw_ptr();
+                    const void* src_ptr = tensors[i].data_ptr();
                     LOG_DEBUG("  Copying tensor[{}]: shape_[0]={}, numel={}, {} bytes from src={} at offset {}",
                              i, tensor_rows, tensors[i].numel(), bytes, src_ptr, offset);
 
@@ -1415,14 +1415,14 @@ namespace lfs::core {
                     const size_t bytes = tensors[i].bytes();
                     std::memcpy(
                         static_cast<char*>(result.data_) + offset,
-                        tensors[i].raw_ptr(),
+                        tensors[i].data_ptr(),
                         bytes);
                     offset += bytes;
                 }
             }
 
             LOG_DEBUG("  ← Returning IN-PLACE result: id={}, data_ptr={}, capacity={}",
-                     result.id_, result.data_, result.capacity_);
+                     result.id_, result.data_ptr(), result.capacity_);
             return result;
         }
 
@@ -1430,7 +1430,7 @@ namespace lfs::core {
         LOG_DEBUG("  → SLOW PATH: Allocating new buffer");
         auto result = Tensor::empty(TensorShape(result_dims), first_device, first_dtype);
         LOG_DEBUG("  Created new tensor: id={}, data_ptr={}, capacity={}",
-                 result.id_, result.raw_ptr(), result.capacity_);
+                 result.id_, result.data_ptr(), result.capacity_);
 
         size_t element_size = dtype_size(first_dtype);
 
@@ -1442,8 +1442,8 @@ namespace lfs::core {
                 for (const auto& t : tensors) {
                     size_t bytes = t.bytes();
                     cudaMemcpy(
-                        static_cast<char*>(result.raw_ptr()) + offset,
-                        t.raw_ptr(),
+                        static_cast<char*>(result.data_ptr()) + offset,
+                        t.data_ptr(),
                         bytes,
                         cudaMemcpyDeviceToDevice);
                     offset += bytes;
@@ -1453,15 +1453,15 @@ namespace lfs::core {
                 for (const auto& t : tensors) {
                     size_t bytes = t.bytes();
                     std::memcpy(
-                        static_cast<char*>(result.raw_ptr()) + offset,
-                        t.raw_ptr(),
+                        static_cast<char*>(result.data_ptr()) + offset,
+                        t.data_ptr(),
                         bytes);
                     offset += bytes;
                 }
             }
 
             LOG_DEBUG("  ← Returning SLOW PATH result: id={}, data_ptr={}, capacity={}",
-                     result.id_, result.raw_ptr(), result.capacity_);
+                     result.id_, result.data_ptr(), result.capacity_);
             return result;
         }
 
@@ -1476,7 +1476,7 @@ namespace lfs::core {
 
             if (first_device == Device::CUDA) {
                 tensor_ops::launch_cat_last_dim(
-                    result.raw_ptr(),
+                    result.data_ptr(),
                     tensors,
                     num_rows,
                     row_size,
@@ -1490,9 +1490,9 @@ namespace lfs::core {
                     size_t tensor_dim_size = t.shape()[resolved_dim];
 
                     for (size_t row = 0; row < num_rows; ++row) {
-                        const void* src = static_cast<const char*>(t.raw_ptr()) +
+                        const void* src = static_cast<const char*>(t.data_ptr()) +
                                           row * tensor_dim_size * element_size;
-                        void* dst = static_cast<char*>(result.raw_ptr()) +
+                        void* dst = static_cast<char*>(result.data_ptr()) +
                                     row * row_size * element_size + result_offset * element_size;
 
                         std::memcpy(dst, src, tensor_dim_size * element_size);
@@ -1518,7 +1518,7 @@ namespace lfs::core {
 
         if (first_device == Device::CUDA) {
             tensor_ops::launch_cat_middle_dim(
-                result.raw_ptr(),
+                result.data_ptr(),
                 tensors,
                 outer_size,
                 inner_size,
@@ -1535,9 +1535,9 @@ namespace lfs::core {
                     size_t tensor_dim_size = t.shape()[resolved_dim];
                     size_t copy_size = tensor_dim_size * inner_size * element_size;
 
-                    const void* src = static_cast<const char*>(t.raw_ptr()) +
+                    const void* src = static_cast<const char*>(t.data_ptr()) +
                                       outer * tensor_dim_size * inner_size * element_size;
-                    void* dst = static_cast<char*>(result.raw_ptr()) +
+                    void* dst = static_cast<char*>(result.data_ptr()) +
                                 (outer * total_size_along_dim * inner_size + result_offset) * element_size;
 
                     std::memcpy(dst, src, copy_size);
@@ -1609,8 +1609,8 @@ namespace lfs::core {
             for (size_t i = 0; i < tensors.size(); ++i) {
                 if (dim == 0) {
                     // Contiguous copy for dim=0 case (optimized path)
-                    void* dst = static_cast<char*>(result.raw_ptr()) + i * bytes_per_tensor;
-                    cudaMemcpy(dst, tensors[i].raw_ptr(), bytes_per_tensor,
+                    void* dst = static_cast<char*>(result.data_ptr()) + i * bytes_per_tensor;
+                    cudaMemcpy(dst, tensors[i].data_ptr(), bytes_per_tensor,
                                cudaMemcpyDeviceToDevice);
                 } else {
                     // For non-zero dimensions, we need to scatter the data properly
@@ -1623,9 +1623,9 @@ namespace lfs::core {
 
                     // Copy each outer slice
                     for (size_t outer = 0; outer < outer_size; ++outer) {
-                        const void* src_ptr = static_cast<const char*>(tensors[i].raw_ptr()) +
+                        const void* src_ptr = static_cast<const char*>(tensors[i].data_ptr()) +
                                               outer * inner_size * dtype_size(first_dtype);
-                        void* dst_ptr = static_cast<char*>(result.raw_ptr()) +
+                        void* dst_ptr = static_cast<char*>(result.data_ptr()) +
                                         (outer * result_strides[dim == 0 ? 1 : 0] +
                                          i * stride_at_dim) *
                                             dtype_size(first_dtype);
@@ -1640,8 +1640,8 @@ namespace lfs::core {
             for (size_t i = 0; i < tensors.size(); ++i) {
                 if (dim == 0) {
                     // Contiguous copy for dim=0 case
-                    void* dst = static_cast<char*>(result.raw_ptr()) + i * bytes_per_tensor;
-                    std::memcpy(dst, tensors[i].raw_ptr(), bytes_per_tensor);
+                    void* dst = static_cast<char*>(result.data_ptr()) + i * bytes_per_tensor;
+                    std::memcpy(dst, tensors[i].data_ptr(), bytes_per_tensor);
                 } else {
                     // For non-zero dimensions, scatter properly
                     size_t outer_size = 1;
@@ -1652,9 +1652,9 @@ namespace lfs::core {
                     size_t inner_size = elements_per_tensor / outer_size;
 
                     for (size_t outer = 0; outer < outer_size; ++outer) {
-                        const void* src_ptr = static_cast<const char*>(tensors[i].raw_ptr()) +
+                        const void* src_ptr = static_cast<const char*>(tensors[i].data_ptr()) +
                                               outer * inner_size * dtype_size(first_dtype);
-                        void* dst_ptr = static_cast<char*>(result.raw_ptr()) +
+                        void* dst_ptr = static_cast<char*>(result.data_ptr()) +
                                         (outer * result_strides[dim == 0 ? 1 : 0] +
                                          i * stride_at_dim) *
                                             dtype_size(first_dtype);
@@ -1693,7 +1693,7 @@ namespace lfs::core {
                 tensor_ops::launch_clamp_fused(src, dst, min_val, max_val, numel(), nullptr);
             } else if (dtype_ == DataType::Int32) {
                 // Fallback: copy then clamp for int
-                cudaMemcpy(result.data_, data_, bytes(), cudaMemcpyDeviceToDevice);
+                cudaMemcpy(result.data_, data_ptr(), bytes(), cudaMemcpyDeviceToDevice);
                 tensor_ops::launch_clamp_scalar_int(result.ptr<int>(),
                                                     static_cast<int>(min_val),
                                                     static_cast<int>(max_val),

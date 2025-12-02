@@ -124,6 +124,11 @@ namespace lfs::vis {
         // Duplicate a node (and all children recursively for groups)
         // Returns new node name (original name with "_copy" or "_copy_N" suffix)
         [[nodiscard]] std::string duplicateNode(const std::string& name);
+
+        // Merge all child SPLATs of a group into a single SPLAT node
+        // Applies world transforms, removes original children, replaces group with merged SPLAT
+        // Returns name of merged node, or empty string on failure
+        [[nodiscard]] std::string mergeGroup(const std::string& group_name);
         [[nodiscard]] const glm::mat4& getWorldTransform(NodeId node) const;
         [[nodiscard]] std::vector<NodeId> getRootNodes() const;
         [[nodiscard]] Node* getNodeById(NodeId id);
@@ -244,6 +249,7 @@ namespace lfs::vis {
 
         void rebuildCacheIfNeeded() const;
         void updateWorldTransform(const Node& node) const;
+        void removeNodeInternal(const std::string& name, bool keep_children, bool force);
 
         // Helper to find group by ID
         SelectionGroup* findGroup(uint8_t id);

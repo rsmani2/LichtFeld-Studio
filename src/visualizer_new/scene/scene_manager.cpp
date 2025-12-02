@@ -104,6 +104,10 @@ namespace lfs::vis {
             handleDuplicateNode(cmd.name);
         });
 
+        cmd::MergeGroup::when([this](const auto& cmd) {
+            handleMergeGroup(cmd.name);
+        });
+
         cmd::SetNodeLocked::when([this](const auto& cmd) {
             scene_.setNodeLocked(cmd.name, cmd.locked);
         });
@@ -440,6 +444,70 @@ namespace lfs::vis {
         return scene_.getSelectedNodeMask(selected_node_);
     }
 
+    void SceneManager::ensureCropBoxForSelectedNode() {
+        std::string node_name;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            node_name = selected_node_;
+        }
+        if (node_name.empty()) return;
+
+        const auto* node = scene_.getNode(node_name);
+        if (!node) return;
+
+        // For CROPBOX nodes, use parent SPLAT
+        NodeId target_id = node->id;
+        if (node->type == NodeType::CROPBOX && node->parent_id != NULL_NODE) {
+            target_id = node->parent_id;
+        } else if (node->type == NodeType::GROUP) {
+            // For groups, find first child SPLAT
+            for (const NodeId child_id : node->children) {
+                if (const auto* child = scene_.getNodeById(child_id)) {
+                    if (child->type == NodeType::SPLAT) {
+                        target_id = child_id;
+                        break;
+                    }
+                }
+            }
+        }
+
+        const auto* target = scene_.getNodeById(target_id);
+        if (!target || target->type != NodeType::SPLAT) return;
+
+        // Check if cropbox already exists
+        const NodeId existing = scene_.getCropBoxForSplat(target_id);
+        if (existing != NULL_NODE) return;
+
+        // Create cropbox and fit to bounds
+        const NodeId cropbox_id = scene_.getOrCreateCropBoxForSplat(target_id);
+        if (cropbox_id == NULL_NODE) return;
+
+        // Fit cropbox to node bounds
+        glm::vec3 min_bounds, max_bounds;
+        if (scene_.getNodeBounds(target_id, min_bounds, max_bounds)) {
+            CropBoxData data;
+            data.min = min_bounds;
+            data.max = max_bounds;
+            data.enabled = true;
+            scene_.setCropBoxData(cropbox_id, data);
+        }
+
+        // Emit PLYAdded for the new cropbox
+        if (const auto* cropbox = scene_.getNodeById(cropbox_id)) {
+            state::PLYAdded{
+                .name = cropbox->name,
+                .node_gaussians = 0,
+                .total_gaussians = scene_.getTotalGaussianCount(),
+                .is_visible = cropbox->visible,
+                .parent_name = target->name,
+                .is_group = false,
+                .node_type = static_cast<int>(NodeType::CROPBOX)
+            }.emit();
+        }
+
+        LOG_DEBUG("Created cropbox for node '{}'", target->name);
+    }
+
     // ========== Node Transforms ==========
 
     void SceneManager::setNodeTransform(const std::string& name, const glm::mat4& transform) {
@@ -512,10 +580,15 @@ namespace lfs::vis {
 
     glm::vec3 SceneManager::getSelectedNodeCenter() const {
         std::lock_guard<std::mutex> lock(state_mutex_);
-        if (selected_node_.empty()) { return glm::vec3(0.0f); }
+        if (selected_node_.empty()) {
+            return glm::vec3(0.0f);
+        }
 
         const auto* const node = scene_.getNode(selected_node_);
-        if (!node) { return glm::vec3(0.0f); }
+        if (!node) {
+            LOG_INFO("getSelectedNodeCenter: node '{}' not found!", selected_node_);
+            return glm::vec3(0.0f);
+        }
 
         // Use unified bounds calculation (works for both splats and groups)
         return scene_.getNodeBoundsCenter(node->id);
@@ -1106,6 +1179,114 @@ namespace lfs::vis {
 
         emit_added(new_name, parent_name);
         emitSceneChanged();
+    }
+
+    void SceneManager::handleMergeGroup(const std::string& name) {
+        LOG_INFO("handleMergeGroup: START merging group '{}'", name);
+
+        const auto* group = scene_.getNode(name);
+        if (!group || group->type != NodeType::GROUP) {
+            LOG_INFO("handleMergeGroup: group '{}' not found or not a GROUP", name);
+            return;
+        }
+
+        LOG_INFO("handleMergeGroup: group '{}' id={}", name, group->id);
+
+        std::string parent_name;
+        if (group->parent_id != NULL_NODE) {
+            if (const auto* p = scene_.getNodeById(group->parent_id)) {
+                parent_name = p->name;
+            }
+        }
+
+        // Check if the group being merged is currently selected
+        bool was_selected = false;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            was_selected = (selected_node_ == name);
+            LOG_INFO("handleMergeGroup: was_selected={}, selected_node_='{}'", was_selected, selected_node_);
+            if (was_selected) {
+                selected_node_.clear();
+                LOG_INFO("handleMergeGroup: cleared selected_node_");
+            }
+        }
+
+        // Collect children to emit PLYRemoved events
+        std::vector<std::string> children_to_remove;
+        std::function<void(const SceneNode*)> collect_children = [&](const SceneNode* n) {
+            for (const NodeId cid : n->children) {
+                if (const auto* c = scene_.getNodeById(cid)) {
+                    children_to_remove.push_back(c->name);
+                    collect_children(c);
+                }
+            }
+        };
+        collect_children(group);
+        LOG_INFO("handleMergeGroup: collected {} children to remove", children_to_remove.size());
+
+        const std::string merged_name = scene_.mergeGroup(name);
+        if (merged_name.empty()) {
+            LOG_INFO("handleMergeGroup: mergeGroup returned empty, aborting");
+            return;
+        }
+
+        LOG_INFO("handleMergeGroup: mergeGroup succeeded, merged_name='{}'", merged_name);
+
+        // Emit PLYRemoved for all original children
+        for (const auto& child_name : children_to_remove) {
+            LOG_INFO("handleMergeGroup: emitting PLYRemoved for '{}'", child_name);
+            state::PLYRemoved{.name = child_name}.emit();
+        }
+        // Emit for the group itself (now replaced)
+        LOG_INFO("handleMergeGroup: emitting PLYRemoved for group '{}'", name);
+        state::PLYRemoved{.name = name}.emit();
+
+        // Emit PLYAdded for merged node
+        const auto* merged = scene_.getNode(merged_name);
+        if (merged) {
+            LOG_INFO("handleMergeGroup: merged node id={}, gaussians={}, centroid=({},{},{})",
+                     merged->id, merged->gaussian_count,
+                     merged->centroid.x, merged->centroid.y, merged->centroid.z);
+
+            // Get bounds for logging
+            glm::vec3 min_b, max_b;
+            if (scene_.getNodeBounds(merged->id, min_b, max_b)) {
+                const glm::vec3 center = (min_b + max_b) * 0.5f;
+                LOG_INFO("handleMergeGroup: merged bounds min=({},{},{}), max=({},{},{}), center=({},{},{})",
+                         min_b.x, min_b.y, min_b.z, max_b.x, max_b.y, max_b.z,
+                         center.x, center.y, center.z);
+            }
+
+            state::PLYAdded{
+                .name = merged->name,
+                .node_gaussians = merged->gaussian_count,
+                .total_gaussians = scene_.getTotalGaussianCount(),
+                .is_visible = merged->visible,
+                .parent_name = parent_name,
+                .is_group = false,
+                .node_type = static_cast<int>(merged->type)
+            }.emit();
+
+            // Re-select the merged node if the group was selected
+            if (was_selected) {
+                {
+                    std::lock_guard<std::mutex> lock(state_mutex_);
+                    selected_node_ = merged_name;
+                    LOG_INFO("handleMergeGroup: re-selected merged node '{}'", merged_name);
+                }
+                ui::NodeSelected{
+                    .path = merged_name,
+                    .type = "PLY",
+                    .metadata = {{"name", merged_name}}
+                }.emit();
+            }
+        } else {
+            LOG_INFO("handleMergeGroup: ERROR - merged node '{}' not found after merge!", merged_name);
+        }
+
+        LOG_INFO("handleMergeGroup: emitting SceneChanged");
+        emitSceneChanged();
+        LOG_INFO("handleMergeGroup: END");
     }
 
     void SceneManager::updateCropBoxToFitScene(const bool use_percentile) {

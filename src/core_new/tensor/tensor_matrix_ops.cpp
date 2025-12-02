@@ -459,7 +459,7 @@ namespace lfs::core {
 
         // Convert to scalar (rank-0) by creating a view with empty shape
         // This shares memory with the rank-1 result
-        Tensor scalar(result.raw_ptr(), TensorShape(std::vector<size_t>{}), device_, dtype_);
+        Tensor scalar(result.data_ptr(), TensorShape(std::vector<size_t>{}), device_, dtype_);
         scalar.data_owner_ = result.data_owner_;
         scalar.is_view_ = true;
         return scalar;

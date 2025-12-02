@@ -1782,7 +1782,7 @@ namespace lfs::core::tensor_ops {
 
             cat_rgb_to_rgba_kernel<<<grid_size, block_size, 0, stream>>>(
                 static_cast<float*>(output),
-                static_cast<const float*>(tensors[0].raw_ptr()),
+                static_cast<const float*>(tensors[0].data_ptr()),
                 num_pixels,
                 alpha_value);
             return;
@@ -1809,7 +1809,7 @@ namespace lfs::core::tensor_ops {
         std::vector<size_t> h_input_sizes(num_tensors);
 
         for (size_t i = 0; i < num_tensors; ++i) {
-            h_input_ptrs[i] = static_cast<const float*>(tensors[i].raw_ptr());
+            h_input_ptrs[i] = static_cast<const float*>(tensors[i].data_ptr());
             h_input_sizes[i] = tensors[i].shape()[tensors[i].shape().rank() - 1];
         }
 
@@ -1919,7 +1919,7 @@ namespace lfs::core::tensor_ops {
         std::vector<size_t> h_input_sizes(num_tensors);
 
         for (size_t i = 0; i < num_tensors; ++i) {
-            h_input_ptrs[i] = static_cast<const float*>(tensors[i].raw_ptr());
+            h_input_ptrs[i] = static_cast<const float*>(tensors[i].data_ptr());
             h_input_sizes[i] = tensors[i].shape()[resolved_dim];
         }
 

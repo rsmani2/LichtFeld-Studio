@@ -119,6 +119,7 @@ namespace lfs::vis {
         bool isSelectedNodeLocked() const;  // Check if selected node is locked
         int getSelectedNodeIndex() const;  // Index in combined model, -1 if none
         std::vector<bool> getSelectedNodeMask() const;  // Valid node mask for selection (supports groups)
+        void ensureCropBoxForSelectedNode();  // Create cropbox if missing, fit to bounds
 
         // Node transforms
         void setNodeTransform(const std::string& name, const glm::mat4& transform);
@@ -183,6 +184,7 @@ namespace lfs::vis {
         void handleReparentNode(const std::string& node_name, const std::string& new_parent_name);
         void handleAddGroup(const std::string& name, const std::string& parent_name);
         void handleDuplicateNode(const std::string& name);
+        void handleMergeGroup(const std::string& name);
         void updateCropBoxToFitScene(bool use_percentile);
 
         Scene scene_;

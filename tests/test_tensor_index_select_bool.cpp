@@ -215,7 +215,7 @@ TEST_F(TensorIndexSelectBoolTest, VsTorch_LargeRandom) {
 
     const auto t_cpu = t_data.cpu().contiguous();
     auto lfs_data = Tensor::zeros({static_cast<size_t>(N), static_cast<size_t>(M)}, Device::CUDA);
-    cudaMemcpy(lfs_data.raw_ptr(), t_cpu.data_ptr<float>(), N * M * sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(lfs_data.data_ptr(), t_cpu.data_ptr<float>(), N * M * sizeof(float), cudaMemcpyHostToDevice);
 
     std::vector<bool> mv(N);
     std::srand(42);
