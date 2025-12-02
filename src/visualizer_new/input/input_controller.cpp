@@ -587,11 +587,21 @@ namespace lfs::vis {
             return;
         }
 
-        // Handle key press actions through bindings
-        if (action == GLFW_PRESS && !ImGui::IsAnyItemActive()) {
-            // Check if this key+mods triggers a bound action
+        // Handle key press/repeat actions through bindings
+        if ((action == GLFW_PRESS || action == GLFW_REPEAT) && !ImGui::IsAnyItemActive()) {
             const auto tool_mode = getCurrentToolMode();
             const auto bound_action = bindings_.getActionForKey(tool_mode, key, mods);
+
+            // Only speed controls support key repeat
+            if (action == GLFW_REPEAT) {
+                if (bound_action != input::Action::CAMERA_SPEED_UP &&
+                    bound_action != input::Action::CAMERA_SPEED_DOWN &&
+                    bound_action != input::Action::ZOOM_SPEED_UP &&
+                    bound_action != input::Action::ZOOM_SPEED_DOWN) {
+                    return;
+                }
+            }
+
             if (bound_action != input::Action::NONE) {
                 switch (bound_action) {
                 case input::Action::TOGGLE_SPLIT_VIEW:
