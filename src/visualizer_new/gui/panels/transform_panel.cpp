@@ -4,10 +4,7 @@
 
 #include "gui/panels/transform_panel.hpp"
 #include "command/command_history.hpp"
-#include "command/commands/composite_command.hpp"
-#include "command/commands/cropbox_command.hpp"
 #include "command/commands/transform_command.hpp"
-#include "gui/utils/crop_box_sync.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "scene/scene_manager.hpp"
 #include "visualizer_impl.hpp"
@@ -42,11 +39,6 @@ namespace {
         glm::decompose(m, d.scale, d.rotation, d.translation, skew, perspective);
         return d;
     }
-
-    command::CropBoxState getCropState(const RenderingManager* rm) {
-        const auto& s = rm->getSettings();
-        return {s.crop_min, s.crop_max, s.crop_transform, s.crop_inverse};
-    }
 } // namespace
 
 void DrawTransformControls(const UIContext& ctx, const ToolMode current_tool,
@@ -79,7 +71,6 @@ void DrawTransformControls(const UIContext& ctx, const ToolMode current_tool,
     auto [translation, rotation, scale] = decompose(current_transform);
 
     // For world space rotation: use tracked cumulative values
-    // For local space: use decomposed euler
     glm::vec3 euler = use_world_space ? state.world_euler
                                       : glm::degrees(glm::eulerAngles(rotation));
 
@@ -182,8 +173,7 @@ void DrawTransformControls(const UIContext& ctx, const ToolMode current_tool,
         state.transform_before_edit = current_transform;
         state.initial_translation = translation;
         state.initial_scale = scale;
-        state.prev_world_euler = state.world_euler;  // Continue from current
-        state.crop_before_edit = getCropState(render_manager);
+        state.prev_world_euler = state.world_euler;
     }
 
     if (changed) {
@@ -194,19 +184,15 @@ void DrawTransformControls(const UIContext& ctx, const ToolMode current_tool,
                 new_transform = state.transform_before_edit;
                 new_transform[3] = glm::vec4(translation, 1.0f);
             } else if (current_tool == ToolMode::Rotate) {
-                // Incremental: apply only delta since last frame
                 const glm::vec3 euler_delta = glm::radians(euler - state.prev_world_euler);
                 const glm::quat rot_x = glm::angleAxis(euler_delta.x, glm::vec3(1, 0, 0));
                 const glm::quat rot_y = glm::angleAxis(euler_delta.y, glm::vec3(0, 1, 0));
                 const glm::quat rot_z = glm::angleAxis(euler_delta.z, glm::vec3(0, 0, 1));
                 const glm::quat delta_rot = rot_x * rot_y * rot_z;
-
-                // Apply to current rotation
                 const glm::quat new_rot = delta_rot * rotation;
                 new_transform = glm::translate(glm::mat4(1.0f), translation) *
                                 glm::mat4_cast(new_rot) *
                                 glm::scale(glm::mat4(1.0f), scale);
-
                 state.prev_world_euler = euler;
                 state.world_euler = euler;
             } else {
@@ -222,11 +208,6 @@ void DrawTransformControls(const UIContext& ctx, const ToolMode current_tool,
         }
 
         scene_manager->setSelectedNodeTransform(new_transform);
-
-        const glm::mat4 delta = new_transform * glm::inverse(current_transform);
-        auto settings = render_manager->getSettings();
-        utils::applyCropBoxDelta(settings, delta);
-        render_manager->updateSettings(settings);
     }
 
     // Commit undo command when editing ends
@@ -234,34 +215,19 @@ void DrawTransformControls(const UIContext& ctx, const ToolMode current_tool,
         state.editing_active = false;
         const glm::mat4 final_transform = scene_manager->getSelectedNodeTransform();
         if (state.transform_before_edit != final_transform) {
-            auto composite = std::make_unique<command::CompositeCommand>();
-            composite->add(std::make_unique<command::TransformCommand>(
+            auto cmd = std::make_unique<command::TransformCommand>(
                 scene_manager, state.editing_node_name,
-                state.transform_before_edit, final_transform));
-            composite->add(std::make_unique<command::CropBoxCommand>(
-                render_manager, state.crop_before_edit, getCropState(render_manager)));
-            ctx.viewer->getCommandHistory().execute(std::move(composite));
+                state.transform_before_edit, final_transform);
+            ctx.viewer->getCommandHistory().execute(std::move(cmd));
         }
     }
 
     ImGui::Separator();
     if (ImGui::Button("Reset Transform")) {
-        const command::CropBoxState old_crop = getCropState(render_manager);
-
+        auto cmd = std::make_unique<command::TransformCommand>(
+            scene_manager, node_name, current_transform, glm::mat4(1.0f));
+        ctx.viewer->getCommandHistory().execute(std::move(cmd));
         scene_manager->setSelectedNodeTransform(glm::mat4(1.0f));
-
-        const glm::mat4 delta = glm::inverse(current_transform);
-        auto settings = render_manager->getSettings();
-        utils::applyCropBoxDelta(settings, delta);
-        render_manager->updateSettings(settings);
-
-        auto composite = std::make_unique<command::CompositeCommand>();
-        composite->add(std::make_unique<command::TransformCommand>(
-            scene_manager, node_name, current_transform, glm::mat4(1.0f)));
-        composite->add(std::make_unique<command::CropBoxCommand>(
-            render_manager, old_crop, getCropState(render_manager)));
-        ctx.viewer->getCommandHistory().execute(std::move(composite));
-
         state.world_euler = glm::vec3(0.0f);
         state.prev_world_euler = glm::vec3(0.0f);
     }

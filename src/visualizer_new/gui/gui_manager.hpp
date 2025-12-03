@@ -146,13 +146,13 @@ namespace lfs::vis {
 
             // Cropbox undo/redo state
             bool cropbox_gizmo_active_ = false;
+            std::string cropbox_node_name_;
             std::optional<command::CropBoxState> cropbox_state_before_drag_;
 
             // Node transform undo/redo state
             bool node_gizmo_active_ = false;
             std::string node_gizmo_node_name_;
             glm::mat4 node_transform_before_drag_{1.0f};
-            command::CropBoxState node_crop_before_drag_{};
 
             // Previous tool/selection mode for detecting changes
             panels::ToolMode previous_tool_ = panels::ToolMode::None;

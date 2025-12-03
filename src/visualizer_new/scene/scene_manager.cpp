@@ -809,28 +809,10 @@ namespace lfs::vis {
     }
 
     void SceneManager::syncCropBoxToRenderSettings() {
-        if (!rendering_manager_) return;
-
-        const CropBoxData* cropbox = getSelectedNodeCropBox();
-        if (!cropbox) return;
-
-        auto settings = rendering_manager_->getSettings();
-
-        // Sync min/max from cropbox data
-        settings.crop_min = cropbox->min;
-        settings.crop_max = cropbox->max;
-        settings.crop_inverse = cropbox->inverse;
-        settings.crop_color = cropbox->color;
-        settings.crop_line_width = cropbox->line_width;
-
-        // Get cropbox world transform
-        const NodeId cropbox_id = getSelectedNodeCropBoxId();
-        if (cropbox_id != NULL_NODE) {
-            const glm::mat4& world_transform = scene_.getWorldTransform(cropbox_id);
-            settings.crop_transform = lfs::geometry::EuclideanTransform(world_transform);
+        // Scene graph is single source of truth - just trigger re-render
+        if (rendering_manager_) {
+            rendering_manager_->markDirty();
         }
-
-        rendering_manager_->updateSettings(settings);
     }
 
     void SceneManager::loadDataset(const std::filesystem::path& path,
@@ -1130,13 +1112,20 @@ namespace lfs::vis {
 
                 // Transform crop box to node's local space if node has a transform
                 lfs::geometry::BoundingBox local_crop_box = crop_box;
+                const glm::mat4 node_world_transform = scene_.getWorldTransform(node->id);
                 static const glm::mat4 IDENTITY_MATRIX(1.0f);
 
-                if (node->local_transform != IDENTITY_MATRIX) {
-                    // Combine: local -> world -> box = world2bbox * node_to_world
-                    const auto& world2bbox = crop_box.getworld2BBox();
-                    const lfs::geometry::EuclideanTransform node_to_world(node->local_transform);
-                    local_crop_box.setworld2BBox(world2bbox * node_to_world);
+                if (node_world_transform != IDENTITY_MATRIX) {
+                    // Combine: node_local -> world -> cropbox_local
+                    // world2bbox transforms world -> cropbox_local
+                    // node_world transforms node_local -> world
+                    // So we need: world2bbox * node_world to go node_local -> cropbox_local
+                    if (crop_box.hasFullTransform()) {
+                        local_crop_box.setworld2BBox(crop_box.getworld2BBoxMat4() * node_world_transform);
+                    } else {
+                        const lfs::geometry::EuclideanTransform node_to_world(node_world_transform);
+                        local_crop_box.setworld2BBox(crop_box.getworld2BBox() * node_to_world);
+                    }
                 }
 
                 const auto applied_mask = lfs::core::soft_crop_by_cropbox(*node->model, local_crop_box, inverse);
@@ -1331,15 +1320,10 @@ namespace lfs::vis {
     }
 
     void SceneManager::handleMergeGroup(const std::string& name) {
-        LOG_INFO("handleMergeGroup: START merging group '{}'", name);
-
         const auto* group = scene_.getNode(name);
         if (!group || group->type != NodeType::GROUP) {
-            LOG_INFO("handleMergeGroup: group '{}' not found or not a GROUP", name);
             return;
         }
-
-        LOG_INFO("handleMergeGroup: group '{}' id={}", name, group->id);
 
         std::string parent_name;
         if (group->parent_id != NULL_NODE) {
@@ -1353,10 +1337,8 @@ namespace lfs::vis {
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
             was_selected = (selected_nodes_.count(name) > 0);
-            LOG_INFO("handleMergeGroup: was_selected={}, selected_nodes_.size()={}", was_selected, selected_nodes_.size());
             if (was_selected) {
                 selected_nodes_.erase(name);
-                LOG_INFO("handleMergeGroup: removed '{}' from selected_nodes_", name);
             }
         }
 
@@ -1371,41 +1353,22 @@ namespace lfs::vis {
             }
         };
         collect_children(group);
-        LOG_INFO("handleMergeGroup: collected {} children to remove", children_to_remove.size());
 
         const std::string merged_name = scene_.mergeGroup(name);
         if (merged_name.empty()) {
-            LOG_INFO("handleMergeGroup: mergeGroup returned empty, aborting");
+            LOG_WARN("Failed to merge group '{}'", name);
             return;
         }
 
-        LOG_INFO("handleMergeGroup: mergeGroup succeeded, merged_name='{}'", merged_name);
-
-        // Emit PLYRemoved for all original children
+        // Emit PLYRemoved for all original children and the group
         for (const auto& child_name : children_to_remove) {
-            LOG_INFO("handleMergeGroup: emitting PLYRemoved for '{}'", child_name);
             state::PLYRemoved{.name = child_name}.emit();
         }
-        // Emit for the group itself (now replaced)
-        LOG_INFO("handleMergeGroup: emitting PLYRemoved for group '{}'", name);
         state::PLYRemoved{.name = name}.emit();
 
         // Emit PLYAdded for merged node
         const auto* merged = scene_.getNode(merged_name);
         if (merged) {
-            LOG_INFO("handleMergeGroup: merged node id={}, gaussians={}, centroid=({},{},{})",
-                     merged->id, merged->gaussian_count,
-                     merged->centroid.x, merged->centroid.y, merged->centroid.z);
-
-            // Get bounds for logging
-            glm::vec3 min_b, max_b;
-            if (scene_.getNodeBounds(merged->id, min_b, max_b)) {
-                const glm::vec3 center = (min_b + max_b) * 0.5f;
-                LOG_INFO("handleMergeGroup: merged bounds min=({},{},{}), max=({},{},{}), center=({},{},{})",
-                         min_b.x, min_b.y, min_b.z, max_b.x, max_b.y, max_b.z,
-                         center.x, center.y, center.z);
-            }
-
             state::PLYAdded{
                 .name = merged->name,
                 .node_gaussians = merged->gaussian_count,
@@ -1421,7 +1384,6 @@ namespace lfs::vis {
                 {
                     std::lock_guard<std::mutex> lock(state_mutex_);
                     selected_nodes_.insert(merged_name);
-                    LOG_INFO("handleMergeGroup: re-selected merged node '{}'", merged_name);
                 }
                 ui::NodeSelected{
                     .path = merged_name,
@@ -1429,13 +1391,10 @@ namespace lfs::vis {
                     .metadata = {{"name", merged_name}}
                 }.emit();
             }
-        } else {
-            LOG_INFO("handleMergeGroup: ERROR - merged node '{}' not found after merge!", merged_name);
         }
 
-        LOG_INFO("handleMergeGroup: emitting SceneChanged");
         emitSceneChanged();
-        LOG_INFO("handleMergeGroup: END");
+        LOG_INFO("Merged group '{}' -> '{}'", name, merged_name);
     }
 
     void SceneManager::updateCropBoxToFitScene(const bool use_percentile) {
@@ -1455,149 +1414,106 @@ namespace lfs::vis {
 
         const glm::vec3 center = (min_bounds + max_bounds) * 0.5f;
         const glm::vec3 size = max_bounds - min_bounds;
+        const glm::vec3 half_size = size * 0.5f;
 
-        // Update global render settings
-        auto settings = rendering_manager_->getSettings();
-        settings.crop_min = -size * 0.5f;
-        settings.crop_max = size * 0.5f;
-        settings.crop_transform = lfs::geometry::EuclideanTransform(
-            glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
-            center
-        );
-        rendering_manager_->updateSettings(settings);
-
-        // Also update all scene graph cropboxes with the same bounds
+        // Update all scene graph cropboxes (single source of truth)
         for (const auto* node : scene_.getNodes()) {
             if (node->type == NodeType::CROPBOX && node->cropbox) {
-                // Get mutable node to update data
                 auto* mutable_node = scene_.getMutableNode(node->name);
                 if (mutable_node && mutable_node->cropbox) {
-                    mutable_node->cropbox->min = -size * 0.5f;
-                    mutable_node->cropbox->max = size * 0.5f;
+                    mutable_node->cropbox->min = -half_size;
+                    mutable_node->cropbox->max = half_size;
                     mutable_node->local_transform = glm::translate(glm::mat4(1.0f), center);
                     mutable_node->transform_dirty = true;
                 }
             }
         }
 
-        LOG_INFO("Cropbox: center({:.2f}, {:.2f}, {:.2f}), size({:.2f}, {:.2f}, {:.2f})",
+        if (rendering_manager_) {
+            rendering_manager_->markDirty();
+        }
+
+        LOG_INFO("Cropbox reset: center({:.2f},{:.2f},{:.2f}) size({:.2f},{:.2f},{:.2f})",
                  center.x, center.y, center.z, size.x, size.y, size.z);
     }
 
+    SceneManager::ClipboardNode SceneManager::copyNodeHierarchy(const SceneNode* node) {
+        ClipboardNode result;
+        result.type = node->type;
+        result.local_transform = scene_.getWorldTransform(node->id);
+
+        if (node->cropbox) {
+            result.cropbox = std::make_unique<CropBoxData>(*node->cropbox);
+        }
+
+        for (const NodeId child_id : node->children) {
+            if (const auto* child = scene_.getNodeById(child_id)) {
+                result.children.push_back(copyNodeHierarchy(child));
+            }
+        }
+
+        return result;
+    }
+
+    void SceneManager::pasteNodeHierarchy(const ClipboardNode& src, const NodeId parent_id) {
+        for (const auto& child : src.children) {
+            if (child.type == NodeType::CROPBOX && child.cropbox) {
+                const NodeId cropbox_id = scene_.getOrCreateCropBoxForSplat(parent_id);
+                if (cropbox_id == NULL_NODE) continue;
+
+                const auto* cropbox_info = scene_.getNodeById(cropbox_id);
+                if (!cropbox_info) continue;
+
+                auto* cropbox_node = scene_.getMutableNode(cropbox_info->name);
+                if (cropbox_node && cropbox_node->cropbox) {
+                    *cropbox_node->cropbox = *child.cropbox;
+                    cropbox_node->local_transform = child.local_transform;
+                    cropbox_node->transform_dirty = true;
+                }
+            }
+        }
+    }
+
     bool SceneManager::copySelection() {
-        const auto* const model = scene_.getCombinedModel();
-        if (!model) { return false; }
+        static constexpr glm::mat4 IDENTITY{1.0f};
 
-        const auto transforms = scene_.getVisibleNodeTransforms();
-        const auto transform_indices = scene_.getTransformIndices();
-        const auto IDENTITY = glm::mat4(1.0f);
-
-        // Bake per-gaussian transforms into extracted data
-        auto bake_transforms = [&](lfs::core::SplatData& extracted, const lfs::core::Tensor& mask) {
-            if (transforms.empty() || !transform_indices || !transform_indices->is_valid()) { return; }
-
-            const bool all_identity = std::all_of(transforms.begin(), transforms.end(),
-                [&](const glm::mat4& t) { return t == IDENTITY; });
-            if (all_identity) { return; }
-
-            if (transforms.size() == 1) {
-                lfs::core::transform(extracted, transforms[0]);
-                return;
-            }
-
-            // Multi-node: apply transforms per node group
-            const auto selection_mask = mask.to(lfs::core::DataType::Bool);
-            auto selected_indices = selection_mask.nonzero();
-            if (selected_indices.ndim() == 2) { selected_indices = selected_indices.squeeze(1); }
-
-            const auto selected_xform_indices = transform_indices->index_select(0, selected_indices).cpu();
-            const int* const idx_data = selected_xform_indices.ptr<int>();
-            const size_t num_selected = extracted.size();
-            const std::set<int> unique_nodes(idx_data, idx_data + num_selected);
-
-            for (const int node_idx : unique_nodes) {
-                if (node_idx < 0 || node_idx >= static_cast<int>(transforms.size())) { continue; }
-                if (transforms[node_idx] == IDENTITY) { continue; }
-
-                std::vector<bool> node_mask_data(num_selected, false);
-                for (size_t i = 0; i < num_selected; ++i) {
-                    node_mask_data[i] = (idx_data[i] == node_idx);
-                }
-
-                auto node_mask = lfs::core::Tensor::from_vector(
-                    node_mask_data, {num_selected}, extracted.means_raw().device());
-                auto node_gaussians = lfs::core::extract_by_mask(extracted, node_mask);
-                lfs::core::transform(node_gaussians, transforms[node_idx]);
-
-                auto put_indices = node_mask.nonzero();
-                if (put_indices.ndim() == 2) { put_indices = put_indices.squeeze(1); }
-
-                extracted.means_raw().index_put_(put_indices, node_gaussians.means_raw());
-                extracted.rotation_raw().index_put_(put_indices, node_gaussians.rotation_raw());
-                extracted.scaling_raw().index_put_(put_indices, node_gaussians.scaling_raw());
-            }
-        };
-
-        // Priority 1: Brush/lasso selection
-        if (const auto mask = scene_.getSelectionMask(); mask && mask->is_valid()) {
-            auto extracted = lfs::core::extract_by_mask(*model, *mask);
-            if (extracted.size() > 0) {
-                bake_transforms(extracted, *mask);
-                clipboard_ = std::make_unique<lfs::core::SplatData>(std::move(extracted));
-                LOG_INFO("Copied {} gaussians from selection", clipboard_->size());
-                return true;
-            }
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (selected_nodes_.empty()) {
+            clipboard_hierarchy_.reset();
+            return false;
         }
 
-        // Priority 2: Selected node in scene panel (first selected node)
-        {
-            std::lock_guard<std::mutex> lock(state_mutex_);
-            if (!selected_nodes_.empty()) {
-                const std::string& node_name = *selected_nodes_.begin();
-                const auto* const node = scene_.getNode(node_name);
-                if (node && node->model && node->model->size() > 0) {
-                    const auto& src = *node->model;
-                    auto cloned = std::make_unique<lfs::core::SplatData>(
-                        src.get_max_sh_degree(),
-                        src.means_raw().clone(), src.sh0_raw().clone(), src.shN_raw().clone(),
-                        src.scaling_raw().clone(), src.rotation_raw().clone(), src.opacity_raw().clone(),
-                        src.get_scene_scale());
-                    cloned->set_active_sh_degree(src.get_active_sh_degree());
-
-                    if (node->local_transform != IDENTITY) {
-                        lfs::core::transform(*cloned, node->local_transform);
-                    }
-                    clipboard_ = std::move(cloned);
-                    LOG_INFO("Copied {} gaussians from node '{}'", clipboard_->size(), node_name);
-                    return true;
-                }
-            }
+        const std::string& node_name = *selected_nodes_.begin();
+        const auto* node = scene_.getNode(node_name);
+        if (!node || !node->model || node->model->size() == 0) {
+            clipboard_hierarchy_.reset();
+            return false;
         }
 
-        // Priority 3: Crop box
-        if (rendering_manager_) {
-            const auto& settings = rendering_manager_->getSettings();
-            if (settings.show_crop_box || settings.use_crop_box) {
-                lfs::geometry::BoundingBox bbox;
-                bbox.setBounds(settings.crop_min, settings.crop_max);
-                bbox.setworld2BBox(settings.crop_transform.inv());
+        // Clone model data
+        const auto& src = *node->model;
+        auto cloned = std::make_unique<lfs::core::SplatData>(
+            src.get_max_sh_degree(),
+            src.means_raw().clone(), src.sh0_raw().clone(), src.shN_raw().clone(),
+            src.scaling_raw().clone(), src.rotation_raw().clone(), src.opacity_raw().clone(),
+            src.get_scene_scale());
+        cloned->set_active_sh_degree(src.get_active_sh_degree());
 
-                auto extracted = lfs::core::crop_by_cropbox(*model, bbox, settings.crop_inverse);
-                if (extracted.size() > 0) {
-                    if (transforms.size() == 1 && transforms[0] != IDENTITY) {
-                        lfs::core::transform(extracted, transforms[0]);
-                    }
-                    clipboard_ = std::make_unique<lfs::core::SplatData>(std::move(extracted));
-                    LOG_INFO("Copied {} gaussians from crop box", clipboard_->size());
-                    return true;
-                }
-            }
+        // Bake node transform into model
+        if (node->local_transform != IDENTITY) {
+            lfs::core::transform(*cloned, node->local_transform.get());
         }
-        return false;
+        clipboard_ = std::move(cloned);
+        clipboard_hierarchy_ = copyNodeHierarchy(node);
+
+        LOG_DEBUG("Copied {} gaussians from '{}'", clipboard_->size(), node_name);
+        return true;
     }
 
     std::string SceneManager::pasteSelection() {
-        if (!clipboard_ || clipboard_->size() == 0) { return ""; }
+        if (!clipboard_ || clipboard_->size() == 0) {
+            return "";
+        }
 
         auto paste_data = std::make_unique<lfs::core::SplatData>(
             clipboard_->get_max_sh_degree(),
@@ -1611,10 +1527,11 @@ namespace lfs::vis {
         const size_t count = clipboard_->size();
         scene_.addNode(name, std::move(paste_data));
 
-        // Create cropbox as child of this splat
+        // Paste node hierarchy
         const auto* splat_node = scene_.getNode(name);
-        if (splat_node) {
-            [[maybe_unused]] const NodeId cropbox_id = scene_.getOrCreateCropBoxForSplat(splat_node->id);
+        if (splat_node && clipboard_hierarchy_) {
+            pasteNodeHierarchy(*clipboard_hierarchy_, splat_node->id);
+            scene_.invalidateCache();
         }
 
         {
@@ -1631,16 +1548,15 @@ namespace lfs::vis {
             .is_visible = true,
             .parent_name = "",
             .is_group = false,
-            .node_type = 0  // SPLAT
+            .node_type = 0
         }.emit();
 
-        // Emit PLYAdded for the cropbox (re-lookup splat as vector may have reallocated)
-        const auto* splat_for_cropbox = scene_.getNode(name);
-        if (splat_for_cropbox) {
-            const NodeId cropbox_id = scene_.getCropBoxForSplat(splat_for_cropbox->id);
+        // Emit PLYAdded for cropbox
+        const auto* pasted_splat = scene_.getNode(name);
+        if (pasted_splat) {
+            const NodeId cropbox_id = scene_.getCropBoxForSplat(pasted_splat->id);
             if (cropbox_id != NULL_NODE) {
-                const auto* cropbox_node = scene_.getNodeById(cropbox_id);
-                if (cropbox_node) {
+                if (const auto* cropbox_node = scene_.getNodeById(cropbox_id)) {
                     state::PLYAdded{
                         .name = cropbox_node->name,
                         .node_gaussians = 0,
@@ -1648,7 +1564,7 @@ namespace lfs::vis {
                         .is_visible = true,
                         .parent_name = name,
                         .is_group = false,
-                        .node_type = 2  // CROPBOX
+                        .node_type = 2
                     }.emit();
                 }
             }
@@ -1656,33 +1572,28 @@ namespace lfs::vis {
 
         emitSceneChanged();
 
-        // Update crop box to fit pasted data
-        if (rendering_manager_) {
+        // Recompute cropbox only if no hierarchy was copied
+        if (!clipboard_hierarchy_) {
             glm::vec3 min_bounds, max_bounds;
             if (lfs::core::compute_bounds(*clipboard_, min_bounds, max_bounds)) {
                 const glm::vec3 center = (min_bounds + max_bounds) * 0.5f;
                 const glm::vec3 half_size = (max_bounds - min_bounds) * 0.5f;
-                auto settings = rendering_manager_->getSettings();
-                settings.crop_min = -half_size;
-                settings.crop_max = half_size;
-                settings.crop_transform = lfs::geometry::EuclideanTransform({1, 0, 0, 0}, center);
-                rendering_manager_->updateSettings(settings);
 
-                // Also update the cropbox in scene graph
-                const auto* pasted_node = scene_.getNode(name);
-                if (pasted_node) {
-                    auto* mutable_cropbox_node = scene_.getMutableNode(name + "_cropbox");
-                    if (mutable_cropbox_node && mutable_cropbox_node->cropbox) {
-                        mutable_cropbox_node->cropbox->min = -half_size;
-                        mutable_cropbox_node->cropbox->max = half_size;
-                        mutable_cropbox_node->local_transform = glm::translate(glm::mat4(1.0f), center);
-                        mutable_cropbox_node->transform_dirty = true;
-                    }
+                auto* cropbox_node = scene_.getMutableNode(name + "_cropbox");
+                if (cropbox_node && cropbox_node->cropbox) {
+                    cropbox_node->cropbox->min = -half_size;
+                    cropbox_node->cropbox->max = half_size;
+                    cropbox_node->local_transform = glm::translate(glm::mat4(1.0f), center);
+                    cropbox_node->transform_dirty = true;
                 }
             }
         }
 
-        LOG_INFO("Pasted {} gaussians as '{}'", count, name);
+        if (rendering_manager_) {
+            rendering_manager_->markDirty();
+        }
+
+        LOG_DEBUG("Pasted {} gaussians as '{}'", count, name);
         return name;
     }
 

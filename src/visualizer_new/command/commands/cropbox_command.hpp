@@ -5,25 +5,28 @@
 #pragma once
 
 #include "command/command.hpp"
-#include "geometry_new/euclidean_transform.hpp"
+#include "scene/scene.hpp"
 #include <glm/glm.hpp>
+#include <string>
 
 namespace lfs::vis {
-    class RenderingManager;
+    class SceneManager;
 }
 
 namespace lfs::vis::command {
 
+    // Scene graph cropbox state for undo/redo
     struct CropBoxState {
-        glm::vec3 crop_min;
-        glm::vec3 crop_max;
-        lfs::geometry::EuclideanTransform crop_transform;
-        bool crop_inverse = false;
+        glm::vec3 min{-1.0f};
+        glm::vec3 max{1.0f};
+        glm::mat4 local_transform{1.0f};
+        bool inverse = false;
     };
 
     class CropBoxCommand : public Command {
     public:
-        CropBoxCommand(RenderingManager* rendering_manager,
+        CropBoxCommand(SceneManager* scene_manager,
+                       const std::string& cropbox_node_name,
                        const CropBoxState& old_state,
                        const CropBoxState& new_state);
 
@@ -34,7 +37,8 @@ namespace lfs::vis::command {
     private:
         void applyState(const CropBoxState& state);
 
-        RenderingManager* rendering_manager_;
+        SceneManager* scene_manager_;
+        std::string cropbox_node_name_;
         CropBoxState old_state_;
         CropBoxState new_state_;
     };

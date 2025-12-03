@@ -362,13 +362,10 @@ namespace lfs::vis {
             markDirty();
         });
 
-        // Crop box changes
+        // Crop box changes (scene graph is source of truth, this just handles enable flag)
         ui::CropBoxChanged::when([this](const auto& event) {
             std::lock_guard<std::mutex> lock(settings_mutex_);
-            settings_.crop_min = event.min_bounds;
-            settings_.crop_max = event.max_bounds;
             settings_.use_crop_box = event.enabled;
-            LOG_TRACE("Crop box updated - enabled: {}", event.enabled);
             markDirty();
         });
 
@@ -605,7 +602,7 @@ namespace lfs::vis {
             request.hovered_depth_id = d_hovered_depth_id_;
         }
 
-        // Crop box: scene graph takes priority over legacy settings
+        // Crop box from scene graph (single source of truth)
         if (settings_.use_crop_box || settings_.show_crop_box) {
             const auto& cropboxes = scene_state.cropboxes;
             const size_t idx = (scene_state.selected_cropbox_index >= 0)
@@ -618,14 +615,8 @@ namespace lfs::vis {
                     .max = cb.data->max,
                     .transform = glm::inverse(cb.world_transform)};
                 request.crop_inverse = cb.data->inverse;
-            } else {
-                request.crop_box = lfs::rendering::BoundingBox{
-                    .min = settings_.crop_min,
-                    .max = settings_.crop_max,
-                    .transform = settings_.crop_transform.inv().toMat4()};
-                request.crop_inverse = settings_.crop_inverse;
+                request.crop_desaturate = settings_.show_crop_box && !settings_.use_crop_box;
             }
-            request.crop_desaturate = settings_.show_crop_box && !settings_.use_crop_box;
         }
 
         // Add depth filter (Selection tool only - separate from crop box)
@@ -905,7 +896,7 @@ namespace lfs::vis {
             .size = render_size,
             .fov = settings_.fov};
 
-        // Crop box: scene graph takes priority over legacy settings
+        // Crop box from scene graph (single source of truth)
         std::optional<lfs::rendering::BoundingBox> crop_box;
         if (settings_.use_crop_box || settings_.show_crop_box) {
             const auto& cropboxes = scene_manager->getScene().getVisibleCropBoxes();
@@ -915,11 +906,6 @@ namespace lfs::vis {
                     .min = cb.data->min,
                     .max = cb.data->max,
                     .transform = glm::inverse(cb.world_transform)};
-            } else {
-                crop_box = lfs::rendering::BoundingBox{
-                    .min = settings_.crop_min,
-                    .max = settings_.crop_max,
-                    .transform = settings_.crop_transform.inv().toMat4()};
             }
         }
 
@@ -1081,68 +1067,26 @@ namespace lfs::vis {
             }
         }
 
-        // Crop box wireframes - render from scene graph
-        if (settings_.show_crop_box && engine_) {
-            bool rendered_from_scene_graph = false;
+        // Crop box wireframes from scene graph (single source of truth)
+        if (settings_.show_crop_box && engine_ && context.scene_manager) {
+            const auto visible_cropboxes = context.scene_manager->getScene().getVisibleCropBoxes();
+            const NodeId selected_cropbox_id = context.scene_manager->getSelectedNodeCropBoxId();
 
-            // Try to render from scene graph cropboxes
-            if (context.scene_manager) {
-                const auto visible_cropboxes = context.scene_manager->getScene().getVisibleCropBoxes();
-                const NodeId selected_cropbox_id = context.scene_manager->getSelectedNodeCropBoxId();
-
-                for (const auto& rcb : visible_cropboxes) {
-                    if (!rcb.data) continue;
-
-                    // Use full mat4 to preserve scale from parent nodes
-                    const lfs::rendering::BoundingBox box{
-                        .min = rcb.data->min,
-                        .max = rcb.data->max,
-                        .transform = glm::inverse(rcb.world_transform)};
-
-                    const glm::vec3 base_color = rcb.data->inverse
-                        ? glm::vec3(1.0f, 0.2f, 0.2f)
-                        : rcb.data->color;
-                    // Only flash the selected cropbox, not all of them
-                    const bool is_selected = (rcb.node_id == selected_cropbox_id);
-                    const float flash = is_selected ? settings_.crop_flash_intensity : 0.0f;
-                    const glm::vec3 color = glm::mix(base_color, glm::vec3(1.0f), flash);
-                    constexpr float FLASH_LINE_BOOST = 4.0f;
-                    const float line_width = rcb.data->line_width + flash * FLASH_LINE_BOOST;
-
-                    auto bbox_result = engine_->renderBoundingBox(box, viewport, color, line_width);
-                    if (!bbox_result) {
-                        LOG_WARN("Failed to render bounding box: {}", bbox_result.error());
-                    }
-                    rendered_from_scene_graph = true;
-                }
-
-                // Check if scene has ANY cropbox nodes (even if hidden)
-                // If so, don't use fallback - the user intentionally hid them
-                const auto& scene = context.scene_manager->getScene();
-                for (const auto* node : scene.getNodes()) {
-                    if (node->type == NodeType::CROPBOX) {
-                        rendered_from_scene_graph = true;  // Scene has cropboxes, don't fallback
-                        break;
-                    }
-                }
-            }
-
-            // Fallback: only if NO scene graph cropboxes exist at all (legacy/dataset mode)
-            if (!rendered_from_scene_graph) {
-                const auto transform = settings_.crop_transform;
+            for (const auto& cb : visible_cropboxes) {
+                if (!cb.data) continue;
 
                 const lfs::rendering::BoundingBox box{
-                    .min = settings_.crop_min,
-                    .max = settings_.crop_max,
-                    .transform = transform.inv().toMat4()};
+                    .min = cb.data->min,
+                    .max = cb.data->max,
+                    .transform = glm::inverse(cb.world_transform)};
 
-                const glm::vec3 base_color = settings_.crop_inverse
-                    ? glm::vec3(1.0f, 0.2f, 0.2f)
-                    : settings_.crop_color;
-                const float flash = settings_.crop_flash_intensity;
-                const glm::vec3 color = glm::mix(base_color, glm::vec3(1.0f), flash);
+                const glm::vec3 base_color = cb.data->inverse
+                    ? glm::vec3(1.0f, 0.2f, 0.2f) : cb.data->color;
+                const bool is_selected = (cb.node_id == selected_cropbox_id);
+                const float flash = is_selected ? cb.data->flash_intensity : 0.0f;
                 constexpr float FLASH_LINE_BOOST = 4.0f;
-                const float line_width = settings_.crop_line_width + flash * FLASH_LINE_BOOST;
+                const glm::vec3 color = glm::mix(base_color, glm::vec3(1.0f), flash);
+                const float line_width = cb.data->line_width + flash * FLASH_LINE_BOOST;
 
                 auto bbox_result = engine_->renderBoundingBox(box, viewport, color, line_width);
                 if (!bbox_result) {

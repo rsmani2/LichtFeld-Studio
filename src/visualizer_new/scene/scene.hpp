@@ -31,10 +31,11 @@ namespace lfs::vis {
     struct CropBoxData {
         glm::vec3 min{-1.0f, -1.0f, -1.0f};
         glm::vec3 max{1.0f, 1.0f, 1.0f};
-        bool inverse = false;      // Invert crop (keep outside instead of inside)
-        bool enabled = false;      // Whether to use for filtering gaussians
-        glm::vec3 color{1.0f, 1.0f, 0.0f};  // Visualization color
-        float line_width = 2.0f;   // Line width for rendering
+        bool inverse = false;       // Invert crop (keep outside instead of inside)
+        bool enabled = false;       // Whether to use for filtering gaussians
+        glm::vec3 color{1.0f, 1.0f, 0.0f};
+        float line_width = 2.0f;
+        float flash_intensity = 0.0f;
     };
 
     // Selection group with ID, name, and color

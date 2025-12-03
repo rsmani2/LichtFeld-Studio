@@ -34,18 +34,10 @@ namespace lfs::vis {
         bool antialiasing = false;
         int sh_degree = 3;
 
-        // Crop box
+        // Crop box (data stored in scene graph CropBoxData, these are UI toggles only)
         bool show_crop_box = false;
         bool use_crop_box = false;
-        bool crop_inverse = false;
-        bool crop_desaturate = false;
         bool desaturate_unselected = true;  // Desaturate unselected PLYs when one is selected
-        glm::vec3 crop_min = glm::vec3(-1.0f, -1.0f, -1.0f);
-        glm::vec3 crop_max = glm::vec3(1.0f, 1.0f, 1.0f);
-        glm::vec3 crop_color = glm::vec3(1.0f, 1.0f, 0.0f);
-        float crop_line_width = 2.0f;
-        float crop_flash_intensity = 0.0f;
-        lfs::geometry::EuclideanTransform crop_transform;
 
         // Background
         glm::vec3 background_color = glm::vec3(0.0f, 0.0f, 0.0f);

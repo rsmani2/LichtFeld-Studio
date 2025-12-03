@@ -28,6 +28,15 @@ namespace lfs {
 
         void BoundingBox::setworld2BBox(const geometry::EuclideanTransform& transform) {
             world2BBox_ = transform;
+            world2BBox_mat4_ = transform.toMat4();
+            has_full_transform_ = false;
+        }
+
+        void BoundingBox::setworld2BBox(const glm::mat4& transform) {
+            world2BBox_mat4_ = transform;
+            has_full_transform_ = true;
+            // Also set EuclideanTransform for backwards compatibility (loses scale)
+            world2BBox_ = EuclideanTransform(transform);
         }
 
         glm::vec3 BoundingBox::getCenter() const {

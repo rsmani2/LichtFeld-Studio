@@ -224,6 +224,20 @@ namespace lfs::vis {
 
         std::unique_ptr<lfs::core::SplatData> clipboard_;
         int clipboard_counter_ = 0;
+
+        // Clipboard node hierarchy (recursive copy of children)
+        struct ClipboardNode {
+            NodeType type = NodeType::SPLAT;
+            glm::mat4 local_transform{1.0f};
+            // For CROPBOX nodes
+            std::unique_ptr<CropBoxData> cropbox;
+            // Children
+            std::vector<ClipboardNode> children;
+        };
+        std::optional<ClipboardNode> clipboard_hierarchy_;
+
+        ClipboardNode copyNodeHierarchy(const SceneNode* node);
+        void pasteNodeHierarchy(const ClipboardNode& src, const NodeId parent_id);
     };
 
 } // namespace lfs::vis

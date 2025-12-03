@@ -18,7 +18,6 @@
 #include "gui/panels/tools_panel.hpp"
 #include "gui/panels/training_panel.hpp"
 #include "gui/ui_widgets.hpp"
-#include "gui/utils/crop_box_sync.hpp"
 #include "gui/utils/windows_utils.hpp"
 #include "gui/windows/file_browser.hpp"
 #include "gui/windows/project_changed_dialog_box.hpp"
@@ -558,37 +557,48 @@ namespace lfs::vis::gui {
             // Handle reset cropbox request from toolbar
             if (gizmo_toolbar_state_.reset_cropbox_requested) {
                 gizmo_toolbar_state_.reset_cropbox_requested = false;
-                if (auto* render_manager = ctx.viewer->getRenderingManager()) {
-                    auto settings = render_manager->getSettings();
+                auto* const scene_manager = ctx.viewer->getSceneManager();
+                auto* const render_manager = ctx.viewer->getRenderingManager();
+                if (scene_manager && render_manager) {
+                    const NodeId cropbox_id = scene_manager->getSelectedNodeCropBoxId();
+                    if (cropbox_id != NULL_NODE) {
+                        auto* node = scene_manager->getScene().getMutableNode(
+                            scene_manager->getScene().getNodeById(cropbox_id)->name);
+                        if (node && node->cropbox) {
+                            // Capture state before reset
+                            const command::CropBoxState old_state{
+                                .min = node->cropbox->min,
+                                .max = node->cropbox->max,
+                                .local_transform = node->local_transform.get(),
+                                .inverse = node->cropbox->inverse
+                            };
 
-                    // Capture state before reset
-                    const command::CropBoxState old_state{
-                        .crop_min = settings.crop_min,
-                        .crop_max = settings.crop_max,
-                        .crop_transform = settings.crop_transform,
-                        .crop_inverse = settings.crop_inverse
-                    };
+                            // Apply reset to scene graph
+                            node->cropbox->min = glm::vec3(-1.0f);
+                            node->cropbox->max = glm::vec3(1.0f);
+                            node->cropbox->inverse = false;
+                            node->local_transform = glm::mat4(1.0f);
+                            node->transform_dirty = true;
+                            scene_manager->getScene().invalidateCache();
 
-                    // Apply reset
-                    settings.crop_min = glm::vec3(-1.0f, -1.0f, -1.0f);
-                    settings.crop_max = glm::vec3(1.0f, 1.0f, 1.0f);
-                    settings.crop_transform = lfs::geometry::EuclideanTransform();
-                    settings.use_crop_box = false;
-                    settings.crop_inverse = false;
-                    render_manager->updateSettings(settings);
+                            // Capture state after reset
+                            const command::CropBoxState new_state{
+                                .min = node->cropbox->min,
+                                .max = node->cropbox->max,
+                                .local_transform = node->local_transform.get(),
+                                .inverse = node->cropbox->inverse
+                            };
 
-                    // Capture state after reset
-                    const command::CropBoxState new_state{
-                        .crop_min = settings.crop_min,
-                        .crop_max = settings.crop_max,
-                        .crop_transform = settings.crop_transform,
-                        .crop_inverse = settings.crop_inverse
-                    };
+                            // Create undo command
+                            auto cmd = std::make_unique<command::CropBoxCommand>(
+                                scene_manager, node->name, old_state, new_state);
+                            viewer_->getCommandHistory().execute(std::move(cmd));
 
-                    // Create undo command
-                    auto cmd = std::make_unique<command::CropBoxCommand>(
-                        render_manager, old_state, new_state);
-                    viewer_->getCommandHistory().execute(std::move(cmd));
+                            auto settings = render_manager->getSettings();
+                            settings.use_crop_box = false;
+                            render_manager->updateSettings(settings);
+                        }
+                    }
                 }
             }
         } else {
@@ -997,21 +1007,33 @@ namespace lfs::vis::gui {
     void GuiManager::updateCropFlash() {
         if (!crop_flash_active_) return;
 
+        auto* const sm = viewer_->getSceneManager();
         auto* const rm = viewer_->getRenderingManager();
-        if (!rm) return;
+        if (!sm || !rm) return;
 
         constexpr int DURATION_MS = 400;
         const auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - crop_flash_start_).count();
 
-        auto settings = rm->getSettings();
+        const NodeId cropbox_id = sm->getSelectedNodeCropBoxId();
+        if (cropbox_id == NULL_NODE) {
+            crop_flash_active_ = false;
+            return;
+        }
+
+        auto* node = sm->getScene().getMutableNode(sm->getScene().getNodeById(cropbox_id)->name);
+        if (!node || !node->cropbox) {
+            crop_flash_active_ = false;
+            return;
+        }
+
         if (elapsed_ms >= DURATION_MS) {
             crop_flash_active_ = false;
-            settings.crop_flash_intensity = 0.0f;
+            node->cropbox->flash_intensity = 0.0f;
         } else {
-            settings.crop_flash_intensity = 1.0f - static_cast<float>(elapsed_ms) / DURATION_MS;
+            node->cropbox->flash_intensity = 1.0f - static_cast<float>(elapsed_ms) / DURATION_MS;
         }
-        rm->updateSettings(settings);
+        sm->getScene().invalidateCache();
         rm->markDirty();
     }
 
@@ -1079,16 +1101,21 @@ namespace lfs::vis::gui {
             if (gizmo_toolbar_state_.current_tool != panels::ToolMode::CropBox) {
                 return;
             }
-            auto* const render_manager = viewer_->getRenderingManager();
-            if (!render_manager) {
-                return;
-            }
-            const auto& settings = render_manager->getSettings();
+            auto* const sm = viewer_->getSceneManager();
+            if (!sm) return;
+
+            const NodeId cropbox_id = sm->getSelectedNodeCropBoxId();
+            if (cropbox_id == NULL_NODE) return;
+
+            const auto* cropbox_node = sm->getScene().getNodeById(cropbox_id);
+            if (!cropbox_node || !cropbox_node->cropbox) return;
+
+            const glm::mat4 world_transform = sm->getScene().getWorldTransform(cropbox_id);
 
             lfs::geometry::BoundingBox crop_box;
-            crop_box.setBounds(settings.crop_min, settings.crop_max);
-            crop_box.setworld2BBox(settings.crop_transform.inv());
-            cmd::CropPLY{.crop_box = crop_box, .inverse = settings.crop_inverse}.emit();
+            crop_box.setBounds(cropbox_node->cropbox->min, cropbox_node->cropbox->max);
+            crop_box.setworld2BBox(glm::inverse(world_transform));
+            cmd::CropPLY{.crop_box = crop_box, .inverse = cropbox_node->cropbox->inverse}.emit();
             triggerCropFlash();
         });
 
@@ -1097,34 +1124,37 @@ namespace lfs::vis::gui {
             if (gizmo_toolbar_state_.current_tool != panels::ToolMode::CropBox) {
                 return;
             }
-            auto* render_manager = viewer_->getRenderingManager();
-            if (!render_manager) {
-                return;
-            }
-            auto settings = render_manager->getSettings();
+            auto* const sm = viewer_->getSceneManager();
+            if (!sm) return;
+
+            const NodeId cropbox_id = sm->getSelectedNodeCropBoxId();
+            if (cropbox_id == NULL_NODE) return;
+
+            auto* node = sm->getScene().getMutableNode(sm->getScene().getNodeById(cropbox_id)->name);
+            if (!node || !node->cropbox) return;
 
             // Capture state before toggle
             const command::CropBoxState old_state{
-                .crop_min = settings.crop_min,
-                .crop_max = settings.crop_max,
-                .crop_transform = settings.crop_transform,
-                .crop_inverse = settings.crop_inverse
+                .min = node->cropbox->min,
+                .max = node->cropbox->max,
+                .local_transform = node->local_transform.get(),
+                .inverse = node->cropbox->inverse
             };
 
             // Toggle crop inverse
-            settings.crop_inverse = !settings.crop_inverse;
-            render_manager->updateSettings(settings);
+            node->cropbox->inverse = !node->cropbox->inverse;
+            sm->getScene().invalidateCache();
 
             // Capture state after toggle
             const command::CropBoxState new_state{
-                .crop_min = settings.crop_min,
-                .crop_max = settings.crop_max,
-                .crop_transform = settings.crop_transform,
-                .crop_inverse = settings.crop_inverse
+                .min = node->cropbox->min,
+                .max = node->cropbox->max,
+                .local_transform = node->local_transform.get(),
+                .inverse = node->cropbox->inverse
             };
 
             auto cmd = std::make_unique<command::CropBoxCommand>(
-                render_manager, old_state, new_state);
+                sm, node->name, old_state, new_state);
             viewer_->getCommandHistory().execute(std::move(cmd));
         });
 
@@ -1221,84 +1251,57 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::renderCropBoxGizmo(const UIContext& ctx) {
-        // Don't render gizmo over modal windows
-        if (isModalWindowOpen())
-            return;
+        if (isModalWindowOpen()) return;
 
-        auto* render_manager = ctx.viewer->getRenderingManager();
-        if (!render_manager)
-            return;
+        auto* const render_manager = ctx.viewer->getRenderingManager();
+        auto* const scene_manager = ctx.viewer->getSceneManager();
+        if (!render_manager || !scene_manager) return;
 
-        auto settings = render_manager->getSettings();
+        const auto& settings = render_manager->getSettings();
+        if (!settings.show_crop_box) return;
 
-        // Only draw gizmo if cropbox tool is active
-        if (!settings.show_crop_box)
-            return;
+        // Get selected cropbox from scene graph
+        const NodeId cropbox_id = scene_manager->getSelectedNodeCropBoxId();
+        if (cropbox_id == NULL_NODE) return;
 
-        // Get the SELECTED node's cropbox - gizmo follows selection
-        auto* scene_manager = ctx.viewer->getSceneManager();
-        if (!scene_manager)
-            return;
+        const auto* cropbox_node = scene_manager->getScene().getNodeById(cropbox_id);
+        if (!cropbox_node || !cropbox_node->visible || !cropbox_node->cropbox) return;
+        if (!scene_manager->getScene().isNodeEffectivelyVisible(cropbox_id)) return;
 
-        // Must have a selected node with a visible cropbox
-        const NodeId selected_cropbox_id = scene_manager->getSelectedNodeCropBoxId();
-        if (selected_cropbox_id == NULL_NODE)
-            return;
-
-        const auto* cropbox_node = scene_manager->getScene().getNodeById(selected_cropbox_id);
-        if (!cropbox_node || !cropbox_node->visible || !cropbox_node->cropbox)
-            return;
-
-        // Check parent is also visible
-        if (!scene_manager->getScene().isNodeEffectivelyVisible(selected_cropbox_id))
-            return;
-
-        // Get camera matrices - use viewport_size_ for aspect ratio to match bbox renderer
+        // Camera setup
         auto& viewport = ctx.viewer->getViewport();
         const glm::mat4 view = viewport.getViewMatrix();
-
-        // Create projection with correct aspect ratio matching the viewport region
         const float aspect = viewport_size_.x / viewport_size_.y;
-        const float fov_rad = glm::radians(settings.fov);
-        const glm::mat4 projection = glm::perspective(fov_rad, aspect,
+        const glm::mat4 projection = glm::perspective(
+            glm::radians(settings.fov), aspect,
             lfs::rendering::DEFAULT_NEAR_PLANE, lfs::rendering::DEFAULT_FAR_PLANE);
 
-        // Use the selected node's cropbox data
+        // Get cropbox state from scene graph
         const glm::vec3 cropbox_min = cropbox_node->cropbox->min;
         const glm::vec3 cropbox_max = cropbox_node->cropbox->max;
-        const glm::mat4 cropbox_world_transform = scene_manager->getScene().getWorldTransform(selected_cropbox_id);
+        const glm::mat4 world_transform = scene_manager->getScene().getWorldTransform(cropbox_id);
 
-        // Build gizmo matrix: T * R * S where S encodes the box size
-        // ImGuizmo BOUNDS mode expects unit cube [-0.5, 0.5] with size in matrix scale
+        // Build gizmo matrix: T * R * S (ImGuizmo expects size in scale component)
         const glm::vec3 original_size = cropbox_max - cropbox_min;
         const glm::vec3 original_center = (cropbox_min + cropbox_max) * 0.5f;
+        const glm::vec3 translation = glm::vec3(world_transform[3]);
+        const glm::mat3 rotation3x3 = glm::mat3(world_transform);
 
-        // Extract translation and rotation from world transform
-        const glm::vec3 translation = glm::vec3(cropbox_world_transform[3]);
-        const glm::mat3 rotation3x3 = glm::mat3(cropbox_world_transform);
-
-        // Build T * R * S matrix
         glm::mat4 gizmo_matrix = glm::translate(glm::mat4(1.0f), translation + rotation3x3 * original_center);
         gizmo_matrix = gizmo_matrix * glm::mat4(rotation3x3);
         gizmo_matrix = glm::scale(gizmo_matrix, original_size);
 
+        // ImGuizmo setup
         ImGuizmo::SetOrthographic(false);
-
-        // viewport_pos_ already includes WorkPos offset, use directly
         ImGuizmo::SetRect(viewport_pos_.x, viewport_pos_.y, viewport_size_.x, viewport_size_.y);
-
         ImGuizmo::SetAxisLimit(GIZMO_AXIS_LIMIT);
         ImGuizmo::SetPlaneLimit(GIZMO_AXIS_LIMIT);
 
-        // SetAxisMask: true = HIDE axis, false = SHOW axis (counterintuitive)
         if (crop_gizmo_operation_ == ImGuizmo::BOUNDS) {
-            // BOUNDS mode uses its own rendering, axis mask has no effect
             ImGuizmo::SetAxisMask(true, true, true);
         } else {
-            // Show all axes when idle, hide during single-axis drag for clarity
             static bool s_hovered_axis = false;
             const bool is_using = ImGuizmo::IsUsing();
-
             if (!is_using) {
                 s_hovered_axis = ImGuizmo::IsOver(ImGuizmo::TRANSLATE_X) ||
                                  ImGuizmo::IsOver(ImGuizmo::TRANSLATE_Y) ||
@@ -1309,61 +1312,49 @@ namespace lfs::vis::gui {
             }
         }
 
-        // Clip ImGuizmo rendering to viewport so it doesn't draw over GUI panels
+        // Clip to viewport
         ImDrawList* overlay_drawlist = ImGui::GetForegroundDrawList();
-        ImVec2 clip_min(viewport_pos_.x, viewport_pos_.y);
-        ImVec2 clip_max(clip_min.x + viewport_size_.x, clip_min.y + viewport_size_.y);
+        const ImVec2 clip_min(viewport_pos_.x, viewport_pos_.y);
+        const ImVec2 clip_max(clip_min.x + viewport_size_.x, clip_min.y + viewport_size_.y);
         overlay_drawlist->PushClipRect(clip_min, clip_max, true);
-
-        // Set drawlist after pushing clip rect
         ImGuizmo::SetDrawlist(overlay_drawlist);
 
-        glm::mat4 deltaMatrix;
-        constexpr float localBounds[6] = { -0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f };
+        glm::mat4 delta_matrix;
+        constexpr float LOCAL_BOUNDS[6] = { -0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f };
 
-        // Force correct mode based on operation:
-        // - TRANSLATE: always WORLD coordinates
-        // - ROTATE/SCALE/BOUNDS: always LOCAL coordinates
-        ImGuizmo::MODE gizmo_mode = (crop_gizmo_operation_ == ImGuizmo::TRANSLATE)
-                                    ? ImGuizmo::WORLD
-                                    : ImGuizmo::LOCAL;
+        const ImGuizmo::MODE gizmo_mode = (crop_gizmo_operation_ == ImGuizmo::TRANSLATE)
+                                          ? ImGuizmo::WORLD : ImGuizmo::LOCAL;
 
-        bool gizmo_changed = ImGuizmo::Manipulate(glm::value_ptr(view),
-                                                   glm::value_ptr(projection),
-                                                   crop_gizmo_operation_,
-                                                   gizmo_mode,
-                                                   glm::value_ptr(gizmo_matrix),
-                                                   glm::value_ptr(deltaMatrix),
-                                                   nullptr,  // snap
-                                                   crop_gizmo_operation_ == ImGuizmo::BOUNDS ? localBounds : nullptr);
+        const bool gizmo_changed = ImGuizmo::Manipulate(
+            glm::value_ptr(view), glm::value_ptr(projection),
+            crop_gizmo_operation_, gizmo_mode, glm::value_ptr(gizmo_matrix),
+            glm::value_ptr(delta_matrix), nullptr,
+            crop_gizmo_operation_ == ImGuizmo::BOUNDS ? LOCAL_BOUNDS : nullptr);
 
-        // Track gizmo usage for undo/redo
         const bool is_using = ImGuizmo::IsUsing();
 
         // Capture state when manipulation starts
         if (is_using && !cropbox_gizmo_active_) {
             cropbox_gizmo_active_ = true;
+            cropbox_node_name_ = cropbox_node->name;
             cropbox_state_before_drag_ = command::CropBoxState{
-                .crop_min = settings.crop_min,
-                .crop_max = settings.crop_max,
-                .crop_transform = settings.crop_transform,
-                .crop_inverse = settings.crop_inverse
+                .min = cropbox_node->cropbox->min,
+                .max = cropbox_node->cropbox->max,
+                .local_transform = cropbox_node->local_transform.get(),
+                .inverse = cropbox_node->cropbox->inverse
             };
         }
 
         if (gizmo_changed) {
-            // Extract transform from gizmo matrix (T * R * S)
-            float matrixTranslation[3], matrixRotation[3], matrixScale[3];
-            ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(gizmo_matrix),
-                                                  matrixTranslation,
-                                                  matrixRotation,
-                                                  matrixScale);
+            // Extract transform from gizmo matrix
+            float mat_trans[3], mat_rot[3], mat_scale[3];
+            ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(gizmo_matrix), mat_trans, mat_rot, mat_scale);
 
-            const float rad_x = glm::radians(matrixRotation[0]);
-            const float rad_y = glm::radians(matrixRotation[1]);
-            const float rad_z = glm::radians(matrixRotation[2]);
+            const float rad_x = glm::radians(mat_rot[0]);
+            const float rad_y = glm::radians(mat_rot[1]);
+            const float rad_z = glm::radians(mat_rot[2]);
 
-            glm::vec3 new_size(matrixScale[0], matrixScale[1], matrixScale[2]);
+            glm::vec3 new_size(mat_scale[0], mat_scale[1], mat_scale[2]);
             new_size = glm::max(new_size, glm::vec3(0.001f));
 
             const glm::mat3 new_rotation = glm::mat3(
@@ -1371,54 +1362,42 @@ namespace lfs::vis::gui {
                 glm::rotate(glm::mat4(1.0f), rad_y, glm::vec3(0, 1, 0)) *
                 glm::rotate(glm::mat4(1.0f), rad_z, glm::vec3(0, 0, 1)));
 
-            const glm::vec3 world_center(matrixTranslation[0], matrixTranslation[1], matrixTranslation[2]);
+            const glm::vec3 world_center(mat_trans[0], mat_trans[1], mat_trans[2]);
 
-            if (crop_gizmo_operation_ == ImGuizmo::TRANSLATE) {
-                const glm::vec3 transform_trans = world_center - new_rotation * original_center;
-                settings.crop_transform = lfs::geometry::EuclideanTransform(
-                    rad_x, rad_y, rad_z,
-                    transform_trans.x, transform_trans.y, transform_trans.z);
-            } else if (crop_gizmo_operation_ == ImGuizmo::SCALE ||
-                       crop_gizmo_operation_ == ImGuizmo::BOUNDS) {
-                const glm::vec3 new_half = new_size * 0.5f;
-                settings.crop_min = -new_half;
-                settings.crop_max = new_half;
-                const glm::vec3 new_center = (settings.crop_min + settings.crop_max) * 0.5f;
-                const glm::vec3 transform_trans = world_center - new_rotation * new_center;
-                settings.crop_transform = lfs::geometry::EuclideanTransform(
-                    rad_x, rad_y, rad_z,
-                    transform_trans.x, transform_trans.y, transform_trans.z);
-            } else if (crop_gizmo_operation_ == ImGuizmo::ROTATE) {
-                const glm::vec3 transform_trans = world_center - new_rotation * original_center;
-                settings.crop_transform = lfs::geometry::EuclideanTransform(
-                    rad_x, rad_y, rad_z,
-                    transform_trans.x, transform_trans.y, transform_trans.z);
-            }
+            // Update scene graph directly
+            auto* mutable_node = scene_manager->getScene().getMutableNode(cropbox_node->name);
+            if (mutable_node && mutable_node->cropbox) {
+                // Compute new bounds and world transform
+                glm::vec3 new_min, new_max;
+                glm::mat4 new_world_transform;
 
-            // Always update settings for visual feedback during dragging
-            render_manager->updateSettings(settings);
-
-            // Sync changes to the selected cropbox node
-            auto* mutable_cropbox = scene_manager->getScene().getMutableNode(cropbox_node->name);
-            if (mutable_cropbox && mutable_cropbox->cropbox) {
-                mutable_cropbox->cropbox->min = settings.crop_min;
-                mutable_cropbox->cropbox->max = settings.crop_max;
-
-                // Convert world transform back to local by removing parent's transform
-                // world = parent * local => local = inverse(parent) * world
-                glm::mat4 new_world_transform = settings.crop_transform.toMat4();
-                if (mutable_cropbox->parent_id != NULL_NODE) {
-                    const auto* parent = scene_manager->getScene().getNodeById(mutable_cropbox->parent_id);
-                    if (parent) {
-                        glm::mat4 parent_world = scene_manager->getScene().getWorldTransform(mutable_cropbox->parent_id);
-                        mutable_cropbox->local_transform = glm::inverse(parent_world) * new_world_transform;
-                    } else {
-                        mutable_cropbox->local_transform = new_world_transform;
-                    }
+                if (crop_gizmo_operation_ == ImGuizmo::SCALE || crop_gizmo_operation_ == ImGuizmo::BOUNDS) {
+                    const glm::vec3 new_half = new_size * 0.5f;
+                    new_min = -new_half;
+                    new_max = new_half;
+                    const glm::vec3 new_center = (new_min + new_max) * 0.5f;
+                    const glm::vec3 transform_trans = world_center - new_rotation * new_center;
+                    new_world_transform = glm::translate(glm::mat4(1.0f), transform_trans) * glm::mat4(new_rotation);
                 } else {
-                    mutable_cropbox->local_transform = new_world_transform;
+                    new_min = cropbox_min;
+                    new_max = cropbox_max;
+                    const glm::vec3 transform_trans = world_center - new_rotation * original_center;
+                    new_world_transform = glm::translate(glm::mat4(1.0f), transform_trans) * glm::mat4(new_rotation);
                 }
-                mutable_cropbox->transform_dirty = true;
+
+                mutable_node->cropbox->min = new_min;
+                mutable_node->cropbox->max = new_max;
+
+                // Convert world transform to local
+                if (mutable_node->parent_id != NULL_NODE) {
+                    const glm::mat4 parent_world = scene_manager->getScene().getWorldTransform(mutable_node->parent_id);
+                    mutable_node->local_transform = glm::inverse(parent_world) * new_world_transform;
+                } else {
+                    mutable_node->local_transform = new_world_transform;
+                }
+                mutable_node->transform_dirty = true;
+                scene_manager->getScene().invalidateCache();
+                render_manager->markDirty();
             }
         }
 
@@ -1427,29 +1406,29 @@ namespace lfs::vis::gui {
             cropbox_gizmo_active_ = false;
 
             if (cropbox_state_before_drag_.has_value()) {
-                const command::CropBoxState new_state{
-                    .crop_min = settings.crop_min,
-                    .crop_max = settings.crop_max,
-                    .crop_transform = settings.crop_transform,
-                    .crop_inverse = settings.crop_inverse
-                };
+                auto* node = scene_manager->getScene().getMutableNode(cropbox_node_name_);
+                if (node && node->cropbox) {
+                    const command::CropBoxState new_state{
+                        .min = node->cropbox->min,
+                        .max = node->cropbox->max,
+                        .local_transform = node->local_transform.get(),
+                        .inverse = node->cropbox->inverse
+                    };
 
-                auto cmd = std::make_unique<command::CropBoxCommand>(
-                    render_manager, *cropbox_state_before_drag_, new_state);
-                viewer_->getCommandHistory().execute(std::move(cmd));
+                    auto cmd = std::make_unique<command::CropBoxCommand>(
+                        scene_manager, cropbox_node_name_, *cropbox_state_before_drag_, new_state);
+                    viewer_->getCommandHistory().execute(std::move(cmd));
 
+                    using namespace lfs::core::events;
+                    ui::CropBoxChanged{
+                        .min_bounds = node->cropbox->min,
+                        .max_bounds = node->cropbox->max,
+                        .enabled = settings.use_crop_box}.emit();
+                }
                 cropbox_state_before_drag_.reset();
-
-                using namespace lfs::core::events;
-                ui::CropBoxChanged{
-                    .min_bounds = settings.crop_min,
-                    .max_bounds = settings.crop_max,
-                    .enabled = settings.use_crop_box}
-                    .emit();
             }
         }
 
-        // Restore clip rect after ImGuizmo rendering
         overlay_drawlist->PopClipRect();
     }
 
@@ -1564,8 +1543,6 @@ namespace lfs::vis::gui {
             node_gizmo_active_ = true;
             node_gizmo_node_name_ = scene_manager->getSelectedNodeName();
             node_transform_before_drag_ = node_transform;
-            const auto& s = render_manager->getSettings();
-            node_crop_before_drag_ = {s.crop_min, s.crop_max, s.crop_transform, s.crop_inverse};
         }
 
         if (gizmo_changed) {
@@ -1585,11 +1562,7 @@ namespace lfs::vis::gui {
             }
 
             scene_manager->setSelectedNodeTransform(new_transform);
-
-            const glm::mat4 effective_delta = new_transform * glm::inverse(node_transform);
-            auto crop_settings = render_manager->getSettings();
-            utils::applyCropBoxDelta(crop_settings, effective_delta);
-            render_manager->updateSettings(crop_settings);
+            // Cropbox child nodes automatically inherit parent transform via scene graph
         }
 
         // Create undo command when drag ends
@@ -1597,16 +1570,10 @@ namespace lfs::vis::gui {
             node_gizmo_active_ = false;
             const glm::mat4 final_transform = scene_manager->getSelectedNodeTransform();
             if (node_transform_before_drag_ != final_transform) {
-                const auto& s = render_manager->getSettings();
-                const command::CropBoxState new_crop{s.crop_min, s.crop_max, s.crop_transform, s.crop_inverse};
-
-                auto composite = std::make_unique<command::CompositeCommand>();
-                composite->add(std::make_unique<command::TransformCommand>(
+                auto cmd = std::make_unique<command::TransformCommand>(
                     scene_manager, node_gizmo_node_name_,
-                    node_transform_before_drag_, final_transform));
-                composite->add(std::make_unique<command::CropBoxCommand>(
-                    render_manager, node_crop_before_drag_, new_crop));
-                viewer_->getCommandHistory().execute(std::move(composite));
+                    node_transform_before_drag_, final_transform);
+                viewer_->getCommandHistory().execute(std::move(cmd));
             }
         }
 

@@ -4,13 +4,16 @@
 
 #include "cropbox_command.hpp"
 #include "rendering/rendering_manager.hpp"
+#include "scene/scene_manager.hpp"
 
 namespace lfs::vis::command {
 
-    CropBoxCommand::CropBoxCommand(RenderingManager* rendering_manager,
+    CropBoxCommand::CropBoxCommand(SceneManager* scene_manager,
+                                   const std::string& cropbox_node_name,
                                    const CropBoxState& old_state,
                                    const CropBoxState& new_state)
-        : rendering_manager_(rendering_manager)
+        : scene_manager_(scene_manager)
+        , cropbox_node_name_(cropbox_node_name)
         , old_state_(old_state)
         , new_state_(new_state) {}
 
@@ -23,14 +26,19 @@ namespace lfs::vis::command {
     }
 
     void CropBoxCommand::applyState(const CropBoxState& state) {
-        if (!rendering_manager_) return;
+        if (!scene_manager_) return;
 
-        auto settings = rendering_manager_->getSettings();
-        settings.crop_min = state.crop_min;
-        settings.crop_max = state.crop_max;
-        settings.crop_transform = state.crop_transform;
-        settings.crop_inverse = state.crop_inverse;
-        rendering_manager_->updateSettings(settings);
+        auto* node = scene_manager_->getScene().getMutableNode(cropbox_node_name_);
+        if (!node || !node->cropbox) return;
+
+        node->cropbox->min = state.min;
+        node->cropbox->max = state.max;
+        node->cropbox->inverse = state.inverse;
+        node->local_transform = state.local_transform;
+        node->transform_dirty = true;
+
+        scene_manager_->getScene().invalidateCache();
+        scene_manager_->syncCropBoxToRenderSettings();
     }
 
 } // namespace lfs::vis::command

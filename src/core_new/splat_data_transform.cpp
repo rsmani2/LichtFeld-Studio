@@ -115,11 +115,13 @@ namespace lfs::core {
                                        const lfs::geometry::BoundingBox& bounding_box) {
         const auto bbox_min = bounding_box.getMinBounds();
         const auto bbox_max = bounding_box.getMaxBounds();
-        const auto& world2bbox_transform = bounding_box.getworld2BBox();
 
         const int num_points = means.size(0);
 
-        const glm::mat4 world_to_bbox_matrix = world2bbox_transform.toMat4();
+        // Use full mat4 if available (preserves scale), otherwise fall back to EuclideanTransform
+        const glm::mat4 world_to_bbox_matrix = bounding_box.hasFullTransform()
+            ? bounding_box.getworld2BBoxMat4()
+            : bounding_box.getworld2BBox().toMat4();
 
         const std::vector<float> transform_data = {
             world_to_bbox_matrix[0][0], world_to_bbox_matrix[1][0], world_to_bbox_matrix[2][0], world_to_bbox_matrix[3][0],
