@@ -392,7 +392,24 @@ namespace lfs::vis {
         gui_manager_->render();
 
         window_manager_->swapBuffers();
-        window_manager_->pollEvents();
+
+        // Render-on-demand: VSync handles frame pacing, waitEvents saves CPU when idle
+        const bool is_training = trainer_manager_ && trainer_manager_->isRunning();
+        const bool needs_render = rendering_manager_->needsRender();
+        const bool continuous_input = input_controller_ && input_controller_->isContinuousInputActive();
+
+        if (needs_render || continuous_input) {
+            // Dirty or active input (WASD/orbit/pan): poll for smooth interaction
+            window_manager_->pollEvents();
+        } else if (is_training) {
+            // Training: short wait for UI responsiveness
+            constexpr double TRAINING_WAIT_SEC = 0.016;  // ~60 Hz
+            window_manager_->waitEvents(TRAINING_WAIT_SEC);
+        } else {
+            // Idle: long wait to minimize CPU usage (VSync still applies on wake)
+            constexpr double IDLE_WAIT_SEC = 0.5;
+            window_manager_->waitEvents(IDLE_WAIT_SEC);
+        }
     }
 
     bool VisualizerImpl::allowclose() {

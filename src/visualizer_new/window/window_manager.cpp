@@ -75,8 +75,8 @@ namespace lfs::vis {
         // Set window focus callback
         glfwSetWindowFocusCallback(window_, window_focus_callback);
 
-        // Disable vsync for maximum performance
-        glfwSwapInterval(0);
+        // Enable VSync for smooth frame delivery and reduced GPU load
+        glfwSwapInterval(1);
 
         // Set up OpenGL state
         glEnable(GL_LINE_SMOOTH);
@@ -104,6 +104,10 @@ namespace lfs::vis {
 
     void WindowManager::pollEvents() {
         glfwPollEvents();
+    }
+
+    void WindowManager::waitEvents(double timeout_seconds) {
+        glfwWaitEventsTimeout(timeout_seconds);
     }
 
     bool WindowManager::shouldClose() const {

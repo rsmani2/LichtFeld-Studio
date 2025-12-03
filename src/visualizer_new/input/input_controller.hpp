@@ -89,6 +89,16 @@ namespace lfs::vis {
         // Update function for continuous input (WASD movement and inertia)
         void update(float delta_time);
 
+        // Check if continuous input is active (WASD keys or camera drag)
+        [[nodiscard]] bool isContinuousInputActive() const {
+            const bool wasd_active = keys_wasd_[0] || keys_wasd_[1] || keys_wasd_[2] ||
+                                     keys_wasd_[3] || keys_wasd_[4] || keys_wasd_[5];
+            const bool camera_drag = drag_mode_ == DragMode::Orbit ||
+                                     drag_mode_ == DragMode::Pan ||
+                                     drag_mode_ == DragMode::Rotate;
+            return wasd_active || camera_drag;
+        }
+
         // Node rectangle selection state (for rendering)
         [[nodiscard]] bool isNodeRectDragging() const { return is_node_rect_dragging_; }
         [[nodiscard]] glm::vec2 getNodeRectStart() const { return node_rect_start_; }

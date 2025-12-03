@@ -167,6 +167,7 @@ namespace lfs::vis {
 
         // Mark that rendering is needed
         void markDirty();
+        [[nodiscard]] bool needsRender() const { return needs_render_.load(); }
 
         // Settings management
         void updateSettings(const RenderSettings& settings);

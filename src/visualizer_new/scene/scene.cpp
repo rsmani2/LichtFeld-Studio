@@ -29,7 +29,7 @@ namespace lfs::vis {
 
         local_transform.setCallback([this] {
             if (scene_) {
-                scene_->invalidateCache();
+                scene_->invalidateTransformCache();
                 scene_->markTransformDirty(id);
             }
         });
@@ -233,7 +233,8 @@ namespace lfs::vis {
         id_to_index_.clear();
         next_node_id_ = 0;
         cached_combined_.reset();
-        cache_valid_ = false;
+        model_cache_valid_ = false;
+        transform_cache_valid_ = false;
     }
 
     std::pair<std::string, std::string> Scene::cycleVisibilityWithNames() {
@@ -318,14 +319,13 @@ namespace lfs::vis {
         return nullptr;
     }
 
-    void Scene::rebuildCacheIfNeeded() const {
-        if (cache_valid_)
+    void Scene::rebuildModelCacheIfNeeded() const {
+        if (model_cache_valid_)
             return;
 
-        LOG_DEBUG("rebuildCacheIfNeeded - rebuilding");
+        LOG_DEBUG("rebuildModelCacheIfNeeded - rebuilding combined model");
 
-        // Collect visible nodes (we need both model and transform)
-        // Use effective visibility which considers parent hierarchy
+        // Collect visible nodes
         std::vector<const Node*> visible_nodes;
         for (const auto& node : nodes_) {
             if (node->model && isNodeEffectivelyVisible(node->id)) {
@@ -336,15 +336,12 @@ namespace lfs::vis {
         if (visible_nodes.empty()) {
             cached_combined_.reset();
             cached_transform_indices_.reset();
-            cached_transforms_.clear();
-            cache_valid_ = true;
+            model_cache_valid_ = true;
+            transform_cache_valid_ = false;
             return;
         }
 
-        // All transforms are now handled by the kernel for proper covariance transformation.
-        // We just combine the raw Gaussian data and create transform indices.
-
-        // Calculate totals and find max SH degree in one pass
+        // Calculate totals and find max SH degree
         struct ModelStats {
             size_t total_gaussians = 0;
             int max_sh_degree = 0;
@@ -358,7 +355,6 @@ namespace lfs::vis {
                 const auto* model = node->model.get();
                 acc.total_gaussians += model->size();
 
-                // Calculate SH degree from shN dimensions
                 int sh_degree = 0;
                 const auto& shN_tensor = model->shN_raw();
                 if (shN_tensor.is_valid() && shN_tensor.ndim() >= 2 && shN_tensor.size(1) > 0) {
@@ -373,14 +369,11 @@ namespace lfs::vis {
                 return acc;
             });
 
-        // Get device from first model (all should be on CUDA)
         lfs::core::Device device = visible_nodes[0]->model->means_raw().device();
 
-        // Calculate SH dimensions
         int sh0_coeffs = 1;
         int shN_coeffs = (stats.max_sh_degree > 0) ? ((stats.max_sh_degree + 1) * (stats.max_sh_degree + 1) - 1) : 0;
 
-        // Pre-allocate all tensors
         using lfs::core::Tensor;
         Tensor means = Tensor::empty({static_cast<size_t>(stats.total_gaussians), 3}, device);
         Tensor sh0 = Tensor::empty({static_cast<size_t>(stats.total_gaussians), static_cast<size_t>(sh0_coeffs), 3}, device);
@@ -389,7 +382,6 @@ namespace lfs::vis {
         Tensor scaling = Tensor::empty({static_cast<size_t>(stats.total_gaussians), 3}, device);
         Tensor rotation = Tensor::empty({static_cast<size_t>(stats.total_gaussians), 4}, device);
 
-        // Check if any node has a deletion mask
         const bool has_any_deleted = std::any_of(visible_nodes.begin(), visible_nodes.end(),
             [](const Node* node) { return node->model->has_deleted_mask(); });
 
@@ -397,50 +389,34 @@ namespace lfs::vis {
             ? Tensor::zeros({static_cast<size_t>(stats.total_gaussians)}, device, lfs::core::DataType::Bool)
             : Tensor();
 
-        // Create transform indices tensor on CPU first (will be moved to CUDA later)
         std::vector<int> transform_indices_data(stats.total_gaussians);
 
-        // Collect transforms for visible nodes
-        cached_transforms_.clear();
-        cached_transforms_.reserve(visible_nodes.size());
-
-        // Copy data from each node (no CPU-side transforms - kernel handles them)
         size_t offset = 0;
         int node_index = 0;
         for (const Node* node : visible_nodes) {
             const auto* model = node->model.get();
             const auto size = model->size();
 
-            // Store this node's world transform (includes parent hierarchy)
-            cached_transforms_.push_back(getWorldTransform(node->id));
-
-            // Fill transform indices for this node's Gaussians
             std::fill(transform_indices_data.begin() + offset,
                      transform_indices_data.begin() + offset + size,
                      node_index);
 
-            // Direct copy of all Gaussian data (no CPU-side transform)
             means.slice(0, offset, offset + size) = model->means_raw();
             scaling.slice(0, offset, offset + size) = model->scaling_raw();
             rotation.slice(0, offset, offset + size) = model->rotation_raw();
             sh0.slice(0, offset, offset + size) = model->sh0_raw();
             opacity.slice(0, offset, offset + size) = model->opacity_raw();
 
-            // Copy shN if we have coefficients
             if (shN_coeffs > 0) {
                 const auto& model_shN = model->shN_raw();
                 int model_shN_coeffs = (model_shN.is_valid() && model_shN.ndim() >= 2) ? static_cast<int>(model_shN.size(1)) : 0;
-
                 if (model_shN_coeffs > 0) {
                     int coeffs_to_copy = std::min(model_shN_coeffs, shN_coeffs);
-
-                    // Slice in both dimensions: rows and coefficients
                     shN.slice(0, offset, offset + size).slice(1, 0, coeffs_to_copy) =
                         model_shN.slice(1, 0, coeffs_to_copy);
                 }
             }
 
-            // Copy deletion mask if present
             if (has_any_deleted && model->has_deleted_mask()) {
                 deleted.slice(0, offset, offset + size) = model->deleted();
             }
@@ -449,12 +425,9 @@ namespace lfs::vis {
             node_index++;
         }
 
-        // Create transform indices tensor on CUDA
-        // from_vector for int automatically creates Int32 tensor
         cached_transform_indices_ = std::make_shared<Tensor>(
             Tensor::from_vector(transform_indices_data, {stats.total_gaussians}, lfs::core::Device::CPU).cuda());
 
-        // Create the combined model
         cached_combined_ = std::make_unique<lfs::core::SplatData>(
             stats.max_sh_degree,
             std::move(means),
@@ -469,7 +442,26 @@ namespace lfs::vis {
             cached_combined_->deleted() = std::move(deleted);
         }
 
-        cache_valid_ = true;
+        model_cache_valid_ = true;
+        transform_cache_valid_ = false;  // Force transform rebuild after model rebuild
+    }
+
+    void Scene::rebuildTransformCacheIfNeeded() const {
+        if (transform_cache_valid_)
+            return;
+
+        cached_transforms_.clear();
+        for (const auto& node : nodes_) {
+            if (node->model && isNodeEffectivelyVisible(node->id)) {
+                cached_transforms_.push_back(getWorldTransform(node->id));
+            }
+        }
+        transform_cache_valid_ = true;
+    }
+
+    void Scene::rebuildCacheIfNeeded() const {
+        rebuildModelCacheIfNeeded();
+        rebuildTransformCacheIfNeeded();
     }
 
     std::vector<glm::mat4> Scene::getVisibleNodeTransforms() const {

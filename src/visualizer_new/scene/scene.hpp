@@ -220,7 +220,8 @@ namespace lfs::vis {
 
         // Mark scene data as changed (e.g., after modifying a node's deleted mask)
         // Also called by SceneNode Observable properties when they change
-        void invalidateCache() { cache_valid_ = false; }
+        void invalidateCache() { model_cache_valid_ = false; transform_cache_valid_ = false; }
+        void invalidateTransformCache() { transform_cache_valid_ = false; }
         void markDirty() { invalidateCache(); }
         void markTransformDirty(NodeId node);
 
@@ -233,11 +234,14 @@ namespace lfs::vis {
         std::unordered_map<NodeId, size_t> id_to_index_;  // NodeId -> index in nodes_
         NodeId next_node_id_ = 0;
 
-        // Caching for combined model
+        // Caching for combined model (rebuilt when models/visibility change)
         mutable std::unique_ptr<lfs::core::SplatData> cached_combined_;
         mutable std::shared_ptr<lfs::core::Tensor> cached_transform_indices_;
+        mutable bool model_cache_valid_ = false;
+
+        // Transform cache (rebuilt when transforms change, much cheaper)
         mutable std::vector<glm::mat4> cached_transforms_;
-        mutable bool cache_valid_ = false;
+        mutable bool transform_cache_valid_ = false;
 
         // Selection mask: UInt8 [N], value = group ID (0=unselected, 1-255=group ID)
         mutable std::shared_ptr<lfs::core::Tensor> selection_mask_;
@@ -249,6 +253,8 @@ namespace lfs::vis {
         uint8_t next_group_id_ = 1;
 
         void rebuildCacheIfNeeded() const;
+        void rebuildModelCacheIfNeeded() const;
+        void rebuildTransformCacheIfNeeded() const;
         void updateWorldTransform(const Node& node) const;
         void removeNodeInternal(const std::string& name, bool keep_children, bool force);
 

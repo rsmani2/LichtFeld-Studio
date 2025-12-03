@@ -605,18 +605,26 @@ namespace lfs::vis {
             request.hovered_depth_id = d_hovered_depth_id_;
         }
 
-        // Add crop box for both preview (show_crop_box) and actual filtering (use_crop_box)
-        // - show_crop_box = true: preview mode with desaturation (don't actually filter)
-        // - use_crop_box = true: actually filter the model
+        // Crop box: scene graph takes priority over legacy settings
         if (settings_.use_crop_box || settings_.show_crop_box) {
-            auto transform = settings_.crop_transform;
-            request.crop_box = lfs::rendering::BoundingBox{
-                .min = settings_.crop_min,
-                .max = settings_.crop_max,
-                .transform = transform.inv().toMat4()};
-            request.crop_inverse = settings_.crop_inverse;
-            // Desaturate (preview mode) when show_crop_box is on but not actually cropping
-            // When use_crop_box is true, we want to actually filter, not desaturate
+            const auto& cropboxes = scene_state.cropboxes;
+            const size_t idx = (scene_state.selected_cropbox_index >= 0)
+                ? static_cast<size_t>(scene_state.selected_cropbox_index) : 0;
+
+            if (idx < cropboxes.size() && cropboxes[idx].data) {
+                const auto& cb = cropboxes[idx];
+                request.crop_box = lfs::rendering::BoundingBox{
+                    .min = cb.data->min,
+                    .max = cb.data->max,
+                    .transform = glm::inverse(cb.world_transform)};
+                request.crop_inverse = cb.data->inverse;
+            } else {
+                request.crop_box = lfs::rendering::BoundingBox{
+                    .min = settings_.crop_min,
+                    .max = settings_.crop_max,
+                    .transform = settings_.crop_transform.inv().toMat4()};
+                request.crop_inverse = settings_.crop_inverse;
+            }
             request.crop_desaturate = settings_.show_crop_box && !settings_.use_crop_box;
         }
 
@@ -713,7 +721,7 @@ namespace lfs::vis {
 
         // Detect model switch
         if (model_ptr != last_model_ptr_) {
-            LOG_INFO("Model ptr changed: {} -> {}, size={}", last_model_ptr_, model_ptr, model ? model->size() : 0);
+            LOG_DEBUG("Model ptr changed: {} -> {}, size={}", last_model_ptr_, model_ptr, model ? model->size() : 0);
             needs_render_ = true;
             render_texture_valid_ = false;
             last_model_ptr_ = model_ptr;
@@ -734,47 +742,43 @@ namespace lfs::vis {
             }
         }
 
-        // Determine if we should do a full render
+        // Determine render triggers
         bool should_render = false;
-        bool needs_render_now = needs_render_.load();
-        bool training_update_triggered = false;
+        const bool needs_render_now = needs_render_.load();
+        const bool is_training = scene_manager && scene_manager->hasDataset() &&
+                                 scene_manager->getTrainerManager() &&
+                                 scene_manager->getTrainerManager()->isRunning();
 
-        // FIRST: Check if training needs an update (independent of other conditions)
-        if (scene_manager && scene_manager->hasDataset()) {
-            const auto* trainer_manager = scene_manager->getTrainerManager();
-            if (trainer_manager && trainer_manager->isRunning()) {
-                const auto now = std::chrono::steady_clock::now();
-                // Render at 2 Hz during training (500ms interval)
-                if (now - last_training_render_ > std::chrono::milliseconds(500)) {
-                    should_render = true;
-                    training_update_triggered = true;
-                    last_training_render_ = now;
-                }
+        // Training render interval
+        if (is_training) {
+            const auto now = std::chrono::steady_clock::now();
+            const float interval_sec = framerate_controller_.getSettings().training_frame_refresh_time_sec;
+            const auto interval_ms = static_cast<int>(interval_sec * 1000.0f);
+            if (now - last_training_render_ > std::chrono::milliseconds(interval_ms)) {
+                should_render = true;
+                last_training_render_ = now;
             }
         }
 
-        // THEN: Check other render triggers
-        if (!training_update_triggered) {
-            if (!cached_result_.image || needs_render_now || split_view_active) {
-                should_render = true;
-                needs_render_ = false;
-            } else if (context.has_focus) {
-                should_render = true;
-            }
+        // Dirty flag, no cache, or split view active
+        if (!cached_result_.image || needs_render_now || split_view_active) {
+            should_render = true;
+            needs_render_ = false;
         }
 
-        // Clear and set viewport
         glViewport(0, 0, context.viewport.frameBufferSize.x, context.viewport.frameBufferSize.y);
-        glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Set viewport region for rendering
-        // Note: OpenGL Y=0 is at bottom, ImGui Y=0 is at top, so we need to flip
-        // This glViewport affects the rasterizer's coordinate system for brush selection
+        // Clear only when rendering (cached blit overwrites entirely)
+        if (should_render || !model) {
+            glClearColor(0.1f, 0.1f, 0.1f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        }
+
+        // Viewport region (flip Y: OpenGL bottom-up, ImGui top-down)
         if (context.viewport_region) {
-            GLint gl_y = context.viewport.frameBufferSize.y
-                         - static_cast<GLint>(context.viewport_region->y)
-                         - static_cast<GLint>(context.viewport_region->height);
+            const GLint gl_y = context.viewport.frameBufferSize.y
+                               - static_cast<GLint>(context.viewport_region->y)
+                               - static_cast<GLint>(context.viewport_region->height);
             glViewport(
                 static_cast<GLint>(context.viewport_region->x),
                 gl_y,
@@ -901,14 +905,22 @@ namespace lfs::vis {
             .size = render_size,
             .fov = settings_.fov};
 
-        // Create crop box for both preview (show_crop_box) and actual filtering (use_crop_box)
+        // Crop box: scene graph takes priority over legacy settings
         std::optional<lfs::rendering::BoundingBox> crop_box;
         if (settings_.use_crop_box || settings_.show_crop_box) {
-            auto transform = settings_.crop_transform;
-            crop_box = lfs::rendering::BoundingBox{
-                .min = settings_.crop_min,
-                .max = settings_.crop_max,
-                .transform = transform.inv().toMat4()};
+            const auto& cropboxes = scene_manager->getScene().getVisibleCropBoxes();
+            if (!cropboxes.empty() && cropboxes[0].data) {
+                const auto& cb = cropboxes[0];
+                crop_box = lfs::rendering::BoundingBox{
+                    .min = cb.data->min,
+                    .max = cb.data->max,
+                    .transform = glm::inverse(cb.world_transform)};
+            } else {
+                crop_box = lfs::rendering::BoundingBox{
+                    .min = settings_.crop_min,
+                    .max = settings_.crop_max,
+                    .transform = settings_.crop_transform.inv().toMat4()};
+            }
         }
 
         // Handle GT comparison mode

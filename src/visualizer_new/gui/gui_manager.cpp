@@ -1497,14 +1497,14 @@ namespace lfs::vis::gui {
         const bool use_world_space =
             (gizmo_toolbar_state_.transform_space == panels::TransformSpace::World);
 
-        // Log only when gizmo position changes significantly
+        // Trace log when gizmo position changes
+        constexpr float LOG_THRESHOLD = 0.01f;
         static glm::vec3 s_last_logged_pos{0.0f};
         static std::string s_last_logged_node;
-        const std::string current_node = scene_manager->getSelectedNodeName();
-        if (current_node != s_last_logged_node || glm::distance(gizmo_position, s_last_logged_pos) > 0.01f) {
-            LOG_INFO("renderTransformGizmo: node='{}' center=({},{},{}) gizmo_pos=({},{},{})",
-                     current_node, center.x, center.y, center.z,
-                     gizmo_position.x, gizmo_position.y, gizmo_position.z);
+        const std::string& current_node = scene_manager->getSelectedNodeName();
+        if (current_node != s_last_logged_node || glm::distance(gizmo_position, s_last_logged_pos) > LOG_THRESHOLD) {
+            LOG_TRACE("Gizmo: node='{}' pos=({:.2f},{:.2f},{:.2f})",
+                      current_node, gizmo_position.x, gizmo_position.y, gizmo_position.z);
             s_last_logged_pos = gizmo_position;
             s_last_logged_node = current_node;
         }

@@ -1111,7 +1111,12 @@ namespace lfs::vis {
     }
 
     void InputController::publishCameraMove() {
-        auto now = std::chrono::steady_clock::now();
+        if (rendering_manager_) {
+            rendering_manager_->markDirty();
+        }
+
+        // Throttle event emission
+        const auto now = std::chrono::steady_clock::now();
         if (now - last_camera_publish_ >= camera_publish_interval_) {
             ui::CameraMove{
                 .rotation = viewport_.getRotationMatrix(),
