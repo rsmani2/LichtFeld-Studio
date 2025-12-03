@@ -559,10 +559,10 @@ namespace lfs::vis::gui {
 
             // Lock button
             ImGui::SameLine();
-            static constexpr ImVec4 TRANSPARENT{0, 0, 0, 0};
+            static constexpr ImVec4 TRANSPARENT_BG{0, 0, 0, 0};
             static constexpr ImVec4 HOVER_COLOR{0.3f, 0.3f, 0.3f, 0.5f};
             static constexpr ImVec4 LOCKED_TEXT_COLOR{1.0f, 0.4f, 0.4f, 1.0f};
-            ImGui::PushStyleColor(ImGuiCol_Button, TRANSPARENT);
+            ImGui::PushStyleColor(ImGuiCol_Button, TRANSPARENT_BG);
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, HOVER_COLOR);
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, HOVER_COLOR);
             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 0));
