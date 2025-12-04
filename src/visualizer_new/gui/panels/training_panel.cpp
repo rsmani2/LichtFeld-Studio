@@ -735,7 +735,7 @@ namespace lfs::vis::gui::panels {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.7f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.8f, 1.0f));
                 if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
-                    trainer_manager->resetTraining();
+                    lfs::core::events::cmd::ResetTraining{}.emit();
                 }
                 ImGui::PopStyleColor(2);
             }
@@ -763,7 +763,7 @@ namespace lfs::vis::gui::panels {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.7f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.8f, 1.0f));
             if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
-                trainer_manager->resetTraining();
+                lfs::core::events::cmd::ResetTraining{}.emit();
             }
             ImGui::PopStyleColor(2);
 
@@ -782,7 +782,7 @@ namespace lfs::vis::gui::panels {
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.7f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.8f, 1.0f));
             if (ImGui::Button("Reset for New Training", ImVec2(-1, 0))) {
-                trainer_manager->resetTraining();
+                lfs::core::events::cmd::ResetTraining{}.emit();
             }
             ImGui::PopStyleColor(2);
 
@@ -799,7 +799,7 @@ namespace lfs::vis::gui::panels {
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.7f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.8f, 1.0f));
                 if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
-                    trainer_manager->resetTraining();
+                    lfs::core::events::cmd::ResetTraining{}.emit();
                 }
                 ImGui::PopStyleColor(2);
             }

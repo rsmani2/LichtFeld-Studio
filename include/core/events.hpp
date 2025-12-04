@@ -42,6 +42,7 @@ namespace gs {
             EVENT(PauseTraining, );
             EVENT(ResumeTraining, );
             EVENT(StopTraining, );
+            EVENT(ResetTraining, );
             EVENT(SaveCheckpoint, std::optional<int> iteration;);
             EVENT(SaveProject, std::filesystem::path project_dir;);
             EVENT(LoadFile, std::filesystem::path path; bool is_dataset;);

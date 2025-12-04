@@ -162,6 +162,29 @@ namespace lfs::vis {
             }
         });
 
+        cmd::ResetTraining::when([this](const auto&) {
+            if (!scene_manager_ || !scene_manager_->hasDataset()) {
+                LOG_WARN("Cannot reset: no dataset loaded");
+                return;
+            }
+
+            if (trainer_manager_ && trainer_manager_->isTrainingActive()) {
+                trainer_manager_->stopTraining();
+                trainer_manager_->waitForCompletion();
+            }
+
+            const auto& path = scene_manager_->getDatasetPath();
+            if (path.empty()) {
+                LOG_ERROR("Cannot reset: dataset path is empty");
+                return;
+            }
+
+            LOG_INFO("Resetting training: {}", path.string());
+            if (const auto result = data_loader_->loadDataset(path); !result) {
+                LOG_ERROR("Failed to reload dataset: {}", result.error());
+            }
+        });
+
         cmd::SaveCheckpoint::when([this](const auto&) {
             if (trainer_manager_) {
                 trainer_manager_->requestSaveCheckpoint();

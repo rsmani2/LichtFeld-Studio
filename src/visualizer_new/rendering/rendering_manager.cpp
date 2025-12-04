@@ -346,6 +346,17 @@ namespace lfs::vis {
             markDirty();
         });
 
+        state::SceneCleared::when([this](const auto&) {
+            cached_result_ = {};
+            cached_filtered_point_cloud_.reset();
+            cached_source_point_cloud_ = nullptr;
+            render_texture_valid_ = false;
+            gt_texture_cache_.clear();
+            current_camera_id_ = -1;
+            last_model_ptr_ = 0;
+            markDirty();
+        });
+
         // PLY visibility changes
         cmd::SetPLYVisibility::when([this](const auto&) {
             markDirty();
