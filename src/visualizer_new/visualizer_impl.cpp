@@ -629,14 +629,25 @@ namespace lfs::vis {
 
     void VisualizerImpl::copySelection() {
         if (!scene_manager_) return;
-        scene_manager_->copySelection();
+
+        const auto tool = editor_context_.getActiveTool();
+        const bool is_selection_tool = (tool == ToolType::Selection || tool == ToolType::Brush);
+
+        if (is_selection_tool && scene_manager_->getScene().hasSelection()) {
+            scene_manager_->copySelectedGaussians();
+        } else {
+            scene_manager_->copySelectedNodes();
+        }
     }
 
     void VisualizerImpl::pasteSelection() {
         if (!scene_manager_) return;
 
-        const auto pasted_names = scene_manager_->pasteSelection();
-        if (pasted_names.empty()) return;
+        const auto pasted = scene_manager_->hasGaussianClipboard()
+            ? scene_manager_->pasteGaussians()
+            : scene_manager_->pasteNodes();
+
+        if (pasted.empty()) return;
 
         if (selection_tool_) {
             selection_tool_->clearPolygon();
@@ -644,9 +655,8 @@ namespace lfs::vis {
         }
         scene_manager_->getScene().resetSelectionState();
 
-        // Select all pasted nodes
         scene_manager_->clearSelection();
-        for (const auto& name : pasted_names) {
+        for (const auto& name : pasted) {
             scene_manager_->addToSelection(name);
         }
 

@@ -187,10 +187,15 @@ namespace lfs::vis {
         // Permanently remove soft-deleted gaussians from all nodes
         size_t applyDeleted();
 
-        // Clipboard
-        bool copySelection();
-        std::vector<std::string> pasteSelection();
+        // Clipboard - node-level copy/paste
+        bool copySelectedNodes();
+        std::vector<std::string> pasteNodes();
         [[nodiscard]] bool hasClipboard() const { return !clipboard_.empty(); }
+
+        // Gaussian-level copy/paste (for selection tools)
+        bool copySelectedGaussians();
+        std::vector<std::string> pasteGaussians();
+        [[nodiscard]] bool hasGaussianClipboard() const { return gaussian_clipboard_ != nullptr; }
 
     private:
         void setupEventHandlers();
@@ -241,6 +246,9 @@ namespace lfs::vis {
         };
         std::vector<ClipboardEntry> clipboard_;
         int clipboard_counter_ = 0;
+
+        // Gaussian-level clipboard (selected Gaussians only)
+        std::unique_ptr<lfs::core::SplatData> gaussian_clipboard_;
 
         ClipboardEntry::HierarchyNode copyNodeHierarchy(const SceneNode* node);
         void pasteNodeHierarchy(const ClipboardEntry::HierarchyNode& src, NodeId parent_id);
