@@ -464,6 +464,10 @@ namespace lfs::vis::gui {
         // Render gizmo toolbar (only when a node is selected)
         auto* scene_manager = ctx.viewer->getSceneManager();
         if (scene_manager && scene_manager->hasSelectedNode()) {
+            // Check if we're in dataset mode (no training model/gaussians yet)
+            gizmo_toolbar_state_.dataset_mode = scene_manager->hasDataset() &&
+                                                 scene_manager->getScene().getTrainingModel() == nullptr;
+
             panels::DrawGizmoToolbar(ctx, gizmo_toolbar_state_, viewport_pos_, viewport_size_);
 
             const auto current_tool = gizmo_toolbar_state_.current_tool;
@@ -492,10 +496,12 @@ namespace lfs::vis::gui {
                 }
             }
 
-            // Auto-create cropbox when switching to CropBox tool
+            // Auto-create and select cropbox when switching to CropBox tool
             if (is_cropbox_mode && !was_cropbox_mode) {
                 if (auto* sm = ctx.viewer->getSceneManager()) {
                     sm->ensureCropBoxForSelectedNode();
+                    // Auto-select the cropbox for the current node (or first POINTCLOUD)
+                    sm->selectCropBoxForCurrentNode();
                 }
             }
 

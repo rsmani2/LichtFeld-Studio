@@ -239,66 +239,16 @@ namespace lfs::training {
                 return {};
 
             } else if constexpr (std::is_same_v<T, lfs::loader::LoadedScene>) {
-                // Full scene data - store cameras and create model
+                // Full scene data - store cameras and point cloud (defer SplatData creation)
 
                 // Store cameras in Scene
                 scene.setTrainCameras(data.cameras);
                 scene.setInitialPointCloud(data.point_cloud);
 
-                // Initialize model from point cloud or PLY
-                std::expected<lfs::core::SplatData, std::string> splat_result;
-                const int max_cap = params.optimization.max_cap;
-
-                if (params.init_ply.has_value()) {
-                    // Load from PLY file
-                    auto ply_loader = lfs::loader::Loader::create();
-                    auto ply_load_result = ply_loader->load(params.init_ply.value());
-
-                    if (!ply_load_result) {
-                        return std::unexpected(std::format(
-                            "Failed to load initialization PLY file '{}': {}",
-                            params.init_ply.value(),
-                            ply_load_result.error()));
-                    }
-
-                    try {
-                        splat_result = std::move(*std::get<std::shared_ptr<lfs::core::SplatData>>(ply_load_result->data));
-                    } catch (const std::bad_variant_access&) {
-                        return std::unexpected(std::format(
-                            "Initialization PLY file '{}' did not contain valid SplatData",
-                            params.init_ply.value()));
-                    }
-                } else {
-                    // Initialize from point cloud
-                    lfs::core::PointCloud point_cloud_to_use;
-                    if (data.point_cloud && data.point_cloud->size() > 0) {
-                        point_cloud_to_use = *data.point_cloud;
-                        if (max_cap > 0) {
-                            point_cloud_to_use.means = point_cloud_to_use.means.cpu();
-                            point_cloud_to_use.colors = point_cloud_to_use.colors.cpu();
-                        }
-                    } else {
-                        LOG_INFO("No point cloud provided, using random initialization");
-                        constexpr size_t NUM_INIT_GAUSSIANS = 10000;
-                        auto positions = lfs::core::Tensor::rand({NUM_INIT_GAUSSIANS, 3}, lfs::core::Device::CPU);
-                        positions = positions * 2.0f - 1.0f;
-                        auto colors = lfs::core::Tensor::randint({NUM_INIT_GAUSSIANS, 3}, 0, 256, lfs::core::Device::CPU, lfs::core::DataType::UInt8);
-                        point_cloud_to_use = lfs::core::PointCloud(positions, colors);
-                    }
-
-                    auto scene_center = max_cap > 0 ? load_result->scene_center.cpu() : load_result->scene_center;
-                    splat_result = lfs::core::init_model_from_pointcloud(
-                        params, scene_center, point_cloud_to_use, max_cap);
-                }
-
-                if (!splat_result) {
-                    return std::unexpected(
-                        std::format("Failed to initialize model: {}", splat_result.error()));
-                }
-
                 // Create dataset hierarchy:
                 // [Dataset] bicycle
-                // ├── Model (54,275)
+                // ├── PointCloud (54,275) - or Model if init_ply is used
+                // │   └── CropBox (optional, can be added later)
                 // ├── Cameras
                 // │   ├── Training (185)
                 // │   │   ├── cam_00001
@@ -321,11 +271,41 @@ namespace lfs::training {
                 // Add dataset root node
                 auto dataset_id = scene.addDataset(dataset_name);
 
-                // Add model as child of dataset
-                auto model = std::make_unique<lfs::core::SplatData>(std::move(*splat_result));
-                LOG_INFO("Adding training model to scene (size={})", model->size());
-                scene.addSplat("Model", std::move(model), dataset_id);
-                scene.setTrainingModelNode("Model");
+                // Handle init_ply case: load SplatData directly
+                if (params.init_ply.has_value()) {
+                    auto ply_loader = lfs::loader::Loader::create();
+                    auto ply_load_result = ply_loader->load(params.init_ply.value());
+
+                    if (!ply_load_result) {
+                        return std::unexpected(std::format(
+                            "Failed to load initialization PLY file '{}': {}",
+                            params.init_ply.value(),
+                            ply_load_result.error()));
+                    }
+
+                    try {
+                        auto splat_data = std::move(*std::get<std::shared_ptr<lfs::core::SplatData>>(ply_load_result->data));
+                        auto model = std::make_unique<lfs::core::SplatData>(std::move(splat_data));
+                        LOG_INFO("Adding training model from init_ply to scene (size={})", model->size());
+                        scene.addSplat("Model", std::move(model), dataset_id);
+                        scene.setTrainingModelNode("Model");
+                    } catch (const std::bad_variant_access&) {
+                        return std::unexpected(std::format(
+                            "Initialization PLY file '{}' did not contain valid SplatData",
+                            params.init_ply.value()));
+                    }
+                } else {
+                    // Add point cloud as a POINTCLOUD node (defer SplatData creation until training starts)
+                    // This allows the user to apply crop before training
+                    if (data.point_cloud && data.point_cloud->size() > 0) {
+                        LOG_INFO("Adding point cloud to scene ({} points) - SplatData will be created when training starts",
+                                 data.point_cloud->size());
+                        scene.addPointCloud("PointCloud", data.point_cloud, dataset_id);
+                    } else {
+                        // No point cloud - will use random initialization when training starts
+                        LOG_INFO("No point cloud provided - random initialization will be used when training starts");
+                    }
+                }
 
                 // Get camera info for train/val splits
                 const auto& cameras = data.cameras->get_cameras();
@@ -376,7 +356,7 @@ namespace lfs::training {
                     }
                 }
 
-                LOG_INFO("Loaded dataset '{}' into scene: {} train{} cameras, model 'Model'",
+                LOG_INFO("Loaded dataset '{}' into scene: {} train{} cameras",
                          dataset_name, train_count,
                          enable_eval ? std::format(" + {} val", val_count) : "");
                 return {};
@@ -386,6 +366,160 @@ namespace lfs::training {
             }
         },
                           load_result->data);
+    }
+
+    std::expected<void, std::string> initializeTrainingModel(
+        const lfs::core::param::TrainingParameters& params,
+        lfs::vis::Scene& scene) {
+
+        // Skip if training model already exists (e.g., from init_ply)
+        if (scene.getTrainingModel() != nullptr) {
+            return {};
+        }
+
+        // Find POINTCLOUD node
+        lfs::vis::NodeId point_cloud_node_id = lfs::vis::NULL_NODE;
+        lfs::vis::NodeId parent_id = lfs::vis::NULL_NODE;
+        const lfs::core::PointCloud* point_cloud = nullptr;
+
+        for (const auto* node : scene.getNodes()) {
+            if (node->type == lfs::vis::NodeType::POINTCLOUD && node->point_cloud) {
+                point_cloud_node_id = node->id;
+                parent_id = node->parent_id;
+                point_cloud = node->point_cloud.get();
+                break;
+            }
+        }
+
+        lfs::core::PointCloud point_cloud_to_use;
+        const int max_cap = params.optimization.max_cap;
+
+        if (point_cloud && point_cloud->size() > 0) {
+            // Check for enabled CropBox
+            const lfs::vis::CropBoxData* cropbox_data = nullptr;
+            lfs::vis::NodeId cropbox_id = lfs::vis::NULL_NODE;
+
+            if (point_cloud_node_id != lfs::vis::NULL_NODE) {
+                cropbox_id = scene.getCropBoxForSplat(point_cloud_node_id);
+                if (cropbox_id != lfs::vis::NULL_NODE) {
+                    cropbox_data = scene.getCropBoxData(cropbox_id);
+                }
+            }
+
+            if (cropbox_data && cropbox_data->enabled) {
+                // Filter points by CropBox
+                const glm::mat4 world_to_cropbox = glm::inverse(scene.getWorldTransform(cropbox_id));
+                const auto& means = point_cloud->means;
+                const auto& colors = point_cloud->colors;
+                const size_t num_points = point_cloud->size();
+
+                auto means_cpu = means.cpu();
+                auto colors_cpu = colors.cpu();
+                const float* means_ptr = means_cpu.ptr<float>();
+                const uint8_t* colors_ptr = colors_cpu.ptr<uint8_t>();
+
+                std::vector<float> filtered_means;
+                std::vector<uint8_t> filtered_colors;
+                filtered_means.reserve(num_points * 3);
+                filtered_colors.reserve(num_points * 3);
+
+                for (size_t i = 0; i < num_points; ++i) {
+                    const glm::vec3 pos(means_ptr[i * 3], means_ptr[i * 3 + 1], means_ptr[i * 3 + 2]);
+                    const glm::vec4 local_pos = world_to_cropbox * glm::vec4(pos, 1.0f);
+                    const glm::vec3 local = glm::vec3(local_pos) / local_pos.w;
+
+                    bool inside = local.x >= cropbox_data->min.x && local.x <= cropbox_data->max.x &&
+                                  local.y >= cropbox_data->min.y && local.y <= cropbox_data->max.y &&
+                                  local.z >= cropbox_data->min.z && local.z <= cropbox_data->max.z;
+
+                    if (cropbox_data->inverse) inside = !inside;
+
+                    if (inside) {
+                        filtered_means.push_back(means_ptr[i * 3]);
+                        filtered_means.push_back(means_ptr[i * 3 + 1]);
+                        filtered_means.push_back(means_ptr[i * 3 + 2]);
+                        filtered_colors.push_back(colors_ptr[i * 3]);
+                        filtered_colors.push_back(colors_ptr[i * 3 + 1]);
+                        filtered_colors.push_back(colors_ptr[i * 3 + 2]);
+                    }
+                }
+
+                const size_t filtered_count = filtered_means.size() / 3;
+                LOG_INFO("CropBox filtering: {} -> {} points", num_points, filtered_count);
+
+                if (filtered_count == 0) {
+                    return std::unexpected("CropBox filtered out all points");
+                }
+
+                auto filtered_means_tensor = lfs::core::Tensor::from_vector(
+                    filtered_means, {filtered_count, 3}, lfs::core::Device::CPU);
+                auto filtered_colors_tensor = lfs::core::Tensor::zeros(
+                    {filtered_count, 3}, lfs::core::Device::CPU, lfs::core::DataType::UInt8);
+                std::memcpy(filtered_colors_tensor.data_ptr(), filtered_colors.data(),
+                            filtered_colors.size() * sizeof(uint8_t));
+
+                point_cloud_to_use = lfs::core::PointCloud(filtered_means_tensor, filtered_colors_tensor);
+            } else {
+                // No CropBox or not enabled - use full point cloud
+                point_cloud_to_use = *point_cloud;
+                if (max_cap > 0) {
+                    point_cloud_to_use.means = point_cloud_to_use.means.cpu();
+                    point_cloud_to_use.colors = point_cloud_to_use.colors.cpu();
+                }
+            }
+        } else {
+            // No point cloud - use random initialization
+            LOG_INFO("No point cloud provided, using random initialization");
+            constexpr size_t NUM_INIT_GAUSSIANS = 10000;
+            auto positions = lfs::core::Tensor::rand({NUM_INIT_GAUSSIANS, 3}, lfs::core::Device::CPU);
+            positions = positions * 2.0f - 1.0f;
+            auto colors = lfs::core::Tensor::randint({NUM_INIT_GAUSSIANS, 3}, 0, 256,
+                                                     lfs::core::Device::CPU, lfs::core::DataType::UInt8);
+            point_cloud_to_use = lfs::core::PointCloud(positions, colors);
+        }
+
+        // Compute scene center from the point cloud
+        lfs::core::Tensor scene_center;
+        if (point_cloud_to_use.size() > 0) {
+            auto means_cpu = point_cloud_to_use.means.cpu();
+            auto mean = means_cpu.mean({0});
+            scene_center = max_cap > 0 ? mean : mean.cuda();
+        } else {
+            scene_center = lfs::core::Tensor::zeros({3}, lfs::core::Device::CPU);
+        }
+
+        // Initialize SplatData from point cloud
+        auto splat_result = lfs::core::init_model_from_pointcloud(
+            params, scene_center, point_cloud_to_use, max_cap);
+
+        if (!splat_result) {
+            return std::unexpected(std::format("Failed to initialize model: {}", splat_result.error()));
+        }
+
+        // Apply max_cap if needed
+        if (max_cap > 0 && max_cap < static_cast<int>(splat_result->size())) {
+            LOG_WARN("Max cap ({}) is less than initial splat count ({}), randomly selecting {} splats",
+                     max_cap, splat_result->size(), max_cap);
+            lfs::core::random_choose(*splat_result, max_cap);
+        }
+
+        // Remove the POINTCLOUD node and add the new SPLAT node
+        if (point_cloud_node_id != lfs::vis::NULL_NODE) {
+            // Get the node to access its name for removal
+            const auto* pc_node = scene.getNodeById(point_cloud_node_id);
+            if (pc_node) {
+                std::string pc_name = pc_node->name;
+                scene.removeNode(pc_name, true);  // Keep children (like CropBox) - though they'll be orphaned
+            }
+        }
+
+        // Add the new model
+        auto model = std::make_unique<lfs::core::SplatData>(std::move(*splat_result));
+        LOG_INFO("Created training model with {} gaussians", model->size());
+        scene.addSplat("Model", std::move(model), parent_id);
+        scene.setTrainingModelNode("Model");
+
+        return {};
     }
 
 } // namespace lfs::training

@@ -4,6 +4,7 @@
 
 #include "rendering_pipeline.hpp"
 #include "core_new/camera.hpp"
+#include "core_new/point_cloud.hpp"
 #include "core_new/splat_data.hpp"
 #include "gs_rasterizer_tensor.hpp"
 
@@ -410,6 +411,197 @@ namespace lfs::rendering {
         }
 
         LOG_TRACE("Point cloud rendering completed");
+        return result;
+    }
+
+    Result<RenderingPipeline::RenderResult> RenderingPipeline::renderRawPointCloud(
+        const lfs::core::PointCloud& point_cloud,
+        const RenderRequest& request) {
+
+        LOG_TIMER_TRACE("RenderingPipeline::renderRawPointCloud");
+
+        // Initialize point cloud renderer if needed
+        if (!point_cloud_renderer_->isInitialized()) {
+            LOG_DEBUG("Initializing point cloud renderer");
+            if (auto result = point_cloud_renderer_->initialize(); !result) {
+                LOG_ERROR("Failed to initialize point cloud renderer: {}", result.error());
+                return std::unexpected(std::format("Failed to initialize point cloud renderer: {}",
+                                                   result.error()));
+            }
+        }
+
+        // Save current OpenGL state
+        GLint current_viewport[4];
+        GLint current_fbo;
+        glGetIntegerv(GL_VIEWPORT, current_viewport);
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &current_fbo);
+
+        // RAII guard to restore state
+        struct StateGuard {
+            GLint viewport[4];
+            GLint fbo;
+            ~StateGuard() {
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+            }
+        } state_guard{
+            {current_viewport[0], current_viewport[1], current_viewport[2], current_viewport[3]},
+            current_fbo};
+
+        // Create view matrix using the same convention as Viewport::getViewMatrix()
+        glm::mat3 flip_yz = glm::mat3(
+            1, 0, 0,
+            0, -1, 0,
+            0, 0, -1);
+
+        // Convert from camera space (what we get in request) to view space
+        glm::mat3 R_inv = glm::transpose(request.view_rotation); // Inverse of rotation matrix
+        glm::vec3 t_inv = -R_inv * request.view_translation;     // Inverse translation
+
+        // Apply flip
+        R_inv = flip_yz * R_inv;
+        t_inv = flip_yz * t_inv;
+
+        // Build view matrix
+        glm::mat4 view(1.0f);
+        for (int i = 0; i < 3; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                view[i][j] = R_inv[i][j];
+            }
+        }
+        view[3][0] = t_inv.x;
+        view[3][1] = t_inv.y;
+        view[3][2] = t_inv.z;
+        view[3][3] = 1.0f;
+
+        // Apply model transform if provided (for point cloud node transforms)
+        if (!request.model_transforms.empty()) {
+            // model_view = view * model_transform
+            // This transforms points from model space -> world space -> view space
+            view = view * request.model_transforms[0];
+        }
+
+        // Create projection matrix
+        float aspect = static_cast<float>(request.viewport_size.x) / request.viewport_size.y;
+        float fov_rad = glm::radians(request.fov);
+        glm::mat4 projection = glm::perspective(fov_rad, aspect, 0.1f, 1000.0f);
+
+        // OPTIMIZATION: Flip Y-axis in projection to render image pre-flipped
+        projection[1][1] *= -1.0f;
+
+        // OPTIMIZATION: Use persistent FBO
+        ensureFBOSize(request.viewport_size.x, request.viewport_size.y);
+        if (persistent_fbo_ == 0) {
+            LOG_ERROR("Failed to setup persistent framebuffer");
+            return std::unexpected("Failed to setup persistent framebuffer");
+        }
+
+        // Set viewport to match the request size
+        glViewport(0, 0, request.viewport_size.x, request.viewport_size.y);
+
+        // Render point cloud to framebuffer (using PointCloud overload)
+        {
+            LOG_TIMER_TRACE("point_cloud_renderer_->render(PointCloud)");
+            if (auto result = point_cloud_renderer_->render(point_cloud, view, projection,
+                                                            request.voxel_size, request.background_color);
+                !result) {
+                LOG_ERROR("Raw point cloud rendering failed: {}", result.error());
+                return std::unexpected(std::format("Raw point cloud rendering failed: {}", result.error()));
+            }
+        }
+
+        const int width = request.viewport_size.x;
+        const int height = request.viewport_size.y;
+        RenderResult result;
+
+#ifdef CUDA_GL_INTEROP_ENABLED
+        // Try CUDA-GL interop path for direct FBO→CUDA texture readback
+        if (use_fbo_interop_) {
+            LOG_TIMER_TRACE("CUDA-GL FBO interop readback");
+
+            bool should_init = persistent_color_texture_ != 0 &&
+                              (!fbo_interop_texture_ ||
+                               fbo_interop_last_width_ != persistent_fbo_width_ ||
+                               fbo_interop_last_height_ != persistent_fbo_height_);
+
+            if (should_init) {
+                if (fbo_interop_texture_) {
+                    LOG_TRACE("Reinitializing CUDA-GL FBO interop texture due to size change");
+                    fbo_interop_texture_.reset();
+                } else {
+                    LOG_TRACE("Initializing CUDA-GL FBO interop texture: {}x{}", width, height);
+                }
+
+                fbo_interop_texture_.emplace();
+                if (auto init_result = fbo_interop_texture_->initForReading(
+                        persistent_color_texture_, width, height);
+                    !init_result) {
+                    LOG_TRACE("Failed to initialize FBO interop: {}", init_result.error());
+                    fbo_interop_texture_.reset();
+                } else {
+                    LOG_TRACE("FBO interop initialized successfully");
+                }
+
+                fbo_interop_last_width_ = persistent_fbo_width_;
+                fbo_interop_last_height_ = persistent_fbo_height_;
+            }
+
+            if (use_fbo_interop_ && fbo_interop_texture_) {
+                Tensor image_hwc;
+                if (auto read_result = fbo_interop_texture_->readToTensor(image_hwc); read_result) {
+                    result.image = image_hwc.permute({2, 0, 1}).contiguous();
+                    result.valid = true;
+                    LOG_TRACE("Successfully read FBO via CUDA-GL interop");
+                } else {
+                    LOG_TRACE("Failed to read FBO via interop: {}", read_result.error());
+                    fbo_interop_texture_.reset();
+                    result.valid = false;
+                }
+            }
+        }
+
+        // Fallback to PBO path if interop failed
+        if (!result.valid)
+#endif
+        {
+            LOG_TIMER_TRACE("PBO fallback readback");
+
+            ensurePBOSize(width, height);
+
+            int current_pbo = pbo_index_;
+            int next_pbo = 1 - pbo_index_;
+
+            std::vector<float> pixels(width * height * 3);
+            {
+                glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_[current_pbo]);
+                glReadPixels(0, 0, width, height, GL_RGB, GL_FLOAT, nullptr);
+
+                void* mapped_data = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY);
+                if (mapped_data) {
+                    std::memcpy(pixels.data(), mapped_data, width * height * 3 * sizeof(float));
+                    glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+                } else {
+                    LOG_ERROR("Failed to map PBO for readback");
+                    glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+                    return std::unexpected("Failed to map PBO for readback");
+                }
+
+                glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+            }
+
+            pbo_index_ = next_pbo;
+
+            auto image_cpu = Tensor::from_vector(pixels, {static_cast<size_t>(height), static_cast<size_t>(width), 3},
+                                                 lfs::core::Device::CPU);
+
+            {
+                LOG_TIMER_TRACE("permute and cuda upload");
+                result.image = image_cpu.permute({2, 0, 1}).cuda();
+            }
+            result.valid = true;
+        }
+
+        LOG_TRACE("Raw point cloud rendering completed");
         return result;
     }
 

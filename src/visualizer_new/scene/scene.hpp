@@ -33,8 +33,9 @@ namespace lfs::vis {
     // Node types
     enum class NodeType : uint8_t {
         SPLAT,        // Contains gaussian splat data
+        POINTCLOUD,   // Contains point cloud (pre-training, can be cropped)
         GROUP,        // Empty transform node for organization
-        CROPBOX,      // Crop box visualization (child of SPLAT)
+        CROPBOX,      // Crop box visualization (child of SPLAT or POINTCLOUD)
         DATASET,      // Root node for training dataset (contains cameras + model)
         CAMERA_GROUP, // Container for camera nodes (e.g., "Training", "Validation")
         CAMERA,       // Individual camera from dataset
@@ -82,9 +83,10 @@ namespace lfs::vis {
         std::string name;
 
         // Data (changes require manual cache invalidation via scene)
-        std::unique_ptr<lfs::core::SplatData> model;
+        std::unique_ptr<lfs::core::SplatData> model;          // For SPLAT nodes
+        std::shared_ptr<lfs::core::PointCloud> point_cloud;   // For POINTCLOUD nodes
         std::unique_ptr<CropBoxData> cropbox;
-        size_t gaussian_count = 0;
+        size_t gaussian_count = 0;  // For SPLAT: num gaussians, for POINTCLOUD: num points
         glm::vec3 centroid{0.0f};
 
         // Camera data (for CAMERA nodes)
@@ -140,7 +142,8 @@ namespace lfs::vis {
         // Scene graph operations
         NodeId addGroup(const std::string& name, NodeId parent = NULL_NODE);
         NodeId addSplat(const std::string& name, std::unique_ptr<lfs::core::SplatData> model, NodeId parent = NULL_NODE);
-        NodeId addCropBox(const std::string& name, NodeId parent_splat);
+        NodeId addPointCloud(const std::string& name, std::shared_ptr<lfs::core::PointCloud> point_cloud, NodeId parent = NULL_NODE);
+        NodeId addCropBox(const std::string& name, NodeId parent_node);  // Parent can be SPLAT or POINTCLOUD
         NodeId addDataset(const std::string& name);  // Root node for training dataset
         NodeId addCameraGroup(const std::string& name, NodeId parent, size_t camera_count);
         NodeId addCamera(const std::string& name, NodeId parent, int camera_index, int camera_uid, const std::string& image_path = "");
@@ -183,6 +186,10 @@ namespace lfs::vis {
 
         // Get combined model for rendering
         const lfs::core::SplatData* getCombinedModel() const;
+
+        // Get visible point cloud for rendering (before training starts)
+        // Returns first visible POINTCLOUD node's data, or nullptr
+        [[nodiscard]] const lfs::core::PointCloud* getVisiblePointCloud() const;
 
         // Get transforms for visible nodes (for kernel-based transform)
         std::vector<glm::mat4> getVisibleNodeTransforms() const;

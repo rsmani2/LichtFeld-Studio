@@ -4,6 +4,7 @@
 
 #include "rendering_engine_impl.hpp"
 #include "core_new/logger.hpp"
+#include "core_new/point_cloud.hpp"
 #include "framebuffer_factory.hpp"
 #include "geometry_new/bounding_box.hpp"
 #include "rendering_new/render_constants.hpp"
@@ -252,6 +253,77 @@ namespace lfs::rendering {
             .screen_positions = pipeline_result->screen_positions.is_valid()
                 ? std::make_shared<Tensor>(pipeline_result->screen_positions)
                 : nullptr,
+            .valid = true};
+
+        return result;
+    }
+
+    Result<RenderResult> RenderingEngineImpl::renderPointCloud(
+        const lfs::core::PointCloud& point_cloud,
+        const RenderRequest& request) {
+
+        if (!isInitialized()) {
+            LOG_ERROR("Rendering engine not initialized");
+            return std::unexpected("Rendering engine not initialized");
+        }
+
+        // Validate request
+        if (request.viewport.size.x <= 0 || request.viewport.size.y <= 0 ||
+            request.viewport.size.x > 16384 || request.viewport.size.y > 16384) {
+            LOG_ERROR("Invalid viewport dimensions: {}x{}", request.viewport.size.x, request.viewport.size.y);
+            return std::unexpected("Invalid viewport dimensions");
+        }
+
+        LOG_TRACE("Rendering point cloud with viewport {}x{}", request.viewport.size.x, request.viewport.size.y);
+
+        // Convert to internal pipeline request (simplified - no crop box for point clouds)
+        RenderingPipeline::RenderRequest pipeline_req{
+            .view_rotation = request.viewport.rotation,
+            .view_translation = request.viewport.translation,
+            .viewport_size = request.viewport.size,
+            .fov = request.viewport.fov,
+            .scaling_modifier = request.scaling_modifier,
+            .antialiasing = false,
+            .sh_degree = 0,
+            .render_mode = RenderMode::RGB,
+            .crop_box = nullptr,
+            .background_color = request.background_color,
+            .point_cloud_mode = true,
+            .voxel_size = request.voxel_size,
+            .gut = false,
+            .show_rings = false,
+            .ring_width = 0.0f,
+            .show_center_markers = false,
+            .model_transforms = request.model_transforms,
+            .transform_indices = nullptr,
+            .selection_mask = nullptr,
+            .output_screen_positions = false,
+            .brush_active = false,
+            .brush_x = 0.0f,
+            .brush_y = 0.0f,
+            .brush_radius = 0.0f,
+            .brush_add_mode = true,
+            .brush_selection_tensor = nullptr,
+            .brush_saturation_mode = false,
+            .brush_saturation_amount = 0.0f,
+            .selection_mode_rings = false,
+            .hovered_depth_id = nullptr,
+            .highlight_gaussian_id = -1,
+            .far_plane = 1e10f,
+            .selected_node_mask = {}};
+
+        auto pipeline_result = pipeline_.renderRawPointCloud(point_cloud, pipeline_req);
+
+        if (!pipeline_result) {
+            LOG_ERROR("Pipeline render failed: {}", pipeline_result.error());
+            return std::unexpected(pipeline_result.error());
+        }
+
+        // Convert result
+        RenderResult result{
+            .image = std::make_shared<Tensor>(pipeline_result->image),
+            .depth = std::make_shared<Tensor>(pipeline_result->depth),
+            .screen_positions = nullptr,
             .valid = true};
 
         return result;

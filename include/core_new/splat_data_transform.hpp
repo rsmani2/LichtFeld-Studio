@@ -15,6 +15,7 @@ namespace lfs::core {
     // Forward declarations
     class SplatData;
     class Tensor;
+    struct PointCloud;
 
     /**
      * @brief Apply a transformation matrix to SplatData
@@ -59,6 +60,21 @@ namespace lfs::core {
      * @return true if bounds were computed successfully, false if splat data is empty/invalid
      */
     bool compute_bounds(const SplatData& splat_data,
+                        glm::vec3& min_bounds,
+                        glm::vec3& max_bounds,
+                        float padding = 0.0f,
+                        bool use_percentile = false);
+
+    /**
+     * @brief Compute the axis-aligned bounding box of PointCloud
+     * @param point_cloud The point cloud to compute bounds for
+     * @param[out] min_bounds Output minimum corner (x, y, z)
+     * @param[out] max_bounds Output maximum corner (x, y, z)
+     * @param padding Optional padding to add around the bounds (default: 0.0f)
+     * @param use_percentile If true, use 1st/99th percentile to exclude outliers (default: false)
+     * @return true if bounds were computed successfully, false if point cloud is empty/invalid
+     */
+    bool compute_bounds(const PointCloud& point_cloud,
                         glm::vec3& min_bounds,
                         glm::vec3& max_bounds,
                         float padding = 0.0f,

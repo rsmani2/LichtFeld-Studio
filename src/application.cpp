@@ -44,6 +44,13 @@ namespace lfs::core {
             return -1;
         }
 
+        // Initialize training model (converts PointCloud to SplatData)
+        auto model_init_result = lfs::training::initializeTrainingModel(*params, scene);
+        if (!model_init_result) {
+            LOG_ERROR("Failed to initialize training model: {}", model_init_result.error());
+            return -1;
+        }
+
         // Create Trainer from Scene
         auto trainer = std::make_unique<lfs::training::Trainer>(scene);
         trainer->setProject(project);

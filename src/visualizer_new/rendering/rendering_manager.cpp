@@ -869,6 +869,165 @@ namespace lfs::vis {
                     LOG_ERROR("Failed to present render result: {}", present_result.error());
                 }
             }
+        } else if (scene_manager) {
+            // Try to render point cloud (pre-training mode)
+            auto scene_state = scene_manager->buildRenderState();
+            if (scene_state.point_cloud && scene_state.point_cloud->size() > 0) {
+                // Check for enabled cropbox and filter points if needed
+                const lfs::core::PointCloud* point_cloud_to_render = scene_state.point_cloud;
+
+                // Find enabled cropbox and use cached filtered result if available
+                for (const auto& cb : scene_state.cropboxes) {
+                    if (cb.data && cb.data->enabled) {
+                        // Check if cache is valid
+                        const bool cache_valid = cached_filtered_point_cloud_ &&
+                            cached_source_point_cloud_ == scene_state.point_cloud &&
+                            cached_cropbox_transform_ == cb.world_transform &&
+                            cached_cropbox_min_ == cb.data->min &&
+                            cached_cropbox_max_ == cb.data->max &&
+                            cached_cropbox_inverse_ == cb.data->inverse;
+
+                        if (!cache_valid) {
+                            // Recompute filtered point cloud
+                            const auto& means = scene_state.point_cloud->means;
+                            const auto& colors = scene_state.point_cloud->colors;
+                            const size_t num_points = scene_state.point_cloud->size();
+                            const glm::mat4 world_to_cropbox = glm::inverse(cb.world_transform);
+
+                            auto means_cpu = means.cpu();
+                            auto colors_cpu = colors.cpu();
+                            const float* means_ptr = means_cpu.ptr<float>();
+                            const uint8_t* colors_ptr = colors_cpu.ptr<uint8_t>();
+
+                            std::vector<float> filtered_means;
+                            std::vector<uint8_t> filtered_colors;
+                            filtered_means.reserve(num_points * 3);
+                            filtered_colors.reserve(num_points * 3);
+
+                            for (size_t i = 0; i < num_points; ++i) {
+                                const glm::vec3 pos(means_ptr[i * 3], means_ptr[i * 3 + 1], means_ptr[i * 3 + 2]);
+                                const glm::vec4 local_pos = world_to_cropbox * glm::vec4(pos, 1.0f);
+                                const glm::vec3 local = glm::vec3(local_pos) / local_pos.w;
+
+                                bool inside = local.x >= cb.data->min.x && local.x <= cb.data->max.x &&
+                                              local.y >= cb.data->min.y && local.y <= cb.data->max.y &&
+                                              local.z >= cb.data->min.z && local.z <= cb.data->max.z;
+
+                                if (cb.data->inverse) inside = !inside;
+
+                                if (inside) {
+                                    filtered_means.push_back(means_ptr[i * 3]);
+                                    filtered_means.push_back(means_ptr[i * 3 + 1]);
+                                    filtered_means.push_back(means_ptr[i * 3 + 2]);
+                                    filtered_colors.push_back(colors_ptr[i * 3]);
+                                    filtered_colors.push_back(colors_ptr[i * 3 + 1]);
+                                    filtered_colors.push_back(colors_ptr[i * 3 + 2]);
+                                }
+                            }
+
+                            if (!filtered_means.empty()) {
+                                const size_t filtered_count = filtered_means.size() / 3;
+
+                                auto filtered_means_tensor = lfs::core::Tensor::from_vector(
+                                    filtered_means, {filtered_count, 3}, lfs::core::Device::CUDA);
+                                auto filtered_colors_cpu = lfs::core::Tensor::zeros(
+                                    {filtered_count, 3}, lfs::core::Device::CPU, lfs::core::DataType::UInt8);
+                                std::memcpy(filtered_colors_cpu.data_ptr(), filtered_colors.data(),
+                                           filtered_colors.size() * sizeof(uint8_t));
+                                auto filtered_colors_tensor = filtered_colors_cpu.to(lfs::core::Device::CUDA);
+
+                                cached_filtered_point_cloud_ = std::make_unique<lfs::core::PointCloud>(
+                                    std::move(filtered_means_tensor), std::move(filtered_colors_tensor));
+                            } else {
+                                cached_filtered_point_cloud_.reset();
+                            }
+
+                            // Update cache keys
+                            cached_source_point_cloud_ = scene_state.point_cloud;
+                            cached_cropbox_transform_ = cb.world_transform;
+                            cached_cropbox_min_ = cb.data->min;
+                            cached_cropbox_max_ = cb.data->max;
+                            cached_cropbox_inverse_ = cb.data->inverse;
+                        }
+
+                        if (cached_filtered_point_cloud_) {
+                            point_cloud_to_render = cached_filtered_point_cloud_.get();
+                        } else {
+                            return;  // All points filtered out
+                        }
+                        break;
+                    }
+                }
+
+                LOG_TRACE("Rendering point cloud with {} points", point_cloud_to_render->size());
+
+                // Get point cloud transform from scene state
+                glm::mat4 point_cloud_transform(1.0f);
+                if (!scene_state.model_transforms.empty()) {
+                    point_cloud_transform = scene_state.model_transforms[0];
+                }
+
+                // Create viewport data
+                lfs::rendering::ViewportData viewport_data{
+                    .rotation = context.viewport.getRotationMatrix(),
+                    .translation = context.viewport.getTranslation(),
+                    .size = render_size,
+                    .fov = settings_.fov};
+
+                lfs::rendering::RenderRequest pc_request{
+                    .viewport = viewport_data,
+                    .scaling_modifier = settings_.scaling_modifier,
+                    .antialiasing = false,
+                    .sh_degree = 0,
+                    .background_color = settings_.background_color,
+                    .crop_box = std::nullopt,
+                    .point_cloud_mode = true,
+                    .voxel_size = settings_.voxel_size,
+                    .gut = false,
+                    .show_rings = false,
+                    .ring_width = 0.0f,
+                    .show_center_markers = false,
+                    .model_transforms = {point_cloud_transform},
+                    .transform_indices = nullptr,
+                    .selection_mask = nullptr,
+                    .output_screen_positions = false,
+                    .brush_active = false,
+                    .brush_x = 0.0f,
+                    .brush_y = 0.0f,
+                    .brush_radius = 0.0f,
+                    .brush_add_mode = true,
+                    .brush_selection_tensor = nullptr,
+                    .brush_saturation_mode = false,
+                    .brush_saturation_amount = 0.0f,
+                    .selection_mode_rings = false,
+                    .selected_node_mask = {},
+                    .hovered_depth_id = nullptr,
+                    .highlight_gaussian_id = -1,
+                    .far_plane = 1e10f};
+
+                auto render_result = engine_->renderPointCloud(*point_cloud_to_render, pc_request);
+                if (render_result) {
+                    cached_result_ = *render_result;
+
+                    // Present to screen
+                    glm::ivec2 viewport_pos(0, 0);
+                    if (context.viewport_region) {
+                        int gl_y = context.viewport.frameBufferSize.y
+                                   - static_cast<int>(context.viewport_region->y)
+                                   - static_cast<int>(context.viewport_region->height);
+                        viewport_pos = glm::ivec2(
+                            static_cast<int>(context.viewport_region->x),
+                            gl_y);
+                    }
+
+                    auto present_result = engine_->presentToScreen(cached_result_, viewport_pos, render_size);
+                    if (!present_result) {
+                        LOG_ERROR("Failed to present point cloud render result: {}", present_result.error());
+                    }
+                } else {
+                    LOG_ERROR("Failed to render point cloud: {}", render_result.error());
+                }
+            }
         }
 
         // Always render overlays

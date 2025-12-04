@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "core_new/splat_data_transform.hpp"
+#include "core_new/point_cloud.hpp"
 #include "core_new/splat_data.hpp"
 #include "core_new/logger.hpp"
 #include "geometry_new/bounding_box.hpp"
@@ -354,6 +355,38 @@ namespace lfs::core {
         } else {
             for (int i = 0; i < 3; ++i) {
                 const auto col = visible_means.slice(1, i, i + 1).squeeze(1);
+                min_bounds[i] = col.min().item() - padding;
+                max_bounds[i] = col.max().item() + padding;
+            }
+        }
+
+        return true;
+    }
+
+    bool compute_bounds(const PointCloud& point_cloud,
+                        glm::vec3& min_bounds,
+                        glm::vec3& max_bounds,
+                        const float padding,
+                        const bool use_percentile) {
+        const auto& means = point_cloud.means;
+        if (!means.is_valid() || means.size(0) == 0) {
+            return false;
+        }
+
+        const int64_t n = means.size(0);
+
+        if (use_percentile && n > 100) {
+            // Exclude 2% outliers (1% each end)
+            const int64_t lo = n / 100;
+            const int64_t hi = n - 1 - lo;
+            for (int i = 0; i < 3; ++i) {
+                const auto sorted = means.slice(1, i, i + 1).squeeze(1).sort(0, false).first;
+                min_bounds[i] = sorted[lo].item() - padding;
+                max_bounds[i] = sorted[hi].item() + padding;
+            }
+        } else {
+            for (int i = 0; i < 3; ++i) {
+                const auto col = means.slice(1, i, i + 1).squeeze(1);
                 min_bounds[i] = col.min().item() - padding;
                 max_bounds[i] = col.max().item() + padding;
             }

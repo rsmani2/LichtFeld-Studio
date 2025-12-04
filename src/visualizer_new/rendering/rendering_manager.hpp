@@ -301,6 +301,14 @@ namespace lfs::vis {
         unsigned long long hovered_depth_id_ = 0xFFFFFFFFFFFFFFFFULL;
         unsigned long long* d_hovered_depth_id_ = nullptr;
         int hovered_gaussian_id_ = -1;  // Extracted from lower 32 bits
+
+        // Cached filtered point cloud for cropbox preview (avoid CPU filtering every frame)
+        mutable std::unique_ptr<lfs::core::PointCloud> cached_filtered_point_cloud_;
+        mutable glm::mat4 cached_cropbox_transform_{1.0f};
+        mutable glm::vec3 cached_cropbox_min_{0.0f};
+        mutable glm::vec3 cached_cropbox_max_{0.0f};
+        mutable bool cached_cropbox_inverse_ = false;
+        mutable const lfs::core::PointCloud* cached_source_point_cloud_ = nullptr;
     };
 
 } // namespace lfs::vis

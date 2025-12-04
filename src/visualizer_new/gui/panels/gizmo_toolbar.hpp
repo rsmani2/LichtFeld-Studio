@@ -49,6 +49,7 @@ namespace lfs::vis::gui::panels {
         SelectionSubMode selection_mode = SelectionSubMode::Centers;
         TransformSpace transform_space = TransformSpace::Local;
         bool initialized = false;
+        bool dataset_mode = false;  // When true, disable selection/brush tools (no gaussians yet)
         unsigned int selection_texture = 0;
         unsigned int rectangle_texture = 0;
         unsigned int polygon_texture = 0;

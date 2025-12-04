@@ -201,8 +201,14 @@ namespace lfs::vis::gui::panels {
 
                 const auto IconButton = [&](const char* id, const unsigned int texture,
                                             const ToolMode tool, const ImGuizmo::OPERATION op,
-                                            const char* fallback, const char* tooltip) {
+                                            const char* fallback, const char* tooltip,
+                                            const bool enabled = true) {
                     const bool is_selected = (state.current_tool == tool);
+
+                    if (!enabled) {
+                        ImGui::BeginDisabled();
+                    }
+
                     ImGui::PushStyleColor(ImGuiCol_Button, is_selected ?
                         ImVec4(0.3f, 0.5f, 0.8f, 1.0f) : ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
                     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, is_selected ?
@@ -214,16 +220,30 @@ namespace lfs::vis::gui::panels {
                         ImGui::Button(fallback, btn_size);
 
                     ImGui::PopStyleColor(2);
-                    if (clicked) {
+
+                    if (!enabled) {
+                        ImGui::EndDisabled();
+                    }
+
+                    if (clicked && enabled) {
                         state.current_tool = is_selected ? ToolMode::None : tool;
                         if (!is_selected) state.current_operation = op;
                     }
-                    if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tooltip);
-                    return clicked;
+                    if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                        if (enabled) {
+                            ImGui::SetTooltip("%s", tooltip);
+                        } else {
+                            ImGui::SetTooltip("%s (disabled - no gaussians)", tooltip);
+                        }
+                    }
+                    return clicked && enabled;
                 };
 
+                // Selection and Brush tools require gaussians (disabled in dataset mode)
+                const bool has_gaussians = !state.dataset_mode;
+
                 IconButton("##selection", state.selection_texture, ToolMode::Selection,
-                           ImGuizmo::TRANSLATE, "S", "Selection");
+                           ImGuizmo::TRANSLATE, "S", "Selection", has_gaussians);
                 ImGui::SameLine();
                 IconButton("##translate", state.translation_texture, ToolMode::Translate,
                            ImGuizmo::TRANSLATE, "T", "Translate");
@@ -235,7 +255,7 @@ namespace lfs::vis::gui::panels {
                            ImGuizmo::SCALE, "S", "Scale");
                 ImGui::SameLine();
                 IconButton("##brush", state.brush_texture, ToolMode::Brush,
-                           ImGuizmo::TRANSLATE, "B", "Brush Selection");
+                           ImGuizmo::TRANSLATE, "B", "Brush Selection", has_gaussians);
                 ImGui::SameLine();
                 IconButton("##align", state.align_texture, ToolMode::Align,
                            ImGuizmo::TRANSLATE, "A", "3-Point Align");

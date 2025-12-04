@@ -134,20 +134,10 @@ namespace lfs::rendering {
                                             const glm::mat4& projection,
                                             float voxel_size,
                                             const glm::vec3& background_color) {
-        if (!initialized_) {
-            LOG_ERROR("Renderer not initialized");
-            return std::unexpected("Renderer not initialized");
-        }
-
         if (splat_data.size() == 0) {
             LOG_TRACE("No splat data to render");
-            return {}; // Nothing to render
+            return {};
         }
-
-        LOG_TIMER_TRACE("PointCloudRenderer::render");
-
-        // Use comprehensive state guard to isolate our state changes
-        GLStateGuard state_guard;
 
         // Get positions and SH coefficients
         Tensor positions = splat_data.get_means();
@@ -155,6 +145,47 @@ namespace lfs::rendering {
 
         // Extract RGB colors from SH coefficients
         Tensor colors = extractRGBFromSH(shs);
+
+        return renderInternal(positions, colors, view, projection, voxel_size, background_color);
+    }
+
+    Result<void> PointCloudRenderer::render(const lfs::core::PointCloud& point_cloud,
+                                            const glm::mat4& view,
+                                            const glm::mat4& projection,
+                                            float voxel_size,
+                                            const glm::vec3& background_color) {
+        if (point_cloud.size() == 0) {
+            LOG_TRACE("No point cloud data to render");
+            return {};
+        }
+
+        // Use means and colors directly from point cloud
+        Tensor positions = point_cloud.means;
+        Tensor colors = point_cloud.colors;
+
+        // Normalize colors to [0,1] if they're uint8
+        if (colors.dtype() == lfs::core::DataType::UInt8) {
+            colors = colors.to(lfs::core::DataType::Float32) / 255.0f;
+        }
+
+        return renderInternal(positions, colors, view, projection, voxel_size, background_color);
+    }
+
+    Result<void> PointCloudRenderer::renderInternal(const Tensor& positions,
+                                                    const Tensor& colors,
+                                                    const glm::mat4& view,
+                                                    const glm::mat4& projection,
+                                                    float voxel_size,
+                                                    const glm::vec3& background_color) {
+        if (!initialized_) {
+            LOG_ERROR("Renderer not initialized");
+            return std::unexpected("Renderer not initialized");
+        }
+
+        LOG_TIMER_TRACE("PointCloudRenderer::renderInternal");
+
+        // Use comprehensive state guard to isolate our state changes
+        GLStateGuard state_guard;
 
         const size_t num_points = positions.size(0);
         const size_t buffer_size = num_points * 6 * sizeof(float); // 6 floats per point (pos + color)

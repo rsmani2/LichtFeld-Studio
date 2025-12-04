@@ -261,6 +261,15 @@ namespace lfs::vis {
         return cached_combined_.get();
     }
 
+    const lfs::core::PointCloud* Scene::getVisiblePointCloud() const {
+        for (const auto& node : nodes_) {
+            if (node->type == NodeType::POINTCLOUD && isNodeEffectivelyVisible(node->id) && node->point_cloud) {
+                return node->point_cloud.get();
+            }
+        }
+        return nullptr;
+    }
+
     size_t Scene::getTotalGaussianCount() const {
         size_t total = 0;
         for (const auto& node : nodes_) {
@@ -293,23 +302,9 @@ namespace lfs::vis {
     std::unordered_set<int> Scene::getVisibleCameraIndices() const {
         std::unordered_set<int> visible_indices;
         for (const auto& node : nodes_) {
-            if (node->type == NodeType::CAMERA && node->visible.get() && node->camera_index >= 0) {
-                // Also check if parent (camera group) is visible
-                bool parent_visible = true;
-                if (node->parent_id != NULL_NODE) {
-                    if (const auto* parent = getNodeById(node->parent_id)) {
-                        parent_visible = parent->visible.get();
-                        // Check grandparent too (Cameras group)
-                        if (parent_visible && parent->parent_id != NULL_NODE) {
-                            if (const auto* grandparent = getNodeById(parent->parent_id)) {
-                                parent_visible = grandparent->visible.get();
-                            }
-                        }
-                    }
-                }
-                if (parent_visible) {
-                    visible_indices.insert(node->camera_index);
-                }
+            if (node->type == NodeType::CAMERA && node->camera_index >= 0 &&
+                isNodeEffectivelyVisible(node->id)) {
+                visible_indices.insert(node->camera_index);
             }
         }
         return visible_indices;
@@ -464,7 +459,9 @@ namespace lfs::vis {
 
         cached_transforms_.clear();
         for (const auto& node : nodes_) {
-            if (node->model && isNodeEffectivelyVisible(node->id)) {
+            // Include both SPLAT nodes (with model) and POINTCLOUD nodes (with point_cloud)
+            const bool has_renderable = node->model || node->point_cloud;
+            if (has_renderable && isNodeEffectivelyVisible(node->id)) {
                 cached_transforms_.push_back(getWorldTransform(node->id));
             }
         }
@@ -881,19 +878,65 @@ namespace lfs::vis {
         return id;
     }
 
-    NodeId Scene::addCropBox(const std::string& name, const NodeId parent_splat) {
-        // Verify parent is a SPLAT node
-        const auto* parent = getNodeById(parent_splat);
-        if (!parent || parent->type != NodeType::SPLAT) {
-            LOG_WARN("Cannot add cropbox '{}': parent must be a SPLAT node", name);
+    NodeId Scene::addPointCloud(const std::string& name, std::shared_ptr<lfs::core::PointCloud> point_cloud, const NodeId parent) {
+        if (!point_cloud) {
+            LOG_WARN("Cannot add point cloud node '{}': point cloud is null", name);
             return NULL_NODE;
         }
 
-        // Check if this splat already has a cropbox
+        const size_t point_count = point_cloud->size();
+        const glm::vec3 centroid = [&]() {
+            if (point_count == 0) return glm::vec3(0.0f);
+            auto means_cpu = point_cloud->means.cpu();
+            auto acc = means_cpu.accessor<float, 2>();
+            glm::vec3 sum(0.0f);
+            for (size_t i = 0; i < point_count; ++i) {
+                sum.x += acc(i, 0);
+                sum.y += acc(i, 1);
+                sum.z += acc(i, 2);
+            }
+            return sum / static_cast<float>(point_count);
+        }();
+
+        const NodeId id = next_node_id_++;
+        auto node = std::make_unique<Node>();
+        node->id = id;
+        node->parent_id = parent;
+        node->type = NodeType::POINTCLOUD;
+        node->name = name;
+        node->point_cloud = std::move(point_cloud);
+        node->gaussian_count = point_count;  // Reuse field for point count
+        node->centroid = centroid;
+
+        // Add to parent's children
+        if (parent != NULL_NODE) {
+            if (auto* p = getNodeById(parent)) {
+                p->children.push_back(id);
+            }
+        }
+
+        id_to_index_[id] = nodes_.size();
+        node->initObservables(this);
+        nodes_.push_back(std::move(node));
+        invalidateCache();
+
+        LOG_DEBUG("Added point cloud node '{}' (id={}, {} points)", name, id, point_count);
+        return id;
+    }
+
+    NodeId Scene::addCropBox(const std::string& name, const NodeId parent_node) {
+        // Verify parent is a SPLAT or POINTCLOUD node
+        const auto* parent = getNodeById(parent_node);
+        if (!parent || (parent->type != NodeType::SPLAT && parent->type != NodeType::POINTCLOUD)) {
+            LOG_WARN("Cannot add cropbox '{}': parent must be a SPLAT or POINTCLOUD node", name);
+            return NULL_NODE;
+        }
+
+        // Check if this node already has a cropbox
         for (const NodeId child_id : parent->children) {
             if (const auto* child = getNodeById(child_id)) {
                 if (child->type == NodeType::CROPBOX) {
-                    LOG_DEBUG("Splat '{}' already has cropbox '{}'", parent->name, child->name);
+                    LOG_DEBUG("Node '{}' already has cropbox '{}'", parent->name, child->name);
                     return child_id;
                 }
             }
@@ -902,20 +945,20 @@ namespace lfs::vis {
         const NodeId id = next_node_id_++;
         auto node = std::make_unique<Node>();
         node->id = id;
-        node->parent_id = parent_splat;
+        node->parent_id = parent_node;
         node->type = NodeType::CROPBOX;
         node->name = name;
         node->cropbox = std::make_unique<CropBoxData>();
 
-        // Initialize cropbox bounds from parent splat's bounding box
-        glm::vec3 splat_min, splat_max;
-        if (getNodeBounds(parent_splat, splat_min, splat_max)) {
-            node->cropbox->min = splat_min;
-            node->cropbox->max = splat_max;
+        // Initialize cropbox bounds from parent's bounding box
+        glm::vec3 bounds_min, bounds_max;
+        if (getNodeBounds(parent_node, bounds_min, bounds_max)) {
+            node->cropbox->min = bounds_min;
+            node->cropbox->max = bounds_max;
         }
 
         // Add to parent's children (must re-get parent as vector may have changed)
-        if (auto* p = getNodeById(parent_splat)) {
+        if (auto* p = getNodeById(parent_node)) {
             p->children.push_back(id);
         }
 
@@ -1440,12 +1483,29 @@ namespace lfs::vis {
             has_bounds = true;
         };
 
-        // If this node has a model, include its bounds
+        // If this node has a model (SPLAT), include its bounds
         if (node->model && node->model->size() > 0) {
             glm::vec3 model_min, model_max;
             if (lfs::core::compute_bounds(*node->model, model_min, model_max)) {
                 expand_bounds(model_min, model_max);
             }
+        }
+
+        // If this node has a point cloud (POINTCLOUD), include its bounds
+        if (node->point_cloud && node->point_cloud->size() > 0) {
+            auto means_cpu = node->point_cloud->means.cpu();
+            auto acc = means_cpu.accessor<float, 2>();
+            glm::vec3 pc_min(std::numeric_limits<float>::max());
+            glm::vec3 pc_max(std::numeric_limits<float>::lowest());
+            for (int64_t i = 0; i < node->point_cloud->size(); ++i) {
+                pc_min.x = std::min(pc_min.x, acc(i, 0));
+                pc_min.y = std::min(pc_min.y, acc(i, 1));
+                pc_min.z = std::min(pc_min.z, acc(i, 2));
+                pc_max.x = std::max(pc_max.x, acc(i, 0));
+                pc_max.y = std::max(pc_max.y, acc(i, 1));
+                pc_max.z = std::max(pc_max.z, acc(i, 2));
+            }
+            expand_bounds(pc_min, pc_max);
         }
 
         // Recursively include children bounds
@@ -1493,12 +1553,13 @@ namespace lfs::vis {
     // ========== CropBox Operations ==========
 
     NodeId Scene::getCropBoxForSplat(const NodeId splat_id) const {
-        const auto* splat = getNodeById(splat_id);
-        if (!splat || splat->type != NodeType::SPLAT) {
+        const auto* node = getNodeById(splat_id);
+        // Support both SPLAT and POINTCLOUD nodes
+        if (!node || (node->type != NodeType::SPLAT && node->type != NodeType::POINTCLOUD)) {
             return NULL_NODE;
         }
 
-        for (const NodeId child_id : splat->children) {
+        for (const NodeId child_id : node->children) {
             if (const auto* child = getNodeById(child_id)) {
                 if (child->type == NodeType::CROPBOX) {
                     return child_id;
@@ -1514,13 +1575,14 @@ namespace lfs::vis {
             return existing;
         }
 
-        const auto* splat = getNodeById(splat_id);
-        if (!splat || splat->type != NodeType::SPLAT) {
+        const auto* node = getNodeById(splat_id);
+        // Support both SPLAT and POINTCLOUD nodes
+        if (!node || (node->type != NodeType::SPLAT && node->type != NodeType::POINTCLOUD)) {
             return NULL_NODE;
         }
 
-        // Create a cropbox with a name based on the splat name
-        const std::string cropbox_name = splat->name + "_cropbox";
+        // Create a cropbox with a name based on the node name
+        const std::string cropbox_name = node->name + "_cropbox";
         return addCropBox(cropbox_name, splat_id);
     }
 
@@ -1558,7 +1620,7 @@ namespace lfs::vis {
             if (!node->visible) continue;
             if (!node->cropbox) continue;
 
-            // Check if parent splat is effectively visible
+            // Check if parent (splat or pointcloud) is effectively visible
             if (!isNodeEffectivelyVisible(node->parent_id)) continue;
 
             RenderableCropBox rcb;

@@ -16,6 +16,7 @@
 
 namespace lfs::core {
     class SplatData;
+    struct PointCloud;
     class Camera;
     class Tensor;
 } // namespace lfs::core
@@ -265,6 +266,11 @@ namespace lfs::rendering {
         // Core rendering with error handling
         virtual Result<RenderResult> renderGaussians(
             const lfs::core::SplatData& splat_data,
+            const RenderRequest& request) = 0;
+
+        // Point cloud rendering (for pre-training visualization)
+        virtual Result<RenderResult> renderPointCloud(
+            const lfs::core::PointCloud& point_cloud,
             const RenderRequest& request) = 0;
 
         // Split view rendering

@@ -31,6 +31,10 @@ namespace lfs::rendering {
             const lfs::core::SplatData& splat_data,
             const RenderRequest& request) override;
 
+        Result<RenderResult> renderPointCloud(
+            const lfs::core::PointCloud& point_cloud,
+            const RenderRequest& request) override;
+
         Result<RenderResult> renderSplitView(
             const SplitViewRequest& request) override;
 

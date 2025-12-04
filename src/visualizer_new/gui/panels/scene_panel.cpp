@@ -231,6 +231,7 @@ namespace lfs::vis::gui {
         const bool is_dataset = (node.type == NodeType::DATASET);
         const bool is_camera_group = (node.type == NodeType::CAMERA_GROUP);
         const bool is_camera = (node.type == NodeType::CAMERA);
+        const bool is_pointcloud = (node.type == NodeType::POINTCLOUD);
         const bool has_children = !node.children.empty();
 
         // Check if parent is a dataset (for "Cameras" group and "Model" splat inside dataset)
@@ -287,6 +288,10 @@ namespace lfs::vis::gui {
                 label = node.name;  // Camera name (image filename)
             } else if (is_group) {
                 label = node.name;
+            } else if (is_pointcloud) {
+                // POINTCLOUD node - show point count
+                const size_t point_count = node.point_cloud ? node.point_cloud->size() : 0;
+                label = std::format("[Points] {} ({:L})", node.name, point_count);
             } else {
                 // SPLAT node
                 label = std::format("{} ({:L})", node.name, node.gaussian_count);

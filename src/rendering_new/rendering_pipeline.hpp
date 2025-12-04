@@ -97,6 +97,9 @@ namespace lfs::rendering {
                                            ScreenQuadRenderer& renderer,
                                            const glm::ivec2& viewport_size);
 
+        // Render raw point cloud (for pre-training visualization)
+        Result<RenderResult> renderRawPointCloud(const lfs::core::PointCloud& point_cloud, const RenderRequest& request);
+
     private:
         Result<lfs::core::Camera> createCamera(const RenderRequest& request);
         glm::vec2 computeFov(float fov_degrees, int width, int height);

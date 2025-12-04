@@ -136,6 +136,23 @@ namespace lfs::vis {
             return false;
         }
 
+        // Initialize training model from PointCloud if needed
+        // This converts PointCloud node to SplatData, applying any CropBox filtering
+        if (scene_ && project_) {
+            lfs::core::param::TrainingParameters params;
+            const auto& updated_dataset = project_->getProjectData().data_set_info;
+            params.dataset = static_cast<lfs::core::param::DatasetConfig>(updated_dataset);
+            params.optimization = project_->getOptimizationParams();
+
+            auto model_init_result = lfs::training::initializeTrainingModel(params, *scene_);
+            if (!model_init_result) {
+                LOG_ERROR("Failed to initialize training model: {}", model_init_result.error());
+                last_error_ = model_init_result.error();
+                setState(State::Error);
+                return false;
+            }
+        }
+
         // ALWAYS reinitialize trainer to pick up any parameter changes from the project
         // This ensures that any UI changes are applied
         LOG_INFO("Initializing trainer with current project parameters");

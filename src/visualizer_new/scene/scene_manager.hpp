@@ -123,6 +123,7 @@ namespace lfs::vis {
         [[nodiscard]] int getSelectedNodeIndex() const;
         [[nodiscard]] std::vector<bool> getSelectedNodeMask() const;
         void ensureCropBoxForSelectedNode();
+        void selectCropBoxForCurrentNode();
 
         // Node picking
         [[nodiscard]] std::string pickNodeAtWorldPosition(const glm::vec3& world_pos) const;

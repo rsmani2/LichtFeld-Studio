@@ -5,6 +5,7 @@
 #pragma once
 
 #include "config.h"
+#include "core_new/point_cloud.hpp"
 #include "core_new/splat_data.hpp"
 #include "core_new/tensor.hpp"
 #include "gl_resources.hpp"
@@ -26,8 +27,15 @@ namespace lfs::rendering {
 
         Result<void> initialize();
 
-        // Render point cloud - now returns Result
+        // Render point cloud from SplatData (extracts RGB from SH)
         Result<void> render(const lfs::core::SplatData& splat_data,
+                            const glm::mat4& view,
+                            const glm::mat4& projection,
+                            float voxel_size,
+                            const glm::vec3& background_color);
+
+        // Render raw point cloud (uses colors directly)
+        Result<void> render(const lfs::core::PointCloud& point_cloud,
                             const glm::mat4& view,
                             const glm::mat4& projection,
                             float voxel_size,
@@ -39,6 +47,14 @@ namespace lfs::rendering {
     private:
         Result<void> createCubeGeometry();
         static Tensor extractRGBFromSH(const Tensor& shs);
+
+        // Core rendering implementation (shared by both overloads)
+        Result<void> renderInternal(const Tensor& positions,
+                                    const Tensor& colors,
+                                    const glm::mat4& view,
+                                    const glm::mat4& projection,
+                                    float voxel_size,
+                                    const glm::vec3& background_color);
 
         // OpenGL resources using RAII
         VAO cube_vao_;

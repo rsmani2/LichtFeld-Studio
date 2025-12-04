@@ -1256,6 +1256,14 @@ namespace lfs::vis {
         if (selection_tool_ && selection_tool_->isEnabled()) return input::ToolMode::SELECTION;
         if (brush_tool_ && brush_tool_->isEnabled()) return input::ToolMode::BRUSH;
         if (align_tool_ && align_tool_->isEnabled()) return input::ToolMode::ALIGN;
+        // Check GUI tool mode for CropBox (and transform tools)
+        if (gui_manager_) {
+            const auto gui_tool = gui_manager_->getCurrentToolMode();
+            if (gui_tool == gui::panels::ToolMode::CropBox) return input::ToolMode::CROP_BOX;
+            if (gui_tool == gui::panels::ToolMode::Translate) return input::ToolMode::TRANSLATE;
+            if (gui_tool == gui::panels::ToolMode::Rotate) return input::ToolMode::ROTATE;
+            if (gui_tool == gui::panels::ToolMode::Scale) return input::ToolMode::SCALE;
+        }
         return input::ToolMode::GLOBAL;
     }
 

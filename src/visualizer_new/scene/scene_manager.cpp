@@ -117,7 +117,7 @@ namespace lfs::vis {
                 return;
             }
 
-            if (event.type == "PLY" || event.type == "Group") {
+            if (event.type == "PLY" || event.type == "Group" || event.type == "Dataset") {
                 // Skip if this is a multi-select event (already handled by selectNodes)
                 auto it = event.metadata.find("multi_select");
                 if (it != event.metadata.end() && it->second != "1") {
@@ -584,23 +584,33 @@ namespace lfs::vis {
         std::string node_name;
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
-            if (selected_nodes_.empty()) return;
-            node_name = *selected_nodes_.begin();
+            // If nothing selected, try to find a POINTCLOUD node (dataset mode)
+            if (selected_nodes_.empty()) {
+                for (const auto* node : scene_.getNodes()) {
+                    if (node->type == NodeType::POINTCLOUD) {
+                        node_name = node->name;
+                        break;
+                    }
+                }
+                if (node_name.empty()) return;
+            } else {
+                node_name = *selected_nodes_.begin();
+            }
         }
         if (node_name.empty()) return;
 
         const auto* node = scene_.getNode(node_name);
         if (!node) return;
 
-        // For CROPBOX nodes, use parent SPLAT
+        // For CROPBOX nodes, use parent SPLAT/POINTCLOUD
         NodeId target_id = node->id;
         if (node->type == NodeType::CROPBOX && node->parent_id != NULL_NODE) {
             target_id = node->parent_id;
         } else if (node->type == NodeType::GROUP) {
-            // For groups, find first child SPLAT
+            // For groups, find first child SPLAT or POINTCLOUD
             for (const NodeId child_id : node->children) {
                 if (const auto* child = scene_.getNodeById(child_id)) {
-                    if (child->type == NodeType::SPLAT) {
+                    if (child->type == NodeType::SPLAT || child->type == NodeType::POINTCLOUD) {
                         target_id = child_id;
                         break;
                     }
@@ -609,7 +619,7 @@ namespace lfs::vis {
         }
 
         const auto* target = scene_.getNodeById(target_id);
-        if (!target || target->type != NodeType::SPLAT) return;
+        if (!target || (target->type != NodeType::SPLAT && target->type != NodeType::POINTCLOUD)) return;
 
         // Check if cropbox already exists
         const NodeId existing = scene_.getCropBoxForSplat(target_id);
@@ -643,6 +653,51 @@ namespace lfs::vis {
         }
 
         LOG_DEBUG("Created cropbox for node '{}'", target->name);
+    }
+
+    void SceneManager::selectCropBoxForCurrentNode() {
+        NodeId target_id = NULL_NODE;
+
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (!selected_nodes_.empty()) {
+                const auto* node = scene_.getNode(*selected_nodes_.begin());
+                if (node) {
+                    if (node->type == NodeType::SPLAT || node->type == NodeType::POINTCLOUD) {
+                        target_id = node->id;
+                    } else if (node->type == NodeType::CROPBOX) {
+                        return;  // Already a cropbox selected
+                    }
+                }
+            }
+        }
+
+        // Fall back to first POINTCLOUD
+        if (target_id == NULL_NODE) {
+            for (const auto* node : scene_.getNodes()) {
+                if (node->type == NodeType::POINTCLOUD) {
+                    target_id = node->id;
+                    break;
+                }
+            }
+        }
+
+        if (target_id == NULL_NODE) return;
+
+        const NodeId cropbox_id = scene_.getCropBoxForSplat(target_id);
+        if (cropbox_id == NULL_NODE) return;
+
+        const auto* cropbox = scene_.getNodeById(cropbox_id);
+        if (!cropbox) return;
+
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            selected_nodes_.clear();
+            selected_nodes_.insert(cropbox->name);
+        }
+
+        LOG_DEBUG("Auto-selected cropbox '{}'", cropbox->name);
+        emitSceneChanged();
     }
 
     // ========== Node Transforms ==========
@@ -893,6 +948,12 @@ namespace lfs::vis {
                 throw std::runtime_error(load_result.error());
             }
 
+            // Create cropbox for PointCloud node if present
+            const auto* pointcloud_node = scene_.getNode("PointCloud");
+            if (pointcloud_node && pointcloud_node->type == NodeType::POINTCLOUD) {
+                [[maybe_unused]] auto cropbox_id = scene_.getOrCreateCropBoxForSplat(pointcloud_node->id);
+            }
+
             // Create Trainer from Scene
             auto trainer = std::make_unique<lfs::training::Trainer>(scene_);
 
@@ -997,12 +1058,16 @@ namespace lfs::vis {
 
         SceneRenderState state;
 
-        // Get combined model
+        // Get combined model or point cloud (before training starts)
         if (content_type_ == ContentType::SplatFiles) {
             state.combined_model = scene_.getCombinedModel();
         } else if (content_type_ == ContentType::Dataset) {
-            // For dataset mode, get model from scene directly (Scene owns the model)
+            // For dataset mode, first try training model (SplatData)
             state.combined_model = scene_.getTrainingModel();
+            // If no SplatData yet, try PointCloud (pre-training mode)
+            if (!state.combined_model) {
+                state.point_cloud = scene_.getVisiblePointCloud();
+            }
         }
 
         // Get transforms and indices
@@ -1103,46 +1168,75 @@ namespace lfs::vis {
     }
 
     void SceneManager::handleCropActivePly(const lfs::geometry::BoundingBox& crop_box, const bool inverse) {
-        changeContentType(ContentType::SplatFiles);
-
-        // Only crop the selected node, not all visible nodes
-        std::vector<std::string> node_names;
+        std::vector<std::string> splat_node_names;
+        std::vector<std::string> pointcloud_node_names;
         bool had_selection = false;
+
         {
             std::lock_guard<std::mutex> lock(state_mutex_);
             if (!selected_nodes_.empty()) {
                 had_selection = true;
-                // Add all selected SPLAT nodes
                 for (const auto& node_name : selected_nodes_) {
                     const auto* selected = scene_.getNode(node_name);
-                    if (selected && selected->type == NodeType::SPLAT) {
-                        node_names.push_back(node_name);
-                        LOG_INFO("Cropping selected SPLAT node: {}", node_name);
-                    } else if (selected) {
-                        LOG_INFO("Selected node '{}' is not a SPLAT (type={}), not cropping",
-                                  node_name, static_cast<int>(selected->type));
-                    } else {
-                        LOG_WARN("Selected node '{}' not found in scene", node_name);
+                    if (!selected) continue;
+
+                    if (selected->type == NodeType::SPLAT) {
+                        splat_node_names.push_back(node_name);
+                    } else if (selected->type == NodeType::POINTCLOUD) {
+                        pointcloud_node_names.push_back(node_name);
+                    } else if (selected->type == NodeType::CROPBOX) {
+                        // Use parent SPLAT/POINTCLOUD
+                        const auto* parent = scene_.getNodeById(selected->parent_id);
+                        if (parent && parent->type == NodeType::SPLAT) {
+                            splat_node_names.push_back(parent->name);
+                        } else if (parent && parent->type == NodeType::POINTCLOUD) {
+                            pointcloud_node_names.push_back(parent->name);
+                        }
                     }
                 }
             }
         }
 
-        // Only fall back to all visible nodes if there was NO selection at all
-        // If there was a selection but it wasn't a SPLAT, don't crop anything
-        if (node_names.empty() && !had_selection) {
-            LOG_INFO("No selection, falling back to all visible nodes");
+        // Fall back to visible nodes if no selection
+        if (splat_node_names.empty() && pointcloud_node_names.empty() && !had_selection) {
             for (const auto* node : scene_.getVisibleNodes()) {
-                node_names.push_back(node->name);
+                if (node->type == NodeType::SPLAT) {
+                    splat_node_names.push_back(node->name);
+                } else if (node->type == NodeType::POINTCLOUD) {
+                    pointcloud_node_names.push_back(node->name);
+                }
             }
         }
 
-        if (node_names.empty()) {
-            LOG_INFO("No nodes to crop");
+        // Enable cropbox for POINTCLOUD nodes (deferred filtering at training start)
+        for (const auto& node_name : pointcloud_node_names) {
+            const auto* node = scene_.getNode(node_name);
+            if (!node) continue;
+
+            const NodeId cropbox_id = scene_.getCropBoxForSplat(node->id);
+            if (cropbox_id != NULL_NODE) {
+                if (auto* cropbox_data = scene_.getCropBoxData(cropbox_id)) {
+                    cropbox_data->enabled = true;
+                    cropbox_data->inverse = inverse;
+                    LOG_DEBUG("CropBox enabled for PointCloud '{}'", node_name);
+                }
+            }
+        }
+
+        if (splat_node_names.empty()) {
+            if (!pointcloud_node_names.empty()) {
+                emitSceneChanged();
+                if (rendering_manager_) {
+                    rendering_manager_->markDirty();
+                }
+            }
             return;
         }
 
-        for (const auto& node_name : node_names) {
+        // Only change content type when cropping SPLAT nodes
+        changeContentType(ContentType::SplatFiles);
+
+        for (const auto& node_name : splat_node_names) {
             auto* node = scene_.getMutableNode(node_name);
             if (!node || !node->model) {
                 continue;
@@ -1449,14 +1543,24 @@ namespace lfs::vis {
             return;
         }
 
-        const auto* combined_model = scene_.getCombinedModel();
-        if (!combined_model || combined_model->size() == 0) {
-            return;
-        }
-
         glm::vec3 min_bounds, max_bounds;
-        if (!lfs::core::compute_bounds(*combined_model, min_bounds, max_bounds, 0.0f, use_percentile)) {
-            return;
+
+        // Try SplatData first (combined model)
+        const auto* combined_model = scene_.getCombinedModel();
+        if (combined_model && combined_model->size() > 0) {
+            if (!lfs::core::compute_bounds(*combined_model, min_bounds, max_bounds, 0.0f, use_percentile)) {
+                return;
+            }
+        } else {
+            // Fall back to PointCloud (pre-training data)
+            const auto* point_cloud = scene_.getVisiblePointCloud();
+            if (!point_cloud || point_cloud->size() == 0) {
+                LOG_WARN("No splat data or point cloud available for fit to scene");
+                return;
+            }
+            if (!lfs::core::compute_bounds(*point_cloud, min_bounds, max_bounds, 0.0f, use_percentile)) {
+                return;
+            }
         }
 
         const glm::vec3 center = (min_bounds + max_bounds) * 0.5f;
