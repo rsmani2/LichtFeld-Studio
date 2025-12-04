@@ -319,6 +319,7 @@ namespace lfs::vis {
         void rebuildTransformCacheIfNeeded() const;
         void updateWorldTransform(const Node& node) const;
         void removeNodeInternal(const std::string& name, bool keep_children, bool force);
+        void setNodeVisibilityById(NodeId id, bool visible);
 
         // Helper to find group by ID
         SelectionGroup* findGroup(uint8_t id);

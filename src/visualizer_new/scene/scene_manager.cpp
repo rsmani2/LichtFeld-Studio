@@ -272,62 +272,48 @@ namespace lfs::vis {
     }
 
     std::string SceneManager::addSplatFile(const std::filesystem::path& path, const std::string& name_hint,
-                                           bool is_visible) {
+                                           const bool is_visible) {
         LOG_TIMER_TRACE("SceneManager::addSplatFile");
 
         try {
-            // If not in splat mode, switch to it
             if (content_type_ != ContentType::SplatFiles) {
-                LOG_DEBUG("Not in splat mode, switching to splat mode and loading");
                 loadSplatFile(path);
                 return path.stem().string();
             }
 
-            LOG_INFO("Adding splat file to scene: {}", path.string());
-
-            // Load the file
             auto loader = lfs::loader::Loader::create();
-            lfs::loader::LoadOptions options{
+            const lfs::loader::LoadOptions options{
                 .resize_factor = -1,
                 .max_width = 3840,
                 .images_folder = "images",
                 .validate_only = false};
 
-            LOG_TRACE("Loading splat data");
             auto load_result = loader->load(path, options);
             if (!load_result) {
-                LOG_ERROR("Failed to load splat file: {}", load_result.error());
                 throw std::runtime_error(load_result.error());
             }
 
             auto* splat_data = std::get_if<std::shared_ptr<lfs::core::SplatData>>(&load_result->data);
             if (!splat_data || !*splat_data) {
-                LOG_ERROR("Expected splat file from: {}", path.string());
                 throw std::runtime_error("Expected splat file");
             }
 
             // Generate unique name
-            std::string base_name = name_hint.empty() ? path.stem().string() : name_hint;
+            const std::string base_name = name_hint.empty() ? path.stem().string() : name_hint;
             std::string name = base_name;
             int counter = 1;
-
             while (scene_.getNode(name) != nullptr) {
                 name = std::format("{}_{}", base_name, counter++);
-                LOG_TRACE("Name '{}' already exists, trying '{}'", base_name, name);
             }
 
-            size_t gaussian_count = (*splat_data)->size();
-            LOG_DEBUG("Adding node '{}' with {} gaussians", name, gaussian_count);
-
+            const size_t gaussian_count = (*splat_data)->size();
             scene_.addNode(name, std::make_unique<lfs::core::SplatData>(std::move(**splat_data)));
 
             // Create cropbox as child of this splat
-            const auto* splat_node = scene_.getNode(name);
-            if (splat_node) {
-                [[maybe_unused]] const NodeId cropbox_id = scene_.getOrCreateCropBoxForSplat(splat_node->id);
+            if (const auto* splat_node = scene_.getNode(name)) {
+                [[maybe_unused]] const auto cropbox_id = scene_.getOrCreateCropBoxForSplat(splat_node->id);
             }
 
-            // Update paths
             {
                 std::lock_guard<std::mutex> lock(state_mutex_);
                 splat_paths_[name] = path;
@@ -340,17 +326,16 @@ namespace lfs::vis {
                 .is_visible = is_visible,
                 .parent_name = "",
                 .is_group = false,
-                .node_type = 0}  // SPLAT
+                .node_type = 0}
                 .emit();
 
-            // Emit PLYAdded for the cropbox (re-lookup splat as vector may have reallocated)
+            // Emit PLYAdded for the cropbox
             const auto* splat_for_cropbox = scene_.getNode(name);
             if (splat_for_cropbox) {
                 const NodeId cropbox_id = scene_.getCropBoxForSplat(splat_for_cropbox->id);
                 if (cropbox_id != NULL_NODE) {
                     const auto* cropbox_node = scene_.getNodeById(cropbox_id);
                     if (cropbox_node) {
-                        LOG_DEBUG("Emitting PLYAdded for cropbox '{}'", cropbox_node->name);
                         state::PLYAdded{
                             .name = cropbox_node->name,
                             .node_gaussians = 0,
@@ -358,7 +343,7 @@ namespace lfs::vis {
                             .is_visible = true,
                             .parent_name = name,
                             .is_group = false,
-                            .node_type = 2}  // CROPBOX
+                            .node_type = 2}
                             .emit();
                     }
                 }
@@ -369,7 +354,6 @@ namespace lfs::vis {
             selectNode(name);
 
             LOG_INFO("Added '{}' ({} gaussians)", name, gaussian_count);
-
             return name;
 
         } catch (const std::exception& e) {
@@ -406,8 +390,7 @@ namespace lfs::vis {
         emitSceneChanged();
     }
 
-    void SceneManager::setPLYVisibility(const std::string& name, bool visible) {
-        LOG_TRACE("Setting '{}' visibility to: {}", name, visible);
+    void SceneManager::setPLYVisibility(const std::string& name, const bool visible) {
         scene_.setNodeVisibility(name, visible);
         emitSceneChanged();
     }

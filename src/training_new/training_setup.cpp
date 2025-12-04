@@ -503,13 +503,10 @@ namespace lfs::training {
             lfs::core::random_choose(*splat_result, max_cap);
         }
 
-        // Remove the POINTCLOUD node and add the new SPLAT node
+        // Remove the POINTCLOUD node and its children (e.g., CropBox)
         if (point_cloud_node_id != lfs::vis::NULL_NODE) {
-            // Get the node to access its name for removal
-            const auto* pc_node = scene.getNodeById(point_cloud_node_id);
-            if (pc_node) {
-                std::string pc_name = pc_node->name;
-                scene.removeNode(pc_name, true);  // Keep children (like CropBox) - though they'll be orphaned
+            if (const auto* pc_node = scene.getNodeById(point_cloud_node_id)) {
+                scene.removeNode(pc_node->name, false);
             }
         }
 

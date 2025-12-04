@@ -187,12 +187,23 @@ namespace lfs::vis {
         }
     }
 
-    void Scene::setNodeVisibility(const std::string& name, bool visible) {
-        auto it = std::find_if(nodes_.begin(), nodes_.end(),
-                               [&name](const std::unique_ptr<Node>& node) { return node->name == name; });
-
+    void Scene::setNodeVisibility(const std::string& name, const bool visible) {
+        const auto it = std::find_if(nodes_.begin(), nodes_.end(),
+                                     [&name](const std::unique_ptr<Node>& n) { return n->name == name; });
         if (it != nodes_.end()) {
-            (*it)->visible = visible;  // Observable auto-invalidates cache
+            setNodeVisibilityById((*it)->id, visible);
+        }
+    }
+
+    void Scene::setNodeVisibilityById(const NodeId id, const bool visible) {
+        const auto idx_it = id_to_index_.find(id);
+        if (idx_it == id_to_index_.end()) return;
+
+        Node* node = nodes_[idx_it->second].get();
+        node->visible = visible;
+
+        for (const NodeId child_id : node->children) {
+            setNodeVisibilityById(child_id, visible);
         }
     }
 

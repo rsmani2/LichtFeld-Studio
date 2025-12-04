@@ -177,7 +177,6 @@ namespace lfs::vis::gui::widgets {
     }
 
     void DrawModeStatusWithContentSwitch(const UIContext& ctx) {
-        // draw the mode status
-        widgets::DrawModeStatus(ctx);
+        DrawModeStatus(ctx);
     }
 } // namespace lfs::vis::gui::widgets

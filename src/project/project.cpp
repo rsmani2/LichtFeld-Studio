@@ -207,16 +207,13 @@ namespace gs::management {
             return false;
         }
 
-        if (!std::filesystem::is_directory(targetPath.parent_path())) {
-            // Create the directory if it doesn't exist
+        const auto parent_path = targetPath.parent_path();
+        if (!std::filesystem::is_directory(parent_path)) {
             try {
-                if (!std::filesystem::create_directories(targetPath.parent_path())) {
-                    LOG_ERROR("LichtFeldProjectFile: failed to create parent directory {}", targetPath.parent_path().string());
-                    return false;
-                }
-                LOG_INFO("Created project directory: {}", targetPath.parent_path().string());
+                std::filesystem::create_directories(parent_path);
+                LOG_DEBUG("Created project directory: {}", parent_path.string());
             } catch (const std::filesystem::filesystem_error& e) {
-                LOG_ERROR("LichtFeldProjectFile: failed to create parent directory {}: {}", targetPath.parent_path().string(), e.what());
+                LOG_ERROR("Failed to create directory {}: {}", parent_path.string(), e.what());
                 return false;
             }
         }
