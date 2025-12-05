@@ -346,6 +346,8 @@ namespace lfs::rendering {
             float scale = 0.1f,
             const glm::mat4& scene_transform = glm::mat4(1.0f)) = 0;
 
+        virtual void clearFrustumCache() = 0;
+
         // Get gizmo interaction interface
         virtual std::shared_ptr<GizmoInteraction> getGizmoInteraction() = 0;
 

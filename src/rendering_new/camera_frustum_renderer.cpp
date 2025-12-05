@@ -29,6 +29,24 @@ CameraFrustumRenderer::~CameraFrustumRenderer() {
     stopThumbnailLoader();
 }
 
+void CameraFrustumRenderer::clearThumbnailCache() {
+    const std::scoped_lock lock(pending_mutex_, load_queue_mutex_, ready_queue_mutex_);
+
+    thumbnail_pending_.clear();
+    thumbnail_load_queue_ = {};
+    thumbnail_ready_queue_ = {};
+
+    thumbnail_array_ = Texture{};
+    thumbnail_array_capacity_ = 0;
+    thumbnail_array_count_ = 0;
+    uid_to_layer_.clear();
+
+    cached_instances_.clear();
+    camera_ids_.clear();
+    camera_positions_.clear();
+    last_scale_ = -1.0f;
+}
+
 Result<void> CameraFrustumRenderer::init() {
     auto shader_result = load_shader("camera_frustum", "camera_frustum.vert", "camera_frustum.frag", false);
     if (!shader_result) {

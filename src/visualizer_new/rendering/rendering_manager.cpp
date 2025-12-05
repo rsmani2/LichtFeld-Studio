@@ -41,32 +41,22 @@ namespace lfs::vis {
         LOG_DEBUG("GTTextureCache cleared");
     }
 
-    unsigned int GTTextureCache::getGTTexture(int cam_id, const std::filesystem::path& image_path) {
-        // Check if already cached
-        if (auto it = texture_cache_.find(cam_id); it != texture_cache_.end()) {
+    unsigned int GTTextureCache::getGTTexture(const int cam_id, const std::filesystem::path& image_path) {
+        if (const auto it = texture_cache_.find(cam_id); it != texture_cache_.end()) {
             it->second.last_access = std::chrono::steady_clock::now();
-            LOG_TRACE("GT texture cache hit for camera {}", cam_id);
             return it->second.texture_id;
         }
 
-        // Load new texture
-        LOG_DEBUG("Loading GT image for camera {}: {}", cam_id, image_path.string());
-        unsigned int texture_id = loadTexture(image_path);
-
+        const unsigned int texture_id = loadTexture(image_path);
         if (texture_id == 0) {
-            LOG_ERROR("Failed to load GT texture for camera {}", cam_id);
             return 0;
         }
 
-        // Evict oldest if cache is full
         if (texture_cache_.size() >= MAX_CACHE_SIZE) {
             evictOldest();
         }
 
-        // Add to cache
         texture_cache_[cam_id] = {texture_id, std::chrono::steady_clock::now()};
-        LOG_DEBUG("Cached GT texture {} for camera {}", texture_id, cam_id);
-
         return texture_id;
     }
 
@@ -352,6 +342,7 @@ namespace lfs::vis {
             cached_source_point_cloud_ = nullptr;
             render_texture_valid_ = false;
             gt_texture_cache_.clear();
+            if (engine_) { engine_->clearFrustumCache(); }
             current_camera_id_ = -1;
             last_model_ptr_ = 0;
             markDirty();

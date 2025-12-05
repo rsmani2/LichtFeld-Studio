@@ -57,6 +57,8 @@ public:
 
     [[nodiscard]] bool isInitialized() const { return initialized_; }
 
+    void clearThumbnailCache();
+
 private:
     struct Vertex {
         glm::vec3 position;

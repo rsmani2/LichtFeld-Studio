@@ -230,9 +230,21 @@ namespace lfs::vis {
         nodes_.clear();
         id_to_index_.clear();
         next_node_id_ = 0;
+
         cached_combined_.reset();
+        cached_transform_indices_.reset();
+        cached_transforms_.clear();
         model_cache_valid_ = false;
         transform_cache_valid_ = false;
+
+        selection_mask_.reset();
+        has_selection_ = false;
+        resetSelectionState();
+
+        train_cameras_.reset();
+        val_cameras_.reset();
+        initial_point_cloud_.reset();
+        training_model_node_.clear();
     }
 
     std::pair<std::string, std::string> Scene::cycleVisibilityWithNames() {

@@ -102,6 +102,8 @@ namespace lfs::rendering {
             float scale,
             const glm::mat4& scene_transform = glm::mat4(1.0f)) override;
 
+        void clearFrustumCache() override;
+
         // Pipeline compatibility
         RenderingPipelineResult renderWithPipeline(
             const lfs::core::SplatData& model,

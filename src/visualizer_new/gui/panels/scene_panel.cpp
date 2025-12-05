@@ -28,11 +28,17 @@ namespace lfs::vis::gui {
     ScenePanel::~ScenePanel() = default;
 
     void ScenePanel::setupEventHandlers() {
-        // Only need handlers for image-related events now
-        // PLY nodes are queried directly from Scene
+        cmd::GoToCamView::when([this](const auto& e) { handleGoToCamView(e); });
 
-        cmd::GoToCamView::when([this](const auto& event) {
-            handleGoToCamView(event);
+        state::SceneCleared::when([this](const auto&) {
+            m_imagePaths.clear();
+            m_pathToCamId.clear();
+            m_currentDatasetPath.clear();
+            m_selectedImageIndex = -1;
+        });
+
+        state::DatasetLoadCompleted::when([this](const auto& e) {
+            if (e.success) { loadImageCams(e.path); }
         });
     }
 

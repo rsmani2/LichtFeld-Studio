@@ -26,20 +26,21 @@ namespace lfs::vis {
         });
     }
 
-    void DataLoadingService::handleLoadFileCommand(bool is_dataset, const std::filesystem::path& path) {
+    void DataLoadingService::handleLoadFileCommand(const bool is_dataset, const std::filesystem::path& path) {
         if (is_dataset) {
             loadDataset(path);
-        } else {
-            scene_manager_->changeContentType(SceneManager::ContentType::SplatFiles);
-            // Determine file type and load appropriately
-            if (isSOGFile(path) || isPLYFile(path)) {
-                std::string ply_name = path.stem().string();
-                std::string actual_name = scene_manager_->addSplatFile(path, ply_name);
-                scene_manager_->getProject()->addPly(true, path, -1, actual_name);
-            } else {
-                // Let scene manager determine the type
-                scene_manager_->addSplatFile(path);
-            }
+            return;
+        }
+
+        if (scene_manager_->getContentType() == SceneManager::ContentType::Dataset) {
+            scene_manager_->clear();
+        }
+        scene_manager_->changeContentType(SceneManager::ContentType::SplatFiles);
+
+        const std::string name = path.stem().string();
+        const std::string actual_name = scene_manager_->addSplatFile(path, name);
+        if (const auto project = scene_manager_->getProject()) {
+            project->addPly(true, path, -1, actual_name);
         }
     }
 

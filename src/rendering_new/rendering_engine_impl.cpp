@@ -550,6 +550,10 @@ namespace lfs::rendering {
             cameras, mouse_pos, viewport_pos, viewport_size, view, proj, scale, scene_transform);
     }
 
+    void RenderingEngineImpl::clearFrustumCache() {
+        camera_frustum_renderer_.clearThumbnailCache();
+    }
+
     RenderingPipelineResult RenderingEngineImpl::renderWithPipeline(
         const lfs::core::SplatData& model,
         const RenderingPipelineRequest& request) {
