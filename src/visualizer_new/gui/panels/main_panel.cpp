@@ -2,12 +2,17 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
+#include <glad/glad.h>
+
 #include "gui/panels/main_panel.hpp"
 #include "core/editor_context.hpp"
 #include "core_new/events.hpp"
+#include "core_new/image_io.hpp"
+#include "core_new/logger.hpp"
 #include "gui/panels/tools_panel.hpp"
 #include "gui/panels/training_panel.hpp"
 #include "gui/ui_widgets.hpp"
+#include "internal/resource_paths.hpp"
 #include "scene/scene_manager.hpp"
 #include "theme/theme.hpp"
 #include "tools/selection_tool.hpp"
@@ -22,6 +27,49 @@
 namespace lfs::vis::gui::panels {
 
     using namespace lfs::core::events;
+
+    namespace {
+        // Selection group icons (Tabler Icons - MIT license)
+        struct SelectionIcons {
+            unsigned int locked = 0;
+            unsigned int unlocked = 0;
+            bool initialized = false;
+        };
+
+        SelectionIcons g_selection_icons;
+
+        unsigned int loadIcon(const std::string& name) {
+            try {
+                const auto path = lfs::vis::getAssetPath("icon/scene/" + name);
+                const auto [data, width, height, channels] = lfs::core::load_image_with_alpha(path);
+
+                unsigned int texture_id;
+                glGenTextures(1, &texture_id);
+                glBindTexture(GL_TEXTURE_2D, texture_id);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+                const GLenum format = (channels == 4) ? GL_RGBA : GL_RGB;
+                glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+
+                lfs::core::free_image(data);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                return texture_id;
+            } catch (const std::exception& e) {
+                LOG_WARN("Failed to load icon {}: {}", name, e.what());
+                return 0;
+            }
+        }
+
+        void ensureIconsLoaded() {
+            if (g_selection_icons.initialized) return;
+            g_selection_icons.locked = loadIcon("locked.png");
+            g_selection_icons.unlocked = loadIcon("unlocked.png");
+            g_selection_icons.initialized = true;
+        }
+    } // namespace
 
     void DrawWindowControls(const UIContext& ctx) {
 
@@ -357,6 +405,9 @@ namespace lfs::vis::gui::panels {
         auto* scene_manager = ctx.viewer->getSceneManager();
         if (!scene_manager) return;
 
+        // Lazy-load icons
+        ensureIconsLoaded();
+
         Scene& scene = scene_manager->getScene();
 
         if (!ImGui::CollapsingHeader("Selection Groups", ImGuiTreeNodeFlags_DefaultOpen)) return;
@@ -389,17 +440,31 @@ namespace lfs::vis::gui::panels {
                     ImGui::PushStyleColor(ImGuiCol_HeaderHovered, ImVec4(group.color.r * 0.5f, group.color.g * 0.5f, group.color.b * 0.5f, 0.7f));
                 }
 
-                // Lock button
+                // Lock button with icon
                 const bool is_locked = group.locked;
-                if (is_locked) {
-                    ImGui::PushStyleColor(ImGuiCol_Text, theme().palette.warning);
+                const unsigned int lock_tex = is_locked ? g_selection_icons.locked : g_selection_icons.unlocked;
+                const ImVec4 lock_tint = is_locked
+                    ? ImVec4(1.0f, 0.7f, 0.3f, 1.0f)   // Orange for locked
+                    : ImVec4(0.6f, 0.6f, 0.6f, 0.6f);  // Gray for unlocked
+
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, withAlpha(theme().palette.surface_bright, 0.5f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, withAlpha(theme().palette.surface_bright, 0.7f));
+
+                constexpr float LOCK_ICON_SIZE = 14.0f;
+                if (lock_tex) {
+                    if (ImGui::ImageButton("##lock", static_cast<ImTextureID>(lock_tex),
+                                           ImVec2(LOCK_ICON_SIZE, LOCK_ICON_SIZE),
+                                           ImVec2(0, 0), ImVec2(1, 1), ImVec4(0, 0, 0, 0), lock_tint)) {
+                        scene.setSelectionGroupLocked(group.id, !is_locked);
+                    }
+                } else {
+                    if (ImGui::SmallButton(is_locked ? "L" : "U")) {
+                        scene.setSelectionGroupLocked(group.id, !is_locked);
+                    }
                 }
-                if (ImGui::SmallButton(is_locked ? "L" : "U")) {
-                    scene.setSelectionGroupLocked(group.id, !is_locked);
-                }
-                if (is_locked) {
-                    ImGui::PopStyleColor();
-                }
+                ImGui::PopStyleColor(3);
+
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip(is_locked ? "Locked: other groups cannot overwrite" : "Unlocked: can be overwritten");
                 }

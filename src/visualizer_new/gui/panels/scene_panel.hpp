@@ -48,6 +48,10 @@ namespace lfs::vis {
             // Drag-drop state
             std::string m_dragPayload;
 
+            // Filter
+            char m_filterText[128] = {};
+            mutable int m_rowIndex = 0;  // For alternating row backgrounds
+
             // Rename state
             struct RenameState {
                 bool is_renaming = false;
@@ -71,6 +75,22 @@ namespace lfs::vis {
 
             // For loading training cameras in scene panel
             std::shared_ptr<const TrainerManager> m_trainerManager;
+
+            // Scene icons (Tabler Icons - MIT license)
+            struct SceneIcons {
+                unsigned int visible = 0;
+                unsigned int hidden = 0;
+                unsigned int group = 0;
+                unsigned int dataset = 0;
+                unsigned int camera = 0;
+                unsigned int splat = 0;
+                unsigned int cropbox = 0;
+                unsigned int pointcloud = 0;
+                bool initialized = false;
+            } m_icons;
+
+            void initIcons();
+            void shutdownIcons();
 
             // Helper methods
             void setupEventHandlers();
