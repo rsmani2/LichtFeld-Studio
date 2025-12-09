@@ -131,7 +131,7 @@ namespace gs::training {
 
         std::expected<std::pair<torch::Tensor, ComputeLossContext>, std::string>
         compute_loss_forward(const torch::Tensor& opacities) const {
-            auto opacities_with_grad = opacities.requires_grad_(true);
+            auto opacities_with_grad = opacities.clone().detach().requires_grad_(true);
             auto loss_result = compute_loss(opacities_with_grad);
             if (!loss_result.has_value()) {
                 return std::unexpected(loss_result.error());

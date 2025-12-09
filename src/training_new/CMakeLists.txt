@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 
 # Add fastlfs backend
-add_subdirectory(fastgs)
+add_subdirectory(rasterization/fastgs)
 
 # Add LibTorch-free gsplat backend
 add_subdirectory(rasterization/gsplat)
@@ -74,7 +74,7 @@ set(TRAINING_NEW_SOURCES
     rasterization/fast_rasterizer.cpp
     rasterization/gsplat_rasterizer.cpp
     components/bilateral_grid.cpp
-    # components/sparsity_optimizer.cpp       # Temporarily disabled - requires LibTorch
+    components/sparsity_optimizer.cpp
     metrics/metrics.cpp
     checkpoint.cpp
     trainer.cpp
@@ -93,9 +93,9 @@ target_include_directories(lfs_training
         ${CMAKE_SOURCE_DIR}/src                   # For old training components (TODO: port)
         ${CMAKE_SOURCE_DIR}/src/training          # For old training components (TODO: port)
         ${CMAKE_SOURCE_DIR}/src/training/fastgs  # For adam_api.h (old)
-        ${CMAKE_CURRENT_SOURCE_DIR}/fastgs/rasterization/include  # For rasterization_api.h
-        ${CMAKE_CURRENT_SOURCE_DIR}/fastgs/optimizer/include
-        ${CMAKE_CURRENT_SOURCE_DIR}/fastgs/utils
+        ${CMAKE_CURRENT_SOURCE_DIR}/rasterization/fastgs/rasterization/include  # For rasterization_api.h
+        ${CMAKE_CURRENT_SOURCE_DIR}/rasterization/fastgs/optimizer/include
+        ${CMAKE_CURRENT_SOURCE_DIR}/rasterization/fastgs/utils
         ${CMAKE_CURRENT_SOURCE_DIR}/rasterization  # For gsplat headers
 )
 

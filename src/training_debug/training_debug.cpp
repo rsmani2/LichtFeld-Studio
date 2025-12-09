@@ -44,7 +44,7 @@
 
 // IMPORTANT: Include NEW rasterization_api.h BEFORE fast_rasterizer.hpp
 // Must use full path because there are multiple rasterization_api.h files!
-#include "../training_new/fastgs/rasterization/include/rasterization_api.h"   // Defines fast_lfs::rasterization namespace
+#include "../training_new/rasterization/fastgs/rasterization/include/rasterization_api.h"   // Defines fast_lfs::rasterization namespace
 
 // Include fast_rasterizer headers for both pipelines
 #include "../training/rasterization/fast_rasterizer.hpp"       // gs::training::fast_rasterize_forward

@@ -5,8 +5,8 @@
 #pragma once
 
 #include "components/bilateral_grid.hpp"
-// TODO: Port these components to LibTorch-free implementation
-// #include "components/sparsity_optimizer.hpp"     // Temporarily disabled - requires LibTorch
+#include "components/sparsity_optimizer.hpp"
+// TODO: Port pose optimization to LibTorch-free implementation
 // #include "components/poseopt.hpp"
 // #include "core/events.hpp"                  // Temporarily disabled - requires LibTorch (gs_core)
 #include "checkpoint.hpp"
@@ -162,18 +162,12 @@ namespace lfs::training {
         //     const std::unique_ptr<BilateralGrid>& bilateral_grid,
         //     const lfs::core::param::OptimizationParameters& opt_params);
 
-        // Sparsity-related methods (LibTorch-free) - Temporarily disabled
-        // std::expected<std::pair<float, SparsityLossContext>, std::string> compute_sparsity_loss_forward(
-        //     int iter,
-        //     const lfs::core::SplatData& splatData);
+        // Sparsity optimization - returns GPU tensor (no CPU sync)
+        std::expected<std::pair<lfs::core::Tensor, SparsityLossContext>, std::string> compute_sparsity_loss_forward(
+            const int iter, const lfs::core::SplatData& splat_data);
 
-        // std::expected<void, std::string> handle_sparsity_update(
-        //     int iter,
-        //     lfs::core::SplatData& splatData);
-
-        // std::expected<void, std::string> apply_sparsity_pruning(
-        //     int iter,
-        //     lfs::core::SplatData& splatData);
+        std::expected<void, std::string> handle_sparsity_update(const int iter, lfs::core::SplatData& splat_data);
+        std::expected<void, std::string> apply_sparsity_pruning(const int iter, lfs::core::SplatData& splat_data);
 
         // Cleanup method for re-initialization
         void cleanup();
@@ -206,8 +200,7 @@ namespace lfs::training {
         // std::unique_ptr<PoseOptimizationModule> poseopt_module_; // Pose optimization module
         // std::unique_ptr<torch::optim::Adam> poseopt_optimizer_;  // Optimizer for pose optimization
 
-        // Sparsity optimizer (LibTorch-free) - Temporarily disabled (requires LibTorch)
-        // std::unique_ptr<ISparsityOptimizer> sparsity_optimizer_;
+        std::unique_ptr<ISparsityOptimizer> sparsity_optimizer_;
 
         // Metrics evaluator - handles all evaluation logic
         std::unique_ptr<lfs::training::MetricsEvaluator> evaluator_;

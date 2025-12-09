@@ -8,8 +8,8 @@
 #include "strategies/mcmc.hpp"
 #include "strategies/default_strategy.hpp"
 #include "components/bilateral_grid.hpp"
-// TODO: Port components to LibTorch-free implementation
-// #include "components/sparsity_optimizer.hpp"      // Temporarily disabled - requires LibTorch
+#include "components/sparsity_optimizer.hpp"
+// TODO: Port pose optimization to LibTorch-free implementation
 // #include "components/poseopt.hpp"
 #include "core_new/events.hpp"
 #include "core_new/image_io.hpp"
@@ -60,7 +60,7 @@ namespace lfs::training {
         bilateral_grid_.reset();
         // poseopt_module_.reset();
         // poseopt_optimizer_.reset();
-        // sparsity_optimizer_.reset();            // Temporarily disabled - requires LibTorch
+        sparsity_optimizer_.reset();
         evaluator_.reset();
 
         // Clear datasets (will be recreated)
@@ -144,98 +144,50 @@ namespace lfs::training {
         return lfs::training::losses::OpacityRegularization::forward(splatData.opacity_raw(), optimizer.get_grad(ParamType::Opacity), params);
     }
 
-    //     std::expected<std::pair<float, BilateralGridTVContext>, std::string> Trainer::compute_bilateral_grid_tv_loss(
-    //         const std::unique_ptr<BilateralGrid>& bilateral_grid,
-    //         const lfs::core::param::OptimizationParameters& opt_params) {
-    //         try {
-    //             if (opt_params.use_bilateral_grid) {
-    //                 // Manual forward (no autograd)
-    //                 auto [tv_loss_value, ctx] = bilateral_grid->tv_loss_forward();
-    //                 float weighted_loss = opt_params.tv_loss_weight * tv_loss_value;
-    // 
-    //                 // Return weighted loss value and context
-    //                 return std::make_pair(weighted_loss, ctx);
-    //             }
-    //             // Return zero loss with empty context
-    //             BilateralGridTVContext empty_ctx;
-    //             return std::make_pair(0.0f, empty_ctx);
-    //         } catch (const std::exception& e) {
-    //             return std::unexpected(std::format("Error computing bilateral grid TV loss: {}", e.what()));
-    //         }
-    //     }
+    std::expected<std::pair<lfs::core::Tensor, SparsityLossContext>, std::string>
+    Trainer::compute_sparsity_loss_forward(const int iter, const lfs::core::SplatData& splat_data) {
+        if (!sparsity_optimizer_ || !sparsity_optimizer_->should_apply_loss(iter)) {
+            auto zero = lfs::core::Tensor::zeros({1}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
+            return std::make_pair(std::move(zero), SparsityLossContext{});
+        }
 
-    //     std::expected<std::pair<float, SparsityLossContext>, std::string>
-    //     Trainer::compute_sparsity_loss_forward(int iter, const lfs::core::SplatData& splatData) {
-    //         // Handle initialization before computing loss
-    //         if (sparsity_optimizer_ && sparsity_optimizer_->should_apply_loss(iter)) {
-    //             if (!sparsity_optimizer_->is_initialized()) {
-    //                 auto init_result = sparsity_optimizer_->initialize(splatData.opacity_raw());
-    //                 if (!init_result) {
-    //                     return std::unexpected(init_result.error());
-    //                 }
-    //                 LOG_INFO("Sparsity optimizer initialized at iteration {}", iter);
-    //             }
-    // 
-    //             // Compute loss forward (manual - no autograd)
-    //             return sparsity_optimizer_->compute_loss_forward(splatData.opacity_raw());
-    //         }
-    // 
-    //         // Return zero loss with empty context if not active
-    //         SparsityLossContext empty_ctx{};
-    //         return std::make_pair(0.0f, empty_ctx);
-    //     }
-    // 
-    //     std::expected<void, std::string> Trainer::handle_sparsity_update(
-    //         int iter,
-    //         lfs::core::SplatData& splatData) {
-    //         try {
-    //             if (sparsity_optimizer_ && sparsity_optimizer_->should_update(iter)) {
-    //                 LOG_TRACE("Updating sparsity state at iteration {}", iter);
-    //                 auto result = sparsity_optimizer_->update_state(splatData.opacity_raw());
-    //                 if (!result) {
-    //                     return std::unexpected(result.error());
-    //                 }
-    //             }
-    //             return {};
-    //         } catch (const std::exception& e) {
-    //             return std::unexpected(std::format("Error updating sparsity state: {}", e.what()));
-    //         }
-    //     }
-    // 
-    //     std::expected<void, std::string> Trainer::apply_sparsity_pruning(
-    //         int iter,
-    //         lfs::core::SplatData& splatData) {
-    //         try {
-    //             if (sparsity_optimizer_ && sparsity_optimizer_->should_prune(iter)) {
-    //                 LOG_INFO("Applying sparsity-based pruning at iteration {}", iter);
-    // 
-    //                 auto mask_result = sparsity_optimizer_->get_prune_mask(splatData.opacity_raw());
-    //                 if (!mask_result) {
-    //                     return std::unexpected(mask_result.error());
-    //                 }
-    //                 auto prune_mask = *mask_result;
-    // 
-    //                 int n_before = static_cast<int>(splatData.size());
-    // 
-    //                 // Use strategy's remove functionality
-    //                 strategy_->remove_gaussians(prune_mask);
-    // 
-    //                 int n_after = static_cast<int>(splatData.size());
-    //                 int n_prune = n_before - n_after;
-    // 
-    //                 LOG_INFO("Pruned {} Gaussians: {} -> {} ({}% reduction)",
-    //                          n_prune, n_before, n_after,
-    //                          static_cast<int>(100.0f * n_prune / n_before));
-    // 
-    //                 // Clear sparsity optimizer after pruning
-    //                 sparsity_optimizer_.reset();
-    //                 LOG_DEBUG("Sparsity optimizer cleared after pruning");
-    //             }
-    //             return {};
-    //         } catch (const std::exception& e) {
-    //             return std::unexpected(std::format("Error applying sparsity pruning: {}", e.what()));
-    //     }
-    // }
+        if (!sparsity_optimizer_->is_initialized()) {
+            if (auto result = sparsity_optimizer_->initialize(splat_data.opacity_raw()); !result) {
+                return std::unexpected(result.error());
+            }
+            LOG_DEBUG("Sparsity optimizer initialized at iteration {}", iter);
+        }
+
+        return sparsity_optimizer_->compute_loss_forward(splat_data.opacity_raw());
+    }
+
+    std::expected<void, std::string> Trainer::handle_sparsity_update(const int iter, lfs::core::SplatData& splat_data) {
+        if (!sparsity_optimizer_ || !sparsity_optimizer_->should_update(iter)) {
+            return {};
+        }
+        return sparsity_optimizer_->update_state(splat_data.opacity_raw());
+    }
+
+    std::expected<void, std::string> Trainer::apply_sparsity_pruning(const int iter, lfs::core::SplatData& splat_data) {
+        if (!sparsity_optimizer_ || !sparsity_optimizer_->should_prune(iter)) {
+            return {};
+        }
+
+        auto mask_result = sparsity_optimizer_->get_prune_mask(splat_data.opacity_raw());
+        if (!mask_result) {
+            return std::unexpected(mask_result.error());
+        }
+
+        const int n_before = static_cast<int>(splat_data.size());
+        strategy_->remove_gaussians(*mask_result);
+        const int n_after = static_cast<int>(splat_data.size());
+
+        LOG_INFO("Sparsity pruning: {} -> {} Gaussians ({}% reduction)",
+                 n_before, n_after, static_cast<int>(100.0f * (n_before - n_after) / n_before));
+
+        sparsity_optimizer_.reset();
+        return {};
+    }
 
     Trainer::Trainer(std::shared_ptr<CameraDataset> dataset,
                      std::unique_ptr<IStrategy> strategy,
@@ -375,37 +327,28 @@ namespace lfs::training {
                 return std::unexpected(result.error());
             }
 
-            // Initialize sparsity optimizer if enabled - Temporarily disabled (requires LibTorch)
-            // if (params.optimization.enable_sparsity) {
-            //     // Calculate when sparsity should start
-            //     int base_iterations = params.optimization.iterations;
-            //     int sparsity_start = base_iterations; // Start after base training
-            //     int total_iterations = base_iterations + params.optimization.sparsify_steps;
+            // Initialize sparsity optimizer
+            if (params.optimization.enable_sparsity) {
+                constexpr int SPARSITY_UPDATE_INTERVAL = 50;
+                const int base_iterations = params.optimization.iterations;
+                const int total_iterations = base_iterations + params.optimization.sparsify_steps;
+                params_.optimization.iterations = total_iterations;
 
-            //     // Extend the total training iterations
-            //     params_.optimization.iterations = total_iterations;
+                const ADMMSparsityOptimizer::Config sparsity_config{
+                    .sparsify_steps = params.optimization.sparsify_steps,
+                    .init_rho = params.optimization.init_rho,
+                    .prune_ratio = params.optimization.prune_ratio,
+                    .update_every = SPARSITY_UPDATE_INTERVAL,
+                    .start_iteration = base_iterations
+                };
 
-            //     ADMMSparsityOptimizer::Config sparsity_config{
-            //         .sparsify_steps = params.optimization.sparsify_steps,
-            //         .init_rho = params.optimization.init_rho,
-            //         .prune_ratio = params.optimization.prune_ratio,
-            //         .update_every = 50,
-            //         .start_iteration = sparsity_start // Start after base training completes
-            //     };
-
-            //     sparsity_optimizer_ = SparsityOptimizerFactory::create("admm", sparsity_config);
-
-            //     if (sparsity_optimizer_) {
-            //         // Don't initialize yet - will initialize when we reach start_iteration
-            //         LOG_INFO("=== Sparsity Optimization Configuration ===");
-            //         LOG_INFO("Base training iterations: {}", base_iterations);
-            //         LOG_INFO("Sparsification starts at: iteration {}", sparsity_start);
-            //         LOG_INFO("Sparsification duration: {} iterations", params.optimization.sparsify_steps);
-            //         LOG_INFO("Total training iterations: {}", total_iterations);
-            //         LOG_INFO("Pruning ratio: {}%", params.optimization.prune_ratio * 100);
-            //         LOG_INFO("ADMM penalty (rho): {}", params.optimization.init_rho);
-            //     }
-            // }
+                sparsity_optimizer_ = SparsityOptimizerFactory::create("admm", sparsity_config);
+                if (sparsity_optimizer_) {
+                    LOG_INFO("Sparsity: base={}, start={}, steps={}, prune={}%, rho={}",
+                             base_iterations, base_iterations, params.optimization.sparsify_steps,
+                             params.optimization.prune_ratio * 100, params.optimization.init_rho);
+                }
+            }
 
             // Initialize background color tensor [3] = [0, 0, 0]
             background_ = lfs::core::Tensor::zeros({3}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
@@ -864,24 +807,53 @@ namespace lfs::training {
                 nvtxRangePop();
             }
 
-            // Only sync loss to CPU when needed for display (every 10 iterations)
-            // This is the KEY optimization - we avoid 9000+ GPU syncs!
+            // Sparsity loss - ALL ON GPU, no CPU sync here
+            lfs::core::Tensor sparsity_loss_gpu;
+            if (sparsity_optimizer_ && sparsity_optimizer_->should_apply_loss(iter)) {
+                nvtxRangePush("sparsity_loss");
+                auto sparsity_result = compute_sparsity_loss_forward(iter, strategy_->get_model());
+                if (!sparsity_result) {
+                    nvtxRangePop();
+                    return std::unexpected(sparsity_result.error());
+                }
+                auto& [loss_tensor, ctx] = *sparsity_result;
+                sparsity_loss_gpu = std::move(loss_tensor);
+
+                if (ctx.n > 0) {
+                    if (auto result = sparsity_optimizer_->compute_loss_backward(
+                            ctx, 1.0f, strategy_->get_optimizer().get_grad(ParamType::Opacity)); !result) {
+                        nvtxRangePop();
+                        return std::unexpected(result.error());
+                    }
+                }
+                nvtxRangePop();
+            }
+
+            // Sparsification phase logging (once per phase transition)
+            if (params_.optimization.enable_sparsity) {
+                const int base_iterations = params_.optimization.iterations - params_.optimization.sparsify_steps;
+                if (iter == base_iterations + 1) {
+                    LOG_INFO("Entering sparsification: {} Gaussians, target prune={}%",
+                             strategy_->get_model().size(), params_.optimization.prune_ratio * 100);
+                }
+            }
+
+            // Sync loss to CPU only at intervals - single sync point
+            constexpr int LOSS_SYNC_INTERVAL = 10;
             float loss_value = 0.0f;
-            if (iter % 10 == 0 || iter == 1) {
-                // Sync loss to CPU only for display
-                loss_value = loss_tensor_gpu.item<float>();
+            if (iter % LOSS_SYNC_INTERVAL == 0 || iter == 1) {
+                // Accumulate on GPU then sync once
+                auto total_loss = sparsity_loss_gpu.numel() > 0
+                    ? (loss_tensor_gpu + sparsity_loss_gpu)
+                    : loss_tensor_gpu;
+                loss_value = total_loss.item<float>();
 
-                // Store the loss value
                 current_loss_ = loss_value;
-
-                // Update progress synchronously if needed
                 if (progress_) {
                     progress_->update(iter, loss_value,
                                       static_cast<int>(strategy_->get_model().size()),
                                       strategy_->is_refining(iter));
                 }
-
-                // Emit training progress event
                 lfs::core::events::state::TrainingProgress{
                     .iteration = iter,
                     .loss = loss_value,
@@ -894,8 +866,20 @@ namespace lfs::training {
                 {
                     std::unique_lock<std::shared_mutex> lock(render_mutex_);
 
-                    strategy_->post_backward(iter, r_output);
+                    // Skip post_backward during sparsification phase
+                    const bool in_sparsification = params_.optimization.enable_sparsity &&
+                        iter > (params_.optimization.iterations - params_.optimization.sparsify_steps);
+                    if (!in_sparsification) {
+                        strategy_->post_backward(iter, r_output);
+                    }
                     strategy_->step(iter);
+                }
+
+                if (auto result = handle_sparsity_update(iter, strategy_->get_model()); !result) {
+                    LOG_ERROR("Sparsity update: {}", result.error());
+                }
+                if (auto result = apply_sparsity_pruning(iter, strategy_->get_model()); !result) {
+                    LOG_ERROR("Sparsity pruning: {}", result.error());
                 }
 
                 // Clean evaluation - let the evaluator handle everything

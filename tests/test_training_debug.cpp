@@ -16,7 +16,7 @@
 #include "training_debug/training_debug.hpp"
 
 // For FastgsExtended1000Iterations test - need rasterizers and losses
-#include "../src/training_new/fastgs/rasterization/include/rasterization_api.h"
+#include "../src/training_new/rasterization/fastgs/rasterization/include/rasterization_api.h"
 #include "../src/training/rasterization/fast_rasterizer.hpp"
 #include "../src/training_new/rasterization/fast_rasterizer.hpp"
 #include "../src/training_new/losses/photometric_loss.hpp"

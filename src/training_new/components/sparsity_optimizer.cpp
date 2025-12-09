@@ -51,12 +51,13 @@ namespace lfs::training {
         }
     }
 
-    std::expected<std::pair<float, SparsityLossContext>, std::string>
+    std::expected<std::pair<lfs::core::Tensor, SparsityLossContext>, std::string>
     ADMMSparsityOptimizer::compute_loss_forward(const lfs::core::Tensor& opacities) {
         try {
             if (!initialized_) {
                 SparsityLossContext empty_ctx{};
-                return std::make_pair(0.0f, empty_ctx);
+                auto zero_loss = lfs::core::Tensor::zeros({1}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
+                return std::make_pair(std::move(zero_loss), empty_ctx);
             }
 
             if (opacities.numel() == 0) {
@@ -65,6 +66,7 @@ namespace lfs::training {
 
             // Compute ADMM sparsity loss (manual - no autograd)
             // Loss: L = 0.5 * rho * ||opa - z + u||^2
+            // ALL ON GPU - NO CPU SYNC!
 
             // opa = sigmoid(opacities)
             opa_sigmoid_ = opacities.sigmoid();
@@ -72,9 +74,11 @@ namespace lfs::training {
             // diff = opa - z + u
             auto diff = opa_sigmoid_ - z_ + u_;
 
-            // L2 norm: ||diff||_2 (returns float directly)
-            float diff_norm = diff.norm(2.0f);
-            float loss_value = 0.5f * config_.init_rho * diff_norm * diff_norm;
+            // ||diff||^2 = sum(diff^2) - stays on GPU as scalar tensor
+            auto diff_sq_sum = (diff * diff).sum();
+
+            // loss = 0.5 * rho * ||diff||^2 - GPU scalar
+            auto loss_tensor = diff_sq_sum * (0.5f * config_.init_rho);
 
             // Create minimal context (pointers only, no tensor copies)
             SparsityLossContext ctx{
@@ -86,7 +90,7 @@ namespace lfs::training {
                 .rho = config_.init_rho
             };
 
-            return std::make_pair(loss_value, ctx);
+            return std::make_pair(std::move(loss_tensor), ctx);
         } catch (const std::exception& e) {
             LOG_ERROR("Failed to compute ADMM sparsity loss (manual forward): {}", e.what());
             return std::unexpected(std::format("Failed to compute sparsity loss: {}", e.what()));

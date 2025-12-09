@@ -42,9 +42,9 @@ namespace lfs::training {
         /**
          * @brief MANUAL FORWARD: Compute sparsity loss without autograd
          * @param opacities Current opacity values from the model [N, 1]
-         * @return (loss_value, context) or error string
+         * @return (loss_tensor_gpu, context) or error string - NO CPU SYNC
          */
-        virtual std::expected<std::pair<float, SparsityLossContext>, std::string>
+        virtual std::expected<std::pair<lfs::core::Tensor, SparsityLossContext>, std::string>
             compute_loss_forward(const lfs::core::Tensor& opacities) = 0;
 
         /**
@@ -121,7 +121,7 @@ namespace lfs::training {
 
         std::expected<void, std::string> initialize(const lfs::core::Tensor& opacities) override;
 
-        std::expected<std::pair<float, SparsityLossContext>, std::string>
+        std::expected<std::pair<lfs::core::Tensor, SparsityLossContext>, std::string>
             compute_loss_forward(const lfs::core::Tensor& opacities) override;
 
         std::expected<void, std::string>
