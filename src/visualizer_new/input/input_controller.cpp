@@ -836,6 +836,14 @@ namespace lfs::vis {
                     }
                     return;
 
+                case input::Action::TOGGLE_UI:
+                    ui::ToggleUI{}.emit();
+                    return;
+
+                case input::Action::TOGGLE_FULLSCREEN:
+                    ui::ToggleFullscreen{}.emit();
+                    return;
+
                 default:
                     break;
                 }

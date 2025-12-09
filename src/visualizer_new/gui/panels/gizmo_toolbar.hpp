@@ -58,11 +58,17 @@ namespace lfs::vis::gui::panels {
         unsigned int reset_texture = 0;
         unsigned int local_texture = 0;
         unsigned int world_texture = 0;
+        unsigned int hide_ui_texture = 0;
+        unsigned int fullscreen_texture = 0;
+        unsigned int exit_fullscreen_texture = 0;
     };
 
     void InitGizmoToolbar(GizmoToolbarState& state);
     void ShutdownGizmoToolbar(GizmoToolbarState& state);
     void DrawGizmoToolbar(const UIContext& ctx, GizmoToolbarState& state,
                           const ImVec2& viewport_pos, const ImVec2& viewport_size);
+    void DrawUtilityToolbar(GizmoToolbarState& state,
+                            const ImVec2& viewport_pos, const ImVec2& viewport_size,
+                            bool ui_hidden, bool is_fullscreen);
 
 } // namespace lfs::vis::gui::panels

@@ -86,6 +86,9 @@ namespace lfs::vis::input {
         // Node picking
         NODE_PICK,
         NODE_RECT_SELECT,
+        // UI
+        TOGGLE_UI,
+        TOGGLE_FULLSCREEN,
     };
 
     // Using MODIFIER_ prefix to avoid Windows macro conflicts

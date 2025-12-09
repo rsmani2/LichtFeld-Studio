@@ -133,4 +133,42 @@ namespace lfs::vis {
         return result;
     }
 
+    void WindowManager::toggleFullscreen() {
+        if (!window_) return;
+
+        if (is_fullscreen_) {
+            glfwSetWindowMonitor(window_, nullptr,
+                                 windowed_pos_.x, windowed_pos_.y,
+                                 windowed_size_.x, windowed_size_.y,
+                                 GLFW_DONT_CARE);
+            is_fullscreen_ = false;
+        } else {
+            glfwGetWindowPos(window_, &windowed_pos_.x, &windowed_pos_.y);
+            glfwGetWindowSize(window_, &windowed_size_.x, &windowed_size_.y);
+
+            GLFWmonitor* monitor = glfwGetPrimaryMonitor();
+            int monitor_count = 0;
+            GLFWmonitor** const monitors = glfwGetMonitors(&monitor_count);
+            const int cx = windowed_pos_.x + windowed_size_.x / 2;
+            const int cy = windowed_pos_.y + windowed_size_.y / 2;
+
+            for (int i = 0; i < monitor_count; ++i) {
+                int mx = 0, my = 0;
+                glfwGetMonitorPos(monitors[i], &mx, &my);
+                const auto* const mode = glfwGetVideoMode(monitors[i]);
+                if (cx >= mx && cx < mx + mode->width && cy >= my && cy < my + mode->height) {
+                    monitor = monitors[i];
+                    break;
+                }
+            }
+
+            const auto* const mode = glfwGetVideoMode(monitor);
+            glfwSetWindowMonitor(window_, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+            is_fullscreen_ = true;
+        }
+
+        updateWindowSize();
+        requestRedraw();
+    }
+
 } // namespace lfs::vis

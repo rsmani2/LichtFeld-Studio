@@ -40,6 +40,8 @@ namespace lfs::vis {
         GLFWwindow* getWindow() const { return window_; }
         glm::ivec2 getWindowSize() const { return window_size_; }
         glm::ivec2 getFramebufferSize() const { return framebuffer_size_; }
+        bool isFullscreen() const { return is_fullscreen_; }
+        void toggleFullscreen();
 
         // Set the callback handler (typically the viewer instance)
         void setCallbackHandler(void* handler) { callback_handler_ = handler; }
@@ -49,6 +51,11 @@ namespace lfs::vis {
         std::string title_;
         glm::ivec2 window_size_;
         glm::ivec2 framebuffer_size_;
+
+        // Fullscreen state
+        bool is_fullscreen_ = false;
+        glm::ivec2 windowed_pos_{0, 0};
+        glm::ivec2 windowed_size_{1280, 720};
 
         // Static callback handler pointer
         static void* callback_handler_;

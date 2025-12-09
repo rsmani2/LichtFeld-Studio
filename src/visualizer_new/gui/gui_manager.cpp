@@ -243,7 +243,7 @@ namespace lfs::vis::gui {
         // Initialize ImGuizmo for this frame
         ImGuizmo::BeginFrame();
 
-        if (menu_bar_) {
+        if (menu_bar_ && !ui_hidden_) {
             // Lazily connect input bindings (input controller may not be ready during init)
             if (!menu_bar_input_bindings_set_) {
                 if (auto* input_controller = viewer_->getInputController()) {
@@ -342,7 +342,7 @@ namespace lfs::vis::gui {
             .editor = &editor_ctx};
 
         // Draw docked panels
-        if (show_main_panel_) {
+        if (show_main_panel_ && !ui_hidden_) {
             ImGui::PushStyleColor(ImGuiCol_WindowBg, withAlpha(theme().palette.surface, 0.8f));
             if (ImGui::Begin("Rendering", nullptr)) {
                 // Draw contents without the manual sizing/positioning
@@ -386,7 +386,7 @@ namespace lfs::vis::gui {
         }
 
         // Draw Scene panel
-        if (window_states_["scene_panel"]) {
+        if (window_states_["scene_panel"] && !ui_hidden_) {
             scene_panel_->render(&window_states_["scene_panel"], &ctx);
         }
 
@@ -544,10 +544,13 @@ namespace lfs::vis::gui {
             menu_bar_->setIsProjectTemp(project ? project->getIsTempProject() : false);
         }
 
-        // Render gizmo toolbar (only when a node is selected)
-        auto* scene_manager = ctx.viewer->getSceneManager();
-        if (scene_manager && scene_manager->hasSelectedNode()) {
-            // EditorContext is already updated at start of frame - just use it
+        // Utility toolbar (always visible)
+        const bool is_fullscreen = viewer_->getWindowManager() && viewer_->getWindowManager()->isFullscreen();
+        panels::DrawUtilityToolbar(gizmo_toolbar_state_, viewport_pos_, viewport_size_, ui_hidden_, is_fullscreen);
+
+        // Gizmo toolbar (only when node selected and UI visible)
+        auto* const scene_manager = ctx.viewer->getSceneManager();
+        if (scene_manager && scene_manager->hasSelectedNode() && !ui_hidden_) {
             panels::DrawGizmoToolbar(ctx, gizmo_toolbar_state_, viewport_pos_, viewport_size_);
 
             // Get current tool from EditorContext (single source of truth)
@@ -697,30 +700,29 @@ namespace lfs::vis::gui {
         }
 
         auto* brush_tool = ctx.viewer->getBrushTool();
-        if (brush_tool && brush_tool->isEnabled()) {
+        if (brush_tool && brush_tool->isEnabled() && !ui_hidden_) {
             brush_tool->renderUI(ctx, nullptr);
         }
 
         auto* selection_tool = ctx.viewer->getSelectionTool();
-        if (selection_tool && selection_tool->isEnabled()) {
+        if (selection_tool && selection_tool->isEnabled() && !ui_hidden_) {
             selection_tool->renderUI(ctx, nullptr);
         }
 
         auto* align_tool = ctx.viewer->getAlignTool();
-        if (align_tool && align_tool->isEnabled()) {
+        if (align_tool && align_tool->isEnabled() && !ui_hidden_) {
             align_tool->renderUI(ctx, nullptr);
         }
 
-        // Render node selection rectangle if dragging
-        if (auto* input_controller = ctx.viewer->getInputController()) {
-            if (input_controller->isNodeRectDragging()) {
-                const auto start = input_controller->getNodeRectStart();
-                const auto end = input_controller->getNodeRectEnd();
-                ImDrawList* draw_list = ImGui::GetForegroundDrawList();
-                const auto& t = theme();
-                draw_list->AddRectFilled(ImVec2(start.x, start.y), ImVec2(end.x, end.y), toU32WithAlpha(t.palette.warning, 0.15f));
-                draw_list->AddRect(ImVec2(start.x, start.y), ImVec2(end.x, end.y), toU32WithAlpha(t.palette.warning, 0.85f), 0.0f, 0, 2.0f);
-            }
+        // Node selection rectangle
+        if (auto* const ic = ctx.viewer->getInputController();
+            !ui_hidden_ && ic && ic->isNodeRectDragging()) {
+            const auto start = ic->getNodeRectStart();
+            const auto end = ic->getNodeRectEnd();
+            const auto& t = theme();
+            auto* const draw_list = ImGui::GetForegroundDrawList();
+            draw_list->AddRectFilled({start.x, start.y}, {end.x, end.y}, toU32WithAlpha(t.palette.warning, 0.15f));
+            draw_list->AddRect({start.x, start.y}, {end.x, end.y}, toU32WithAlpha(t.palette.warning, 0.85f), 0.0f, 0, 2.0f);
         }
 
         // Render crop box gizmo over viewport
@@ -730,12 +732,14 @@ namespace lfs::vis::gui {
         renderNodeTransformGizmo(ctx);
 
         // Render overlays
-        renderSpeedOverlay();
-        renderZoomSpeedOverlay();
+        if (!ui_hidden_) {
+            renderSpeedOverlay();
+            renderZoomSpeedOverlay();
+        }
         updateCropFlash();
 
         // Render split view indicator if enabled
-        if (rendering_manager) {
+        if (rendering_manager && !ui_hidden_) {
             auto split_info = rendering_manager->getSplitViewInfo();
             if (split_info.enabled) {
                 // Create a small overlay showing what is being compared
@@ -801,7 +805,7 @@ namespace lfs::vis::gui {
         updateViewportFocus();
 
         // Render viewport gizmo BEFORE focus indicator - always render regardless of focus
-        if (show_viewport_gizmo_ && viewport_size_.x > 0 && viewport_size_.y > 0) {
+        if (show_viewport_gizmo_ && !ui_hidden_ && viewport_size_.x > 0 && viewport_size_.y > 0) {
             if (rendering_manager) {
                 auto* engine = rendering_manager->getRenderingEngine();
                 if (engine) {
@@ -1270,6 +1274,16 @@ namespace lfs::vis::gui {
 
         ui::FocusTrainingPanel::when([this](const auto&) {
             focus_training_panel_ = true;
+        });
+
+        ui::ToggleUI::when([this](const auto&) {
+            ui_hidden_ = !ui_hidden_;
+        });
+
+        ui::ToggleFullscreen::when([this](const auto&) {
+            if (auto* wm = viewer_->getWindowManager()) {
+                wm->toggleFullscreen();
+            }
         });
     }
 

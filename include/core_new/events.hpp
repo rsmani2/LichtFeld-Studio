@@ -190,6 +190,8 @@ namespace lfs::core {
             EVENT(SplitPositionChanged, float position;);
             EVENT(GTComparisonModeChanged, bool enabled;);
             EVENT(FocusTrainingPanel, );
+            EVENT(ToggleUI, );
+            EVENT(ToggleFullscreen, );
         }                                                  // namespace ui
 
         // ============================================================================

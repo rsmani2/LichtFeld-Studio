@@ -407,6 +407,9 @@ namespace lfs::vis::input {
             {KeyTrigger{GLFW_KEY_3, MODIFIER_CTRL}, Action::SELECT_MODE_POLYGON, "Polygon"},
             {KeyTrigger{GLFW_KEY_4, MODIFIER_CTRL}, Action::SELECT_MODE_LASSO, "Lasso"},
             {KeyTrigger{GLFW_KEY_5, MODIFIER_CTRL}, Action::SELECT_MODE_RINGS, "Rings"},
+            // UI
+            {KeyTrigger{GLFW_KEY_F12, MODIFIER_NONE}, Action::TOGGLE_UI, "Hide UI"},
+            {KeyTrigger{GLFW_KEY_F11, MODIFIER_NONE}, Action::TOGGLE_FULLSCREEN, "Fullscreen"},
         };
 
         constexpr ToolMode ALL_MODES[] = {
@@ -500,6 +503,8 @@ namespace lfs::vis::input {
         case Action::APPLY_CROP_BOX: return "Apply Crop Box";
         case Action::NODE_PICK: return "Pick Node";
         case Action::NODE_RECT_SELECT: return "Rectangle Select Nodes";
+        case Action::TOGGLE_UI: return "Toggle UI";
+        case Action::TOGGLE_FULLSCREEN: return "Toggle Fullscreen";
         default: return "Unknown";
         }
     }

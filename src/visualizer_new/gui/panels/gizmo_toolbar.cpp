@@ -5,6 +5,7 @@
 #include <glad/glad.h>
 
 #include "gui/panels/gizmo_toolbar.hpp"
+#include "core_new/events.hpp"
 #include "core_new/image_io.hpp"
 #include "core_new/logger.hpp"
 #include "internal/resource_paths.hpp"
@@ -13,11 +14,14 @@
 
 namespace lfs::vis::gui::panels {
 
-    // Layout constant (not theme-dependent)
     constexpr float SUBTOOLBAR_OFFSET_Y = 8.0f;
 
-    // Computes toolbar dimensions for N buttons
-    static ImVec2 ComputeToolbarSize(const int num_buttons) {
+    constexpr ImGuiWindowFlags TOOLBAR_FLAGS =
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+
+    static ImVec2 ComputeToolbarSize(int num_buttons) {
         const auto& t = theme();
         const float width = num_buttons * t.sizes.toolbar_button_size +
                             (num_buttons - 1) * t.sizes.toolbar_spacing +
@@ -53,6 +57,31 @@ namespace lfs::vis::gui::panels {
             ImGui::PushStyleColor(ImGuiCol_WindowBg, t.subtoolbar_background());
         }
         ~SubToolbarStyle() {
+            ImGui::PopStyleColor();
+            ImGui::PopStyleVar(4);
+        }
+    };
+
+    static ImVec2 ComputeVerticalToolbarSize(int num_buttons) {
+        const auto& t = theme();
+        return {
+            t.sizes.toolbar_button_size + 2.0f * t.sizes.toolbar_padding,
+            num_buttons * t.sizes.toolbar_button_size +
+                (num_buttons - 1) * t.sizes.toolbar_spacing +
+                2.0f * t.sizes.toolbar_padding
+        };
+    }
+
+    struct VerticalToolbarStyle {
+        VerticalToolbarStyle() {
+            const auto& t = theme();
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, t.sizes.window_rounding);
+            ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {t.sizes.toolbar_padding, t.sizes.toolbar_padding});
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {0.0f, t.sizes.toolbar_spacing});
+            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {0.0f, 0.0f});
+            ImGui::PushStyleColor(ImGuiCol_WindowBg, t.toolbar_background());
+        }
+        ~VerticalToolbarStyle() {
             ImGui::PopStyleColor();
             ImGui::PopStyleVar(4);
         }
@@ -101,6 +130,9 @@ namespace lfs::vis::gui::panels {
         state.reset_texture = LoadIconTexture("reset.png");
         state.local_texture = LoadIconTexture("local.png");
         state.world_texture = LoadIconTexture("world.png");
+        state.hide_ui_texture = LoadIconTexture("layout-off.png");
+        state.fullscreen_texture = LoadIconTexture("arrows-maximize.png");
+        state.exit_fullscreen_texture = LoadIconTexture("arrows-minimize.png");
         state.initialized = true;
     }
 
@@ -122,6 +154,9 @@ namespace lfs::vis::gui::panels {
         if (state.reset_texture) glDeleteTextures(1, &state.reset_texture);
         if (state.local_texture) glDeleteTextures(1, &state.local_texture);
         if (state.world_texture) glDeleteTextures(1, &state.world_texture);
+        if (state.hide_ui_texture) glDeleteTextures(1, &state.hide_ui_texture);
+        if (state.fullscreen_texture) glDeleteTextures(1, &state.fullscreen_texture);
+        if (state.exit_fullscreen_texture) glDeleteTextures(1, &state.exit_fullscreen_texture);
 
         state.selection_texture = 0;
         state.rectangle_texture = 0;
@@ -138,6 +173,9 @@ namespace lfs::vis::gui::panels {
         state.reset_texture = 0;
         state.local_texture = 0;
         state.world_texture = 0;
+        state.hide_ui_texture = 0;
+        state.fullscreen_texture = 0;
+        state.exit_fullscreen_texture = 0;
         state.initialized = false;
     }
 
@@ -159,17 +197,8 @@ namespace lfs::vis::gui::panels {
         // Validate and auto-deselect unavailable tools
         editor->validateActiveTool();
 
-        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+        const auto* const viewport = ImGui::GetMainViewport();
 
-        constexpr ImGuiWindowFlags FLAGS =
-            ImGuiWindowFlags_NoTitleBar |
-            ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoMove |
-            ImGuiWindowFlags_NoScrollbar |
-            ImGuiWindowFlags_NoCollapse |
-            ImGuiWindowFlags_NoSavedSettings;
-
-        // Main toolbar: 7 buttons
         constexpr int NUM_MAIN_BUTTONS = 7;
         const ImVec2 toolbar_size = ComputeToolbarSize(NUM_MAIN_BUTTONS);
 
@@ -181,7 +210,7 @@ namespace lfs::vis::gui::panels {
 
         {
             const ToolbarStyle style;
-            if (ImGui::Begin("##GizmoToolbar", nullptr, FLAGS)) {
+            if (ImGui::Begin("##GizmoToolbar", nullptr, TOOLBAR_FLAGS)) {
                 const auto& t = theme();
                 const ImVec2 btn_size(t.sizes.toolbar_button_size, t.sizes.toolbar_button_size);
 
@@ -257,7 +286,7 @@ namespace lfs::vis::gui::panels {
 
             {
                 const SubToolbarStyle style;
-                if (ImGui::Begin("##SelectionModeToolbar", nullptr, FLAGS)) {
+                if (ImGui::Begin("##SelectionModeToolbar", nullptr, TOOLBAR_FLAGS)) {
                     const auto& t = theme();
                     const ImVec2 btn_size(t.sizes.toolbar_button_size, t.sizes.toolbar_button_size);
 
@@ -311,7 +340,7 @@ namespace lfs::vis::gui::panels {
             ImGui::SetNextWindowSize(sub_size, ImGuiCond_Always);
 
             const SubToolbarStyle style;
-            if (ImGui::Begin("##TransformSpaceToolbar", nullptr, FLAGS)) {
+            if (ImGui::Begin("##TransformSpaceToolbar", nullptr, TOOLBAR_FLAGS)) {
                 const auto& t = theme();
                 const ImVec2 btn_size(t.sizes.toolbar_button_size, t.sizes.toolbar_button_size);
 
@@ -350,7 +379,7 @@ namespace lfs::vis::gui::panels {
             ImGui::SetNextWindowSize(sub_size, ImGuiCond_Always);
 
             const SubToolbarStyle style;
-            if (ImGui::Begin("##CropBoxToolbar", nullptr, FLAGS)) {
+            if (ImGui::Begin("##CropBoxToolbar", nullptr, TOOLBAR_FLAGS)) {
                 const auto& t = theme();
                 const ImVec2 btn_size(t.sizes.toolbar_button_size, t.sizes.toolbar_button_size);
 
@@ -392,6 +421,57 @@ namespace lfs::vis::gui::panels {
             }
             ImGui::End();
         }
+
+    }
+
+    void DrawUtilityToolbar(GizmoToolbarState& state,
+                            const ImVec2& viewport_pos, const ImVec2& viewport_size,
+                            bool ui_hidden, bool is_fullscreen) {
+        if (!state.initialized) InitGizmoToolbar(state);
+
+        constexpr float MARGIN_RIGHT = 10.0f;
+        constexpr float MARGIN_TOP = 5.0f;
+        constexpr int NUM_BUTTONS = 2;
+
+        const auto* const vp = ImGui::GetMainViewport();
+        const ImVec2 size = ComputeVerticalToolbarSize(NUM_BUTTONS);
+        const ImVec2 pos = {
+            vp->WorkPos.x + viewport_pos.x + viewport_size.x - size.x - MARGIN_RIGHT,
+            vp->WorkPos.y + viewport_pos.y + MARGIN_TOP
+        };
+
+        ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+
+        const VerticalToolbarStyle style;
+        if (ImGui::Begin("##UtilityToolbar", nullptr, TOOLBAR_FLAGS)) {
+            const auto& t = theme();
+            const ImVec2 btn_size{t.sizes.toolbar_button_size, t.sizes.toolbar_button_size};
+
+            // Fullscreen
+            const auto fs_tex = is_fullscreen ? state.exit_fullscreen_texture : state.fullscreen_texture;
+            ImGui::PushStyleColor(ImGuiCol_Button, is_fullscreen ? t.button_selected() : t.button_normal());
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, is_fullscreen ? t.button_selected_hovered() : t.button_hovered());
+            if (fs_tex
+                ? ImGui::ImageButton("##fullscreen", static_cast<ImTextureID>(fs_tex), btn_size, {0,0}, {1,1}, {0,0,0,0})
+                : ImGui::Button("F", btn_size)) {
+                lfs::core::events::ui::ToggleFullscreen{}.emit();
+            }
+            ImGui::PopStyleColor(2);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Fullscreen (F11)");
+
+            // Toggle UI
+            ImGui::PushStyleColor(ImGuiCol_Button, ui_hidden ? t.button_selected() : t.button_normal());
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ui_hidden ? t.button_selected_hovered() : t.button_hovered());
+            if (state.hide_ui_texture
+                ? ImGui::ImageButton("##hide_ui", static_cast<ImTextureID>(state.hide_ui_texture), btn_size, {0,0}, {1,1}, {0,0,0,0})
+                : ImGui::Button("H", btn_size)) {
+                lfs::core::events::ui::ToggleUI{}.emit();
+            }
+            ImGui::PopStyleColor(2);
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Toggle UI (F12)");
+        }
+        ImGui::End();
     }
 
 } // namespace lfs::vis::gui::panels
