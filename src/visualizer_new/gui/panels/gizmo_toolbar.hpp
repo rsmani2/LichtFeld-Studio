@@ -78,6 +78,7 @@ namespace lfs::vis::gui::panels {
         unsigned int pointcloud_texture = 0;
         unsigned int rings_texture = 0;
         unsigned int centers_texture = 0;
+        unsigned int home_texture = 0;
     };
 
     void InitGizmoToolbar(GizmoToolbarState& state);

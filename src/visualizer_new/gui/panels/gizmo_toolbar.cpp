@@ -138,6 +138,7 @@ namespace lfs::vis::gui::panels {
         state.pointcloud_texture = LoadIconTexture("dots-diagonal.png");
         state.rings_texture = LoadIconTexture("ring.png");
         state.centers_texture = LoadIconTexture("circle-dot.png");
+        state.home_texture = LoadIconTexture("home.png");
         state.initialized = true;
     }
 
@@ -166,6 +167,7 @@ namespace lfs::vis::gui::panels {
         if (state.pointcloud_texture) glDeleteTextures(1, &state.pointcloud_texture);
         if (state.rings_texture) glDeleteTextures(1, &state.rings_texture);
         if (state.centers_texture) glDeleteTextures(1, &state.centers_texture);
+        if (state.home_texture) glDeleteTextures(1, &state.home_texture);
 
         state.selection_texture = 0;
         state.rectangle_texture = 0;
@@ -459,7 +461,7 @@ namespace lfs::vis::gui::panels {
 
         constexpr float MARGIN_RIGHT = 10.0f;
         constexpr float MARGIN_TOP = 5.0f;
-        const int num_buttons = render_manager ? 7 : 2;  // +1 for separator space
+        const int num_buttons = render_manager ? 8 : 3;
 
         const auto* const vp = ImGui::GetMainViewport();
         const ImVec2 size = ComputeVerticalToolbarSize(num_buttons);
@@ -475,6 +477,16 @@ namespace lfs::vis::gui::panels {
         if (ImGui::Begin("##UtilityToolbar", nullptr, TOOLBAR_FLAGS)) {
             const auto& t = theme();
             const ImVec2 btn_size{t.sizes.toolbar_button_size, t.sizes.toolbar_button_size};
+
+            // Home
+            ImGui::PushStyleColor(ImGuiCol_Button, t.button_normal());
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.button_hovered());
+            const bool home_clicked = state.home_texture
+                ? ImGui::ImageButton("##home", static_cast<ImTextureID>(state.home_texture), btn_size, {0,0}, {1,1}, {0,0,0,0})
+                : ImGui::Button("H", btn_size);
+            ImGui::PopStyleColor(2);
+            if (home_clicked) lfs::core::events::cmd::ResetCamera{}.emit();
+            if (ImGui::IsItemHovered()) ImGui::SetTooltip("Home (H)");
 
             // Fullscreen
             const auto fs_tex = is_fullscreen ? state.exit_fullscreen_texture : state.fullscreen_texture;

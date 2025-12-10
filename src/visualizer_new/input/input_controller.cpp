@@ -29,6 +29,11 @@ namespace lfs::vis {
           viewport_(viewport) {
         cmd::GoToCamView::when([this](const auto& e) { handleGoToCamView(e); });
 
+        cmd::ResetCamera::when([this](const auto&) {
+            viewport_.camera.resetToHome();
+            publishCameraMove();
+        });
+
         internal::WindowFocusLost::when([this](const auto&) {
             drag_mode_ = DragMode::None;
             std::fill(std::begin(keys_movement_), std::end(keys_movement_), false);
