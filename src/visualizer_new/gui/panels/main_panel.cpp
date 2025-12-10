@@ -224,15 +224,6 @@ namespace lfs::vis::gui::panels {
             ImGui::Unindent();
         }
 
-        // Camera Rotation
-        if (ImGui::Checkbox("Lock Gimbal", &settings.lock_gimbal)) {
-            settings_changed = true;
-            cmd::ToggleGimbalLock{
-                .locked = settings.lock_gimbal}
-                .emit();
-        }
-
-
         // Pivot Point
         ImGui::Separator();
         if (ImGui::Checkbox("Show Pivot Point", &settings.show_pivot)) {

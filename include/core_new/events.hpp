@@ -75,7 +75,6 @@ namespace lfs::core {
             EVENT(CycleSelectionVisualization, );
             EVENT(ToggleSplitView, );
             EVENT(ToggleGTComparison, );
-            EVENT(ToggleGimbalLock, bool locked;);
             EVENT(Undo, );
             EVENT(Redo, );
             EVENT(DeleteSelected, );  // Delete selected Gaussians (soft delete)

@@ -47,9 +47,6 @@ namespace lfs::vis {
         float axes_size = 2.0f;
         std::array<bool, 3> axes_visibility = {true, true, true};
 
-        // Camera Rotation
-        bool lock_gimbal = false;
-
         // Grid
         bool show_grid = true;
         int grid_plane = 1;

@@ -34,10 +34,6 @@ namespace lfs::vis {
             std::fill(std::begin(keys_movement_), std::end(keys_movement_), false);
             hovered_camera_id_ = -1;
         });
-
-        cmd::ToggleGimbalLock::when([this](const cmd::ToggleGimbalLock& e) {
-            gimbal_locked = e.locked;
-        });
     }
 
     InputController::~InputController() {
@@ -591,7 +587,7 @@ namespace lfs::vis {
                 viewport_.camera.translate(pos);
                 break;
             case DragMode::Rotate:
-                viewport_.camera.rotate(pos, gimbal_locked);
+                viewport_.camera.rotate(pos);
                 break;
             case DragMode::Orbit: {
                 float current_time = static_cast<float>(glfwGetTime());
