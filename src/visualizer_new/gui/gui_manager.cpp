@@ -715,7 +715,7 @@ namespace lfs::vis::gui {
         // Update viewport focus based on mouse position
         updateViewportFocus();
 
-        // Draw beveled viewport corners
+        // Mask viewport corners with background for rounded effect
         if (!ui_hidden_ && viewport_size_.x > 0 && viewport_size_.y > 0) {
             const auto& t = theme();
             const float r = t.viewport.corner_radius;
@@ -724,20 +724,21 @@ namespace lfs::vis::gui {
                 const ImU32 bg = toU32(t.palette.background);
                 const float x1 = viewport_pos_.x, y1 = viewport_pos_.y;
                 const float x2 = x1 + viewport_size_.x, y2 = y1 + viewport_size_.y;
-                constexpr int ARC_SEGMENTS = 8;
 
-                // Corner masks (clockwise from each corner)
-                auto drawCorner = [&](float cx, float cy, float start_angle, float end_angle,
-                                      float dx1, float dy1, float dx2, float dy2) {
-                    dl->PathLineTo({cx + dx1, cy + dy1});
-                    dl->PathArcTo({cx, cy}, r, start_angle, end_angle, ARC_SEGMENTS);
-                    dl->PathLineTo({cx + dx2, cy + dy2});
+                // Draw corner wedge: corner -> edge -> arc -> corner
+                constexpr int CORNER_ARC_SEGMENTS = 12;
+                const auto maskCorner = [&](const ImVec2 corner, const ImVec2 edge,
+                                            const ImVec2 center, const float a0, const float a1) {
+                    dl->PathLineTo(corner);
+                    dl->PathLineTo(edge);
+                    dl->PathArcTo(center, r, a0, a1, CORNER_ARC_SEGMENTS);
+                    dl->PathLineTo(corner);
                     dl->PathFillConvex(bg);
                 };
-                drawCorner(x1 + r, y1 + r, IM_PI, IM_PI * 1.5f, -r, 0, 0, -r);
-                drawCorner(x2 - r, y1 + r, IM_PI * 1.5f, IM_PI * 2.0f, 0, -r, r, 0);
-                drawCorner(x1 + r, y2 - r, IM_PI * 0.5f, IM_PI, 0, r, -r, 0);
-                drawCorner(x2 - r, y2 - r, 0.0f, IM_PI * 0.5f, r, 0, 0, r);
+                maskCorner({x1, y1}, {x1, y1 + r}, {x1 + r, y1 + r}, IM_PI, IM_PI * 1.5f);
+                maskCorner({x2, y1}, {x2 - r, y1}, {x2 - r, y1 + r}, IM_PI * 1.5f, IM_PI * 2.0f);
+                maskCorner({x1, y2}, {x1 + r, y2}, {x1 + r, y2 - r}, IM_PI * 0.5f, IM_PI);
+                maskCorner({x2, y2}, {x2, y2 - r}, {x2 - r, y2 - r}, 0.0f, IM_PI * 0.5f);
 
                 if (t.viewport.border_size > 0.0f) {
                     dl->AddRect({x1, y1}, {x2, y2}, t.viewport_border_u32(), r,

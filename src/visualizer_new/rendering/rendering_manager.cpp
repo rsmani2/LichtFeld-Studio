@@ -767,16 +767,16 @@ namespace lfs::vis {
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
         }
 
-        // Viewport region (flip Y: OpenGL bottom-up, ImGui top-down)
+        // Set viewport region with scissor clipping (flip Y for OpenGL)
         if (context.viewport_region) {
-            const GLint gl_y = context.viewport.frameBufferSize.y
-                               - static_cast<GLint>(context.viewport_region->y)
-                               - static_cast<GLint>(context.viewport_region->height);
-            glViewport(
-                static_cast<GLint>(context.viewport_region->x),
-                gl_y,
-                static_cast<GLsizei>(context.viewport_region->width),
-                static_cast<GLsizei>(context.viewport_region->height));
+            const GLint x = static_cast<GLint>(context.viewport_region->x);
+            const GLint y = context.viewport.frameBufferSize.y
+                          - static_cast<GLint>(context.viewport_region->y + context.viewport_region->height);
+            const GLsizei w = static_cast<GLsizei>(context.viewport_region->width);
+            const GLsizei h = static_cast<GLsizei>(context.viewport_region->height);
+            glViewport(x, y, w, h);
+            glScissor(x, y, w, h);
+            glEnable(GL_SCISSOR_TEST);
         }
 
         if (should_render || !model) {
@@ -799,6 +799,9 @@ namespace lfs::vis {
             renderOverlays(context);
         }
 
+        if (context.viewport_region) {
+            glDisable(GL_SCISSOR_TEST);
+        }
         framerate_controller_.endFrame();
     }
 
