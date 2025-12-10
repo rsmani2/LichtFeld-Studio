@@ -355,6 +355,7 @@ namespace gs::rendering {
                 request.equirectangular ? gsplat::CameraModelType::EQUIRECTANGULAR : gsplat::CameraModelType::PINHOLE,
                 "render_camera",
                 "none",
+                "",  // mask_path - empty for render camera
                 request.viewport_size.x,
                 request.viewport_size.y,
                 -1);

@@ -119,6 +119,7 @@ namespace {
             // Optional value arguments
             ::args::ValueFlag<uint32_t> iterations(parser, "iterations", "Number of iterations", {'i', "iter"});
             ::args::ValueFlag<int> num_workers(parser, "num_threads", "Number of workers", {"num-workers"});
+            ::args::ValueFlag<int> gpu_id(parser, "gpu_id", "GPU device ID (-1=auto)", {"gpu"});
             ::args::ValueFlag<int> max_cap(parser, "max_cap", "Max Gaussians for MCMC", {"max-cap"});
             ::args::ValueFlag<std::string> images_folder(parser, "images", "Images folder name", {"images"});
             ::args::ValueFlag<int> test_every(parser, "test_every", "Use every Nth image as test", {"test-every"});
@@ -129,6 +130,8 @@ namespace {
             ::args::ValueFlag<std::string> render_mode(parser, "render_mode", "Render mode: RGB, D, ED, RGB_D, RGB_ED", {"render-mode"});
             ::args::ValueFlag<std::string> pose_opt(parser, "pose_opt", "Enable pose optimization type: none, direct, mlp", {"pose-opt"});
             ::args::ValueFlag<std::string> strategy(parser, "strategy", "Optimization strategy: mcmc, default", {"strategy"});
+            ::args::ValueFlag<std::string> mask_mode(parser, "mask_mode", "Mask mode: none, segment, ignore, alpha_consistent", {"mask-mode"});
+            ::args::Flag invert_masks(parser, "invert_masks", "Invert mask values (swap object/background)", {"invert-masks"});
             ::args::ValueFlag<int> init_num_pts(parser, "init_num_pts", "Number of random initialization points", {"init-num-pts"});
             ::args::ValueFlag<float> init_extent(parser, "init_extent", "Extent of random initialization", {"init-extent"});
             ::args::ValueFlagList<std::string> timelapse_images(parser, "timelapse_images", "Image filenames to render timelapse images for", {"timelapse-images"});
@@ -139,6 +142,7 @@ namespace {
             ::args::ValueFlag<int> sparsify_steps(parser, "sparsify_steps", "Number of steps for sparsification (default: 15000)", {"sparsify-steps"});
             ::args::ValueFlag<float> init_rho(parser, "init_rho", "Initial ADMM penalty parameter (default: 0.0005)", {"init-rho"});
             ::args::ValueFlag<float> prune_ratio(parser, "prune_ratio", "Final pruning ratio for sparsity (default: 0.6)", {"prune-ratio"});
+            ::args::ValueFlag<float> prune_opacity(parser, "prune_opacity", "Opacity threshold for pruning Gaussians (default: 0.005)", {"prune-opacity"});
 
             // SOG format arguments
             ::args::ValueFlag<int> sog_iterations(parser, "sog_iterations", "K-means iterations for SOG compression (default: 10)", {"sog-iterations"});
@@ -337,6 +341,7 @@ namespace {
                                         use_cpu_cache_val = use_cpu_cache ? std::optional<bool>(::args::get(use_cpu_cache)) : std::optional<bool>(),
                                         use_fs_cache_val = use_fs_cache ? std::optional<bool>(::args::get(use_fs_cache)) : std::optional<bool>(),
                                         num_workers_val = num_workers ? std::optional<int>(::args::get(num_workers)) : std::optional<int>(),
+                                        gpu_id_val = gpu_id ? std::optional<int>(::args::get(gpu_id)) : std::optional<int>(),
                                         max_cap_val = max_cap ? std::optional<int>(::args::get(max_cap)) : std::optional<int>(),
                                         project_name_val = project_name ? std::optional<std::string>(::args::get(project_name)) : std::optional<std::string>(),
                                         config_file_val = config_file ? std::optional<std::string>(::args::get(config_file)) : std::optional<std::string>(),
@@ -351,6 +356,7 @@ namespace {
                                         init_extent_val = init_extent ? std::optional<float>(::args::get(init_extent)) : std::optional<float>(),
                                         pose_opt_val = pose_opt ? std::optional<std::string>(::args::get(pose_opt)) : std::optional<std::string>(),
                                         strategy_val = strategy ? std::optional<std::string>(::args::get(strategy)) : std::optional<std::string>(),
+                                        mask_mode_val = mask_mode ? std::optional<std::string>(::args::get(mask_mode)) : std::optional<std::string>(),
                                         timelapse_images_val = timelapse_images ? std::optional<std::vector<std::string>>(::args::get(timelapse_images)) : std::optional<std::vector<std::string>>(),
                                         timelapse_every_val = timelapse_every ? std::optional<int>(::args::get(timelapse_every)) : std::optional<int>(),
                                         sog_iterations_val = sog_iterations ? std::optional<int>(::args::get(sog_iterations)) : std::optional<int>(),
@@ -358,6 +364,7 @@ namespace {
                                         sparsify_steps_val = sparsify_steps ? std::optional<int>(::args::get(sparsify_steps)) : std::optional<int>(),
                                         init_rho_val = init_rho ? std::optional<float>(::args::get(init_rho)) : std::optional<float>(),
                                         prune_ratio_val = prune_ratio ? std::optional<float>(::args::get(prune_ratio)) : std::optional<float>(),
+                                        prune_opacity_val = prune_opacity ? std::optional<float>(::args::get(prune_opacity)) : std::optional<float>(),
                                         // Capture flag states
                                         use_bilateral_grid_flag = bool(use_bilateral_grid),
                                         enable_eval_flag = bool(enable_eval),
@@ -369,7 +376,8 @@ namespace {
                                         random_flag = bool(random),
                                         gut_flag = bool(gut),
                                         save_sog_flag = bool(save_sog),
-                                        enable_sparsity_flag = bool(enable_sparsity)]() {
+                                        enable_sparsity_flag = bool(enable_sparsity),
+                                        invert_masks_flag = bool(invert_masks)]() {
                 auto& opt = params.optimization;
                 auto& ds = params.dataset;
 
@@ -391,6 +399,7 @@ namespace {
                 setVal(use_cpu_cache_val, ds.loading_params.use_cpu_memory);
                 setVal(use_fs_cache_val, ds.loading_params.use_fs_cache);
                 setVal(num_workers_val, opt.num_workers);
+                setVal(gpu_id_val, opt.gpu_id);
                 setVal(max_cap_val, opt.max_cap);
                 setVal(project_name_val, ds.project_path);
                 setVal(images_folder_val, ds.images);
@@ -412,7 +421,26 @@ namespace {
                 setVal(sparsify_steps_val, opt.sparsify_steps);
                 setVal(init_rho_val, opt.init_rho);
                 setVal(prune_ratio_val, opt.prune_ratio);
+                setVal(prune_opacity_val, opt.prune_opacity);
 
+                // Mask mode parsing
+                if (mask_mode_val) {
+                    std::string mode = *mask_mode_val;
+                    if (mode == "none") {
+                        opt.mask_mode = gs::param::MaskMode::None;
+                    } else if (mode == "segment") {
+                        opt.mask_mode = gs::param::MaskMode::Segment;
+                    } else if (mode == "ignore") {
+                        opt.mask_mode = gs::param::MaskMode::Ignore;
+                    } else if (mode == "alpha_consistent") {
+                        opt.mask_mode = gs::param::MaskMode::AlphaConsistent;
+                    } else {
+                        std::println(stderr, "Warning: Invalid mask mode '{}'. Using 'none'", mode);
+                        opt.mask_mode = gs::param::MaskMode::None;
+                    }
+                }
+
+                setFlag(invert_masks_flag, opt.invert_masks);
                 setFlag(use_bilateral_grid_flag, opt.use_bilateral_grid);
                 setFlag(enable_eval_flag, opt.enable_eval);
                 setFlag(headless_flag, opt.headless);

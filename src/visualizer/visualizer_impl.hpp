@@ -97,6 +97,14 @@ namespace gs::visualizer {
             return translation_gizmo_tool_.get();
         }
 
+        bool hasGutAutoEnabledWarning() const {
+            return gut_auto_enabled_warning_;
+        }
+
+        void clearGutAutoEnabledWarning() {
+            gut_auto_enabled_warning_ = false;
+        }
+
         std::shared_ptr<TrainerManager> trainer_manager_;
 
         // GUI manager
@@ -121,6 +129,8 @@ namespace gs::visualizer {
         void handleTrainingCompleted(const events::state::TrainingCompleted& event);
         void handleLoadFileCommand(const events::cmd::LoadFile& cmd);
         void handleSaveProject(const events::cmd::SaveProject& cmd);
+        void handleExportConfig(const events::cmd::ExportConfig& cmd);
+        void handleImportConfig(const events::cmd::ImportConfig& cmd);
 
         // Tool initialization
         void initializeTools();
@@ -145,6 +155,10 @@ namespace gs::visualizer {
         bool window_initialized_ = false;
         bool gui_initialized_ = false;
         bool tools_initialized_ = false; // Added this member!
+
+        // Gut auto-enable warning tracking
+        bool gut_auto_enabled_warning_ = false;
+
         // Project
         std::shared_ptr<gs::management::Project> project_ = nullptr;
         void updateProjectOnModules();

@@ -37,6 +37,25 @@ namespace gs {
 
             if (project_) {
                 trainer_->load_cameras_info();
+
+                // Auto-enable 3DGUT if cameras have distortion parameters
+                auto opt_params = project_->getOptimizationParams();
+                if (!opt_params.gut) {
+                    bool has_distortion = false;
+                    auto cameras = trainer_->getCamList();
+                    for (const auto& cam : cameras) {
+                        if (cam->radial_distortion().numel() > 0 || cam->tangential_distortion().numel() > 0) {
+                            has_distortion = true;
+                            break;
+                        }
+                    }
+                    if (has_distortion) {
+                        opt_params.gut = true;
+                        project_->setOptimizationParams(opt_params);
+                        LOG_WARN("Detected camera distortion parameters - automatically enabling 3DGUT rasterizer");
+                        events::state::GutAutoEnabled{}.emit();
+                    }
+                }
             }
 
             setState(State::Ready);

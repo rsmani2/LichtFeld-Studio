@@ -5,8 +5,11 @@
 #include "visualizer_impl.hpp"
 #include "core/data_loading_service.hpp"
 #include "core/logger.hpp"
+#include "core/parameters.hpp"
 #include "scene/scene_manager.hpp"
 #include "tools/translation_gizmo_tool.hpp"
+#include <fstream>
+#include <nlohmann/json.hpp>
 #include <stdexcept>
 #ifdef WIN32
 #include <windows.h>
@@ -179,6 +182,11 @@ namespace gs::visualizer {
             // The 1 FPS throttle will handle rendering
         });
 
+        // Listen for 3DGUT auto-enable notification
+        state::GutAutoEnabled::when([this](const auto&) {
+            gut_auto_enabled_warning_ = true;
+        });
+
         // Listen for file load commands
         cmd::LoadProject::when([this](const auto& cmd) {
             handleLoadProjectCommand(cmd);
@@ -197,6 +205,16 @@ namespace gs::visualizer {
         // Listen to save project
         cmd::SaveProject::when([this](const auto& cmd) {
             handleSaveProject(cmd);
+        });
+
+        // Listen to export config
+        cmd::ExportConfig::when([this](const auto& cmd) {
+            handleExportConfig(cmd);
+        });
+
+        // Listen to import config
+        cmd::ImportConfig::when([this](const auto& cmd) {
+            handleImportConfig(cmd);
         });
     }
 
@@ -634,6 +652,161 @@ namespace gs::visualizer {
                 }
             }
             LOG_INFO("Project was saved successfully to {}", project_->getProjectFileName().string());
+        }
+    }
+
+    void VisualizerImpl::handleExportConfig(const events::cmd::ExportConfig& cmd) {
+        if (!project_) {
+            gui_manager_->showNotificationPopup("No project loaded", true);
+            LOG_ERROR("No project loaded to export configuration from");
+            return;
+        }
+
+        try {
+            // Check if parent directory exists and is writable
+            auto parent_path = cmd.path.parent_path();
+            if (!parent_path.empty() && !std::filesystem::exists(parent_path)) {
+                gui_manager_->showNotificationPopup("Directory does not exist: " + parent_path.string(), true);
+                LOG_ERROR("Parent directory does not exist: {}", parent_path.string());
+                return;
+            }
+
+            // Get current optimization parameters
+            auto opt_params = project_->getOptimizationParams();
+
+            // Convert to JSON
+            nlohmann::json config_json = opt_params.to_json();
+
+            // Write to file with pretty printing
+            std::ofstream file(cmd.path);
+            if (!file.is_open()) {
+                gui_manager_->showNotificationPopup("Failed to open file for writing: " + cmd.path.filename().string(), true);
+                LOG_ERROR("Failed to open file for writing: {}", cmd.path.string());
+                return;
+            }
+
+            file << config_json.dump(4); // 4 spaces indentation
+            file.flush(); // Ensure data is written to disk
+
+            // Check if write was successful
+            if (!file.good()) {
+                gui_manager_->showNotificationPopup("Failed to write configuration (disk full?)", true);
+                LOG_ERROR("Failed to write configuration to: {}", cmd.path.string());
+                file.close();
+
+                // Try to clean up partial file
+                std::error_code ec;
+                std::filesystem::remove(cmd.path, ec);
+                return;
+            }
+
+            file.close();
+
+            // Verify file was actually created and has content
+            if (!std::filesystem::exists(cmd.path) || std::filesystem::file_size(cmd.path) == 0) {
+                gui_manager_->showNotificationPopup("File verification failed (file missing or empty)", true);
+                LOG_ERROR("File verification failed: {}", cmd.path.string());
+                return;
+            }
+
+            // Show success notification
+            std::string success_msg = std::format("Configuration exported successfully to:\n{}", cmd.path.filename().string());
+            gui_manager_->showNotificationPopup(success_msg, false);
+
+            LOG_INFO("Configuration exported successfully to: {}", cmd.path.string());
+
+        } catch (const std::exception& e) {
+            gui_manager_->showNotificationPopup(std::format("Export failed: {}", e.what()), true);
+            LOG_ERROR("Failed to export configuration: {}", e.what());
+        }
+    }
+
+    void VisualizerImpl::handleImportConfig(const events::cmd::ImportConfig& cmd) {
+        if (!project_) {
+            gui_manager_->showNotificationPopup("No project loaded", true);
+            LOG_ERROR("No project loaded to import configuration into");
+            return;
+        }
+
+        try {
+            // Read JSON file with RAII - file automatically closes when out of scope
+            nlohmann::json config_json;
+            {
+                std::ifstream file(cmd.path);
+                if (!file.is_open()) {
+                    gui_manager_->showNotificationPopup("Failed to open file: " + cmd.path.filename().string(), true);
+                    LOG_ERROR("Failed to open config file: {}", cmd.path.string());
+                    return;
+                }
+                file >> config_json;
+            } // File automatically closed here
+
+            // Parse optimization parameters from JSON
+            auto opt_params = gs::param::OptimizationParameters::from_json(config_json);
+
+            // Validate critical parameters
+            if (opt_params.iterations == 0 || opt_params.iterations > 1000000) {
+                gui_manager_->showNotificationPopup(std::format("Invalid iterations: {} (must be 1-1,000,000)", opt_params.iterations), true);
+                LOG_ERROR("Invalid iterations value: {}", opt_params.iterations);
+                return;
+            }
+
+            if (opt_params.means_lr <= 0 || opt_params.means_lr > 1.0) {
+                gui_manager_->showNotificationPopup(std::format("Invalid position learning rate: {:.6f}\n(must be > 0 and <= 1.0)", opt_params.means_lr), true);
+                LOG_ERROR("Invalid means_lr value: {}", opt_params.means_lr);
+                return;
+            }
+
+            if (opt_params.shs_lr <= 0 || opt_params.shs_lr > 1.0) {
+                gui_manager_->showNotificationPopup(std::format("Invalid SH learning rate: {:.6f}\n(must be > 0 and <= 1.0)", opt_params.shs_lr), true);
+                LOG_ERROR("Invalid shs_lr value: {}", opt_params.shs_lr);
+                return;
+            }
+
+            if (opt_params.sh_degree < 0 || opt_params.sh_degree > 3) {
+                gui_manager_->showNotificationPopup(std::format("Invalid SH degree: {} (must be 0-3)", opt_params.sh_degree), true);
+                LOG_ERROR("Invalid sh_degree value: {}", opt_params.sh_degree);
+                return;
+            }
+
+            // Check GPU availability if specific GPU requested
+            if (opt_params.gpu_id >= 0) {
+                int device_count = torch::cuda::is_available() ? torch::cuda::device_count() : 0;
+                if (opt_params.gpu_id >= device_count) {
+                    gui_manager_->showNotificationPopup(std::format("Invalid GPU ID: {}\n(only {} GPU(s) available)", opt_params.gpu_id, device_count), true);
+                    LOG_ERROR("Invalid gpu_id: {} (max: {})", opt_params.gpu_id, device_count - 1);
+                    return;
+                }
+            }
+
+            // Validate strategy
+            if (opt_params.strategy != "mcmc" && opt_params.strategy != "default" && !opt_params.strategy.empty()) {
+                gui_manager_->showNotificationPopup(std::format("Invalid strategy: '{}'\n(must be 'mcmc' or 'default')", opt_params.strategy), true);
+                LOG_ERROR("Invalid strategy: {}", opt_params.strategy);
+                return;
+            }
+
+            // Update project with validated parameters
+            project_->setOptimizationParams(opt_params);
+
+            // Show success notification
+            std::string success_msg = std::format("Configuration imported successfully!\n{} iterations, {} strategy",
+                                         opt_params.iterations,
+                                         opt_params.strategy.empty() ? "default" : opt_params.strategy);
+            gui_manager_->showNotificationPopup(success_msg, false);
+
+            LOG_INFO("Configuration imported successfully from: {}", cmd.path.string());
+            LOG_INFO("Imported {} iterations, strategy: {}", opt_params.iterations, opt_params.strategy);
+
+        } catch (const nlohmann::json::parse_error& e) {
+            gui_manager_->showNotificationPopup(std::format("Invalid JSON format:\n{}", e.what()), true);
+            LOG_ERROR("JSON parse error: {}", e.what());
+        } catch (const nlohmann::json::type_error& e) {
+            gui_manager_->showNotificationPopup(std::format("JSON type error:\n{}", e.what()), true);
+            LOG_ERROR("JSON type error: {}", e.what());
+        } catch (const std::exception& e) {
+            gui_manager_->showNotificationPopup(std::format("Import failed:\n{}", e.what()), true);
+            LOG_ERROR("Failed to import configuration: {}", e.what());
         }
     }
 

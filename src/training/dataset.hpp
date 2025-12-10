@@ -5,6 +5,7 @@
 #pragma once
 
 #include "core/camera.hpp"
+#include "core/image_io.hpp"
 #include "core/parameters.hpp"
 #include "loader/loader.hpp"
 #include "loader/filesystem_utils.hpp"
@@ -19,6 +20,7 @@ namespace gs::training {
     struct CameraWithImage {
         Camera* camera;
         torch::Tensor image;
+        torch::Tensor mask;  // Mask tensor (white=keep/object, black=masked/background)
     };
 
     using CameraExample = torch::data::Example<CameraWithImage, torch::Tensor>;
@@ -81,7 +83,15 @@ namespace gs::training {
             auto& cam = _cameras[camera_idx];
 
             torch::Tensor image = cam->load_and_get_image(_datasetConfig.resize_factor, _datasetConfig.max_width);
-            return {{cam.get(), std::move(image)}, torch::empty({})};
+
+            // Load mask using cached loader (loads once per camera, then returns cached version)
+            // Processing (inversion, thresholding) happens once during first load and is cached
+            torch::Tensor mask = cam->load_and_get_mask(_datasetConfig.resize_factor,
+                                                        _datasetConfig.max_width,
+                                                        _datasetConfig.invert_masks,
+                                                        _datasetConfig.mask_threshold);
+
+            return {{cam.get(), std::move(image), std::move(mask)}, torch::empty({})};
         }
 
         torch::optional<size_t> size() const override {

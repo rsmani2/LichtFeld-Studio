@@ -48,10 +48,23 @@ namespace gs::training {
         const gs::param::OptimizationParameters& params,
         torch::optim::Optimizer* optimizer,
         int param_group_index) {
-        // Python: gamma = 0.01^(1/max_steps)
-        // This means after max_steps, lr will be 0.01 * initial_lr
-        const double gamma = std::pow(0.01, 1.0 / params.iterations);
+        // Python: gamma = final_lr_fraction^(1/max_steps)
+        // This means after max_steps, lr will be final_lr_fraction * initial_lr
+        const double gamma = compute_lr_decay_gamma(params.final_lr_fraction, params.iterations);
         return std::make_unique<ExponentialLR>(*optimizer, gamma, param_group_index);
+    }
+
+    std::unique_ptr<WarmupExponentialLR> create_warmup_scheduler(
+        const gs::param::OptimizationParameters& params,
+        torch::optim::Optimizer* optimizer,
+        int param_group_index,
+        int warmup_steps,
+        float warmup_start_factor) {
+
+        const double gamma = compute_lr_decay_gamma(params.final_lr_fraction, params.iterations);
+
+        return std::make_unique<WarmupExponentialLR>(
+            *optimizer, gamma, warmup_steps, warmup_start_factor, param_group_index);
     }
 
     void update_param_with_optimizer(

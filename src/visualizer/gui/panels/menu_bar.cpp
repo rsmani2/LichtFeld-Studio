@@ -23,6 +23,46 @@ namespace gs::gui {
     }
 
     void MenuBar::render() {
+        // Check for keyboard shortcuts
+        ImGuiIO& io = ImGui::GetIO();
+        bool ctrl = io.KeyCtrl;
+        bool alt = io.KeyAlt;
+
+        // Ctrl+O for Open Project
+        if (ctrl && !alt && ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+            if (on_open_project_) {
+                on_open_project_();
+            }
+        }
+
+        // Ctrl+S for Save Project
+        if (ctrl && !alt && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+            if (on_save_project_ && !is_project_temp_) {
+                on_save_project_();
+            }
+        }
+
+        // Ctrl+Alt+S for Save Project As
+        if (ctrl && alt && ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+            if (on_save_project_as_) {
+                on_save_project_as_();
+            }
+        }
+
+        // Ctrl+E for Export Config
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_E, false)) {
+            if (on_export_config_) {
+                on_export_config_();
+            }
+        }
+
+        // Ctrl+I for Import Config
+        if (ctrl && ImGui::IsKeyPressed(ImGuiKey_I, false)) {
+            if (on_import_config_) {
+                on_import_config_();
+            }
+        }
+
         // Modern color scheme
         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(12.0f, 8.0f));
         ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(12.0f, 6.0f));
@@ -37,7 +77,7 @@ namespace gs::gui {
         if (ImGui::BeginMainMenuBar()) {
             // File menu
             if (ImGui::BeginMenu("File")) {
-                if (ImGui::MenuItem("Open Project")) {
+                if (ImGui::MenuItem("Open Project", "Ctrl+O")) {
                     LOG_DEBUG("Open Project clicked");
                     if (on_open_project_) {
                         on_open_project_();
@@ -60,7 +100,7 @@ namespace gs::gui {
 
                 ImGui::Separator();
 
-                if (ImGui::MenuItem("Save Project As...")) {
+                if (ImGui::MenuItem("Save Project As...", "Ctrl+Alt+S")) {
                     LOG_DEBUG("Save Project As clicked");
                     if (on_save_project_as_) {
                         on_save_project_as_();
@@ -68,10 +108,26 @@ namespace gs::gui {
                 }
 
                 // Disable "Save Project" if project is temporary
-                if (ImGui::MenuItem("Save Project", nullptr, false, !is_project_temp_)) {
+                if (ImGui::MenuItem("Save Project", "Ctrl+S", false, !is_project_temp_)) {
                     LOG_DEBUG("Save Project clicked");
                     if (on_save_project_) {
                         on_save_project_();
+                    }
+                }
+
+                ImGui::Separator();
+
+                if (ImGui::MenuItem("Export Config...", "Ctrl+E")) {
+                    LOG_DEBUG("Export Config clicked");
+                    if (on_export_config_) {
+                        on_export_config_();
+                    }
+                }
+
+                if (ImGui::MenuItem("Import Config...", "Ctrl+I")) {
+                    LOG_DEBUG("Import Config clicked");
+                    if (on_import_config_) {
+                        on_import_config_();
                     }
                 }
 
@@ -552,6 +608,46 @@ namespace gs::gui {
                         ImGui::TableNextColumn();
                         WrappedTextColored(actionColor, "Rename ply file");
 
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(keyColor, "Ctrl+O");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(StateColor, "Anytime");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(actionColor, "Open project");
+
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(keyColor, "Ctrl+S");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(StateColor, "Project loaded (not temporary)");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(actionColor, "Save project");
+
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(keyColor, "Ctrl+Alt+S");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(StateColor, "Anytime");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(actionColor, "Save project as...");
+
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(keyColor, "Ctrl+E");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(StateColor, "Anytime");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(actionColor, "Export configuration to JSON file");
+
+                        ImGui::TableNextRow();
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(keyColor, "Ctrl+I");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(StateColor, "Anytime");
+                        ImGui::TableNextColumn();
+                        WrappedTextColored(actionColor, "Import configuration from JSON file");
+
                         ImGui::EndTable();
                     }
 
@@ -586,6 +682,14 @@ namespace gs::gui {
 
     void MenuBar::setOnSaveProject(std::function<void()> callback) {
         on_save_project_ = std::move(callback);
+    }
+
+    void MenuBar::setOnExportConfig(std::function<void()> callback) {
+        on_export_config_ = std::move(callback);
+    }
+
+    void MenuBar::setOnImportConfig(std::function<void()> callback) {
+        on_import_config_ = std::move(callback);
     }
 
     void MenuBar::setOnExit(std::function<void()> callback) {

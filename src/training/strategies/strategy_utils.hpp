@@ -21,6 +21,19 @@ namespace gs::training {
         torch::optim::Optimizer* optimizer,
         int param_group_index = -1);
 
+    // Unified scheduler creation with optional warmup
+    std::unique_ptr<WarmupExponentialLR> create_warmup_scheduler(
+        const gs::param::OptimizationParameters& params,
+        torch::optim::Optimizer* optimizer,
+        int param_group_index = -1,
+        int warmup_steps = 0,
+        float warmup_start_factor = 1.0f);
+
+    // Helper to compute decay gamma
+    inline double compute_lr_decay_gamma(float final_lr_fraction, size_t iterations) {
+        return std::pow(final_lr_fraction, 1.0 / iterations);
+    }
+
     // Use explicit type alias to help MSVC
     using ParamUpdateFn = std::function<torch::Tensor(const int, const torch::Tensor)>;
     using OptimizerUpdateFn = std::function<std::unique_ptr<torch::optim::OptimizerParamState>(

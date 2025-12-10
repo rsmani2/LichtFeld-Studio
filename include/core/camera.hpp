@@ -26,6 +26,7 @@ namespace gs {
                gsplat::CameraModelType camera_model_type,
                const std::string& image_name,
                const std::filesystem::path& image_path,
+               const std::filesystem::path& mask_path,
                int camera_width, int camera_height,
                int uid);
         Camera(const Camera&, const torch::Tensor& transform);
@@ -41,6 +42,10 @@ namespace gs {
 
         // Load image from disk and return it
         torch::Tensor load_and_get_image(int resize_factor = -1, int max_width = 3840);
+
+        // Load mask from disk, process it, cache it, and return it
+        torch::Tensor load_and_get_mask(int resize_factor = -1, int max_width = 3840,
+                                        bool invert_mask = false, float mask_threshold = 0.5f);
 
         // Load image from disk just to populate _image_width/_image_height
         void load_image_size(int resize_factor = -1, int max_width = 3840);
@@ -75,6 +80,7 @@ namespace gs {
         gsplat::CameraModelType camera_model_type() const noexcept { return _camera_model_type; }
         const std::string& image_name() const noexcept { return _image_name; }
         const std::filesystem::path& image_path() const noexcept { return _image_path; }
+        const std::filesystem::path& mask_path() const noexcept { return _mask_path; }
         int uid() const noexcept { return _uid; }
 
         float FoVx() const noexcept { return _FoVx; }
@@ -101,6 +107,7 @@ namespace gs {
         // Image info
         std::string _image_name;
         std::filesystem::path _image_path;
+        std::filesystem::path _mask_path;
         int _camera_width = 0;
         int _camera_height = 0;
         int _image_width = 0;
@@ -109,6 +116,10 @@ namespace gs {
         // GPU tensors (computed on demand)
         torch::Tensor _world_view_transform;
         torch::Tensor _cam_position;
+
+        // Mask caching (processed mask stored on GPU)
+        torch::Tensor _cached_mask;
+        bool _mask_loaded = false;
 
         // CUDA stream for async operations
         at::cuda::CUDAStream _stream = at::cuda::getStreamFromPool(false);

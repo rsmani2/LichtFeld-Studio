@@ -28,11 +28,14 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Free up disk space
+      - name: Aggressive Free Up Disk Space
         run: |
           df -h
           apt-get clean
           rm -rf /var/lib/apt/lists/*
+          rm -rf /usr/share/dotnet
+          rm -rf /opt/ghc
+          rm -rf /opt/hostedtoolcache
           df -h
 
       - name: Install GCC 14 and dependencies
@@ -114,4 +117,4 @@ jobs:
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
 
       - name: Build
-        run: cmake --build build --config Release --parallel $(nproc)
+        run: cmake --build build --config Release --parallel 2

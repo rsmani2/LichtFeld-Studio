@@ -192,6 +192,7 @@ namespace gs::gui {
         std::unique_ptr<ImageData> loadImageData(const std::filesystem::path& path);
         std::unique_ptr<ImageTexture> createTexture(ImageData&& data, const std::filesystem::path& path);
         bool loadImage(const std::filesystem::path& path);
+        bool loadMask(const std::filesystem::path& image_path);
         void preloadAdjacentImages();
         void checkPreloadedImages();
         std::pair<float, float> calculateDisplaySize(int window_width, int window_height) const;
@@ -223,6 +224,11 @@ namespace gs::gui {
         float pan_x_ = 0.0f;
         float pan_y_ = 0.0f;
         bool fit_to_window_ = true;
+        bool show_mask_overlay_ = false;
+        float mask_opacity_ = 0.5f;
+
+        // Mask texture
+        std::unique_ptr<ImageTexture> mask_texture_;
 
         // OpenGL limits
         GLint max_texture_size_ = 4096;

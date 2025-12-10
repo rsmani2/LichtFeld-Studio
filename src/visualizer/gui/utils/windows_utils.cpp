@@ -19,7 +19,8 @@ namespace gs::gui {
         HRESULT selectFileNative(PWSTR& strDirectory,
                                  COMDLG_FILTERSPEC rgSpec[],
                                  UINT cFileTypes,
-                                 bool blnDirectory) {
+                                 bool blnDirectory,
+                                 LPCWSTR defaultFolder) {
 
             HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
             if (FAILED(hr)) {
@@ -51,6 +52,16 @@ namespace gs::gui {
                         }
                     }
 
+                    // Set default folder if provided
+                    if (defaultFolder != nullptr) {
+                        IShellItem* pDefaultFolder = nullptr;
+                        hr = SHCreateItemFromParsingName(defaultFolder, NULL, IID_PPV_ARGS(&pDefaultFolder));
+                        if (SUCCEEDED(hr)) {
+                            pFileOpen->SetFolder(pDefaultFolder);
+                            pDefaultFolder->Release();
+                        }
+                    }
+
                     // Show the Open File dialog
                     hr = pFileOpen->Show(NULL);
 
@@ -71,6 +82,74 @@ namespace gs::gui {
                     pFileOpen->Release();
                 } else {
                     LOG_ERROR("Failed to create FileOpenDialog: {:#x}", static_cast<unsigned int>(hr));
+                    CoUninitialize();
+                }
+                CoUninitialize();
+            }
+            return hr;
+        }
+        HRESULT saveFileNative(PWSTR& strDirectory,
+                               COMDLG_FILTERSPEC rgSpec[],
+                               UINT cFileTypes,
+                               LPCWSTR defaultFileName,
+                               LPCWSTR defaultFolder) {
+
+            HRESULT hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            if (FAILED(hr)) {
+                LOG_ERROR("Failed to initialize COM: {:#x}", static_cast<unsigned int>(hr));
+            } else {
+                // Create the FileSaveDialog instance
+                IFileSaveDialog* pFileSave = nullptr;
+                hr = CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_ALL,
+                                      IID_IFileSaveDialog, reinterpret_cast<void**>(&pFileSave));
+
+                if (SUCCEEDED(hr)) {
+                    // Set file type filters
+                    if (rgSpec != nullptr && cFileTypes > 0) {
+                        hr = pFileSave->SetFileTypes(cFileTypes, rgSpec);
+                        if (SUCCEEDED(hr)) {
+                            pFileSave->SetFileTypeIndex(1);
+                            pFileSave->SetDefaultExtension(L"json");
+                        } else {
+                            LOG_ERROR("Failed to set file types: {:#x}", static_cast<unsigned int>(hr));
+                        }
+                    }
+
+                    // Set default file name if provided
+                    if (defaultFileName != nullptr) {
+                        pFileSave->SetFileName(defaultFileName);
+                    }
+
+                    // Set default folder if provided
+                    if (defaultFolder != nullptr) {
+                        IShellItem* pDefaultFolder = nullptr;
+                        hr = SHCreateItemFromParsingName(defaultFolder, NULL, IID_PPV_ARGS(&pDefaultFolder));
+                        if (SUCCEEDED(hr)) {
+                            pFileSave->SetFolder(pDefaultFolder);
+                            pDefaultFolder->Release();
+                        }
+                    }
+
+                    // Show the Save File dialog
+                    hr = pFileSave->Show(NULL);
+
+                    if (SUCCEEDED(hr)) {
+                        IShellItem* pItem;
+                        hr = pFileSave->GetResult(&pItem);
+                        if (SUCCEEDED(hr)) {
+                            PWSTR filePath = nullptr;
+                            hr = pItem->GetDisplayName(SIGDN_FILESYSPATH, &filePath);
+
+                            if (SUCCEEDED(hr)) {
+                                strDirectory = filePath;
+                                CoTaskMemFree(filePath);
+                            }
+                            pItem->Release();
+                        }
+                    }
+                    pFileSave->Release();
+                } else {
+                    LOG_ERROR("Failed to create FileSaveDialog: {:#x}", static_cast<unsigned int>(hr));
                     CoUninitialize();
                 }
                 CoUninitialize();
@@ -129,6 +208,46 @@ namespace gs::gui {
             events::cmd::SaveProject{project_path}.emit();
             LOG_INFO("Saving project file into : {}", std::filesystem::path(project_path).string());
             *p_open = false;
+        }
+    }
+
+    void ExportConfigFileDialog() {
+        // show native windows save file dialog for config JSON export
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] =
+            {
+                {L"JSON Configuration", L"*.json"},
+                {L"All Files", L"*.*"}
+            };
+
+        // Get absolute path to parameter directory
+        auto param_dir = std::filesystem::absolute("parameter");
+        std::wstring param_dir_wstr = param_dir.wstring();
+
+        if (SUCCEEDED(gs::gui::utils::saveFileNative(filePath, rgSpec, 2, L"optimization_config.json", param_dir_wstr.c_str()))) {
+            std::filesystem::path config_path(filePath);
+            events::cmd::ExportConfig{.path = config_path}.emit();
+            LOG_INFO("Exporting config to: {}", config_path.string());
+        }
+    }
+
+    void ImportConfigFileDialog() {
+        // show native windows file dialog for config JSON import
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] =
+            {
+                {L"JSON Configuration", L"*.json"},
+                {L"All Files", L"*.*"}
+            };
+
+        // Get absolute path to parameter directory
+        auto param_dir = std::filesystem::absolute("parameter");
+        std::wstring param_dir_wstr = param_dir.wstring();
+
+        if (SUCCEEDED(gs::gui::utils::selectFileNative(filePath, rgSpec, 2, false, param_dir_wstr.c_str()))) {
+            std::filesystem::path config_path(filePath);
+            events::cmd::ImportConfig{.path = config_path}.emit();
+            LOG_INFO("Importing config from: {}", config_path.string());
         }
     }
 

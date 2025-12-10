@@ -138,6 +138,7 @@ namespace gs::loader {
                     info._camera_model_type,
                     info._image_name,
                     info._image_path,
+                    "",  // mask_path - blender loader doesn't support masks yet
                     info._width,
                     info._height,
                     static_cast<int>(i));

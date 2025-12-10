@@ -13,6 +13,14 @@
 
 namespace gs {
     namespace param {
+        // Mask mode options for attention mask behavior
+        enum class MaskMode {
+            None,            // No masking applied
+            Segment,         // Soft penalty to segment regions (enforce alpha->0 in masked areas)
+            Ignore,          // Completely ignore masked regions in loss computation
+            AlphaConsistent  // Enforce exact alpha values from mask
+        };
+
         struct OptimizationParameters {
             size_t iterations = 30'000;
             size_t sh_degree_interval = 1'000;
@@ -21,6 +29,7 @@ namespace gs {
             float opacity_lr = 0.05f;
             float scaling_lr = 0.005f;
             float rotation_lr = 0.001f;
+            float final_lr_fraction = 0.01f;                  // Final LR as fraction of initial (0.01 = decay to 1%)
             float lambda_dssim = 0.2f;
             float min_opacity = 0.005f;
             size_t refine_every = 100;
@@ -33,6 +42,7 @@ namespace gs {
             float init_opacity = 0.5f;
             float init_scaling = 0.1f;
             int num_workers = 16;
+            int gpu_id = -1;                                  // GPU device ID to use (-1 = auto/default, 0+ = specific GPU)
             int max_cap = 1000000;
             std::vector<size_t> eval_steps = {7'000, 30'000}; // Steps to evaluate the model
             std::vector<size_t> save_steps = {7'000, 30'000}; // Steps to save the model
@@ -44,6 +54,11 @@ namespace gs {
             bool headless = false;                            // Disable visualization during training
             std::string render_mode = "RGB";                  // Render mode: RGB, D, ED, RGB_D, RGB_ED
             std::string strategy = "mcmc";                    // Optimization strategy: mcmc, default.
+            MaskMode mask_mode = MaskMode::None;              // Mask mode: none, segment, ignore, alpha_consistent
+            bool invert_masks = false;                        // If true, inverts mask values (0.0 <-> 1.0) during loading
+            float mask_opacity_penalty_weight = 1.0f;         // Opacity penalty weight for segment mask mode
+            float mask_opacity_penalty_power = 2.0f;          // Power for penalty falloff curve (1=linear, 2=quadratic, higher=gentler on uncertain regions)
+            float mask_threshold = 0.5f;                      // Threshold for clamping masks: >= threshold → 1.0, < threshold → keep original (soft falloff)
             bool preload_to_ram = false;                      // If true, the entire dataset will be loaded into RAM at startup
             std::string pose_optimization = "none";           // Pose optimization type: none, direct, mlp
 
@@ -54,6 +69,8 @@ namespace gs {
             int bilateral_grid_W = 8;
             float bilateral_grid_lr = 2e-3f;
             float tv_loss_weight = 10.f;
+            int bilateral_grid_warmup_steps = 1000;      // Warmup steps for bilateral grid scheduler
+            float bilateral_grid_warmup_start_lr = 0.01f; // Starting LR factor for warmup (fraction of initial)
 
             // Default strategy specific parameters
             float prune_opacity = 0.005f;
@@ -112,6 +129,8 @@ namespace gs {
             int timelapse_every = 50;
             int max_width = 3840;
             LoadingParams loading_params;
+            bool invert_masks = false;  // Invert mask values during loading (swap object/background)
+            float mask_threshold = 0.5f; // Threshold for clamping masks: >= threshold → 1.0, < threshold → keep original (soft falloff)
 
             nlohmann::json to_json() const;
             static DatasetConfig from_json(const nlohmann::json& j);

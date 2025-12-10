@@ -57,6 +57,9 @@ namespace gs {
 
             bool isForceExit() const { return force_exit_; }
 
+            // Notification popup
+            void showNotificationPopup(const std::string& message, bool is_error = false, int duration_ms = 3000);
+
         private:
             void setupEventHandlers();
             void applyDefaultStyle();
@@ -84,6 +87,12 @@ namespace gs {
             float current_speed_;
             float max_speed_;
 
+            // Notification popup state
+            bool notification_visible_ = false;
+            std::string notification_message_;
+            bool notification_is_error_ = false;
+            std::chrono::steady_clock::time_point notification_start_time_;
+            std::chrono::milliseconds notification_duration_;
             // Dataset load error popup state
             bool dataset_error_popup_pending_ = false;
             std::string dataset_error_message_;
@@ -97,6 +106,7 @@ namespace gs {
             // Method declarations
             void renderSpeedOverlay();
             void showSpeedOverlay(float current_speed, float max_speed);
+            void renderNotificationPopup();
             void renderDatasetErrorPopup();
             void showDatasetErrorPopup(const std::string& message);
 

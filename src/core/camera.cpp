@@ -32,6 +32,7 @@ namespace gs {
                    gsplat::CameraModelType camera_model_type,
                    const std::string& image_name,
                    const std::filesystem::path& image_path,
+                   const std::filesystem::path& mask_path,
                    int camera_width, int camera_height,
                    int uid)
         : _uid(uid),
@@ -46,6 +47,7 @@ namespace gs {
           _camera_model_type(camera_model_type),
           _image_name(image_name),
           _image_path(image_path),
+          _mask_path(mask_path),
           _camera_width(camera_width),
           _camera_height(camera_height),
           _image_width(camera_width),
@@ -142,6 +144,73 @@ namespace gs {
         _stream.synchronize();
 
         return image;
+    }
+
+    torch::Tensor Camera::load_and_get_mask(int resize_factor, int max_width,
+                                             bool invert_mask, float mask_threshold) {
+        // Return cached mask if already loaded
+        if (_mask_loaded) {
+            return _cached_mask.clone();  // Clone to avoid sharing storage across iterations
+        }
+
+        // Empty mask path means no mask
+        if (_mask_path.empty() || !std::filesystem::exists(_mask_path)) {
+            _cached_mask = torch::empty({0}, torch::kFloat32);
+            _mask_loaded = true;
+            return _cached_mask.clone();
+        }
+
+        // Load mask from disk using CacheLoader (same as images)
+        auto pinned_options = torch::TensorOptions().dtype(torch::kUInt8).pinned_memory(true);
+        auto& loader = gs::loader::CacheLoader::getInstance();
+        gs::loader::LoadParams params{.resize_factor = resize_factor, .max_width = max_width};
+
+        auto result = loader.load_cached_image(_mask_path, params);
+
+        unsigned char* mask_data = std::get<0>(result);
+        int mask_w = std::get<1>(result);
+        int mask_h = std::get<2>(result);
+        int mask_c = std::get<3>(result);
+
+        // Create tensor from pinned memory
+        torch::Tensor mask = torch::from_blob(
+            mask_data,
+            {mask_h, mask_w, mask_c},
+            {mask_w * mask_c, mask_c, 1},
+            pinned_options);
+
+        // Use the CUDA stream for async transfer
+        at::cuda::CUDAStreamGuard guard(_stream);
+
+        // Transfer to GPU and convert to float [0, 1]
+        // For grayscale, take first channel only
+        mask = mask.to(torch::kCUDA, /*non_blocking=*/true)
+                   .index({torch::indexing::Slice(), torch::indexing::Slice(), 0})
+                   .to(torch::kFloat32) / 255.0f;
+
+        // Apply inversion if requested (done once during loading, not per-iteration)
+        if (invert_mask) {
+            mask = 1.0f - mask;
+        }
+
+        // Apply threshold clamping (done once during loading, not per-iteration)
+        // Values >= threshold become 1.0 (definite object), < threshold keep original value (soft falloff)
+        // This preserves soft transitions in background regions for opacity penalty
+        if (mask_threshold > 0.0f && mask_threshold < 1.0f) {
+            mask = torch::where(mask >= mask_threshold, 1.0f, mask);
+        }
+
+        // Free the original data
+        free_image(mask_data);
+
+        // Ensure the transfer and processing is complete before caching
+        _stream.synchronize();
+
+        // Cache the processed mask
+        _cached_mask = mask;
+        _mask_loaded = true;
+
+        return _cached_mask.clone();
     }
 
     void Camera::load_image_size(int resize_factor, int max_width) {

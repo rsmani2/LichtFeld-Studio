@@ -253,6 +253,9 @@ namespace gs::gui {
             // Create texture from data
             current_texture_ = createTexture(std::move(*image_data), path);
 
+            // Try to load mask for this image
+            loadMask(path);
+
             is_loading_ = false;
             return true;
 
@@ -260,6 +263,64 @@ namespace gs::gui {
             load_error_ = e.what();
             is_loading_ = false;
             LOG_ERROR("Error loading image '{}': {}", path.string(), e.what());
+            return false;
+        }
+    }
+
+    bool ImagePreview::loadMask(const std::filesystem::path& image_path) {
+        try {
+            // Clear existing mask
+            mask_texture_.reset();
+
+            // Construct potential mask paths
+            // image_path is like: C:\...\dataset\images\cam_2\00.png
+            // We want mask at: C:\...\dataset\masks\cam_2\00.png.png
+            auto parent = image_path.parent_path();  // C:\...\dataset\images\cam_2
+            auto filename = image_path.filename();    // 00.png
+            auto camera_folder = parent.filename();   // cam_2
+            auto dataset_root = parent.parent_path().parent_path();  // C:\...\dataset
+            auto masks_dir = dataset_root / "masks" / camera_folder;  // C:\...\dataset\masks\cam_2
+
+            LOG_INFO("Looking for mask for image: {}", image_path.string());
+            LOG_INFO("  Mask directory: {}", masks_dir.string());
+
+            // Try both mask formats: .ext.png (priority) and .ext (fallback)
+            std::filesystem::path mask_path_png = masks_dir / (filename.string() + ".png");
+            std::filesystem::path mask_path_same = masks_dir / filename;
+
+            LOG_INFO("  Trying: {}", mask_path_png.string());
+            LOG_INFO("  Or: {}", mask_path_same.string());
+
+            std::filesystem::path mask_path;
+            if (std::filesystem::exists(mask_path_png)) {
+                mask_path = mask_path_png;
+                LOG_INFO("  Found mask (format 1): {}", mask_path.string());
+            } else if (std::filesystem::exists(mask_path_same)) {
+                mask_path = mask_path_same;
+                LOG_INFO("  Found mask (format 2): {}", mask_path.string());
+            } else {
+                LOG_INFO("  No mask found for image: {}", image_path.string());
+                return false;
+            }
+
+            LOG_INFO("Loading mask: {}", mask_path.string());
+
+            // Load mask data
+            auto mask_data = loadImageData(mask_path);
+            if (!mask_data || !mask_data->valid()) {
+                LOG_WARN("Failed to load mask data: {}", mask_path.string());
+                return false;
+            }
+
+            // Create texture from mask
+            mask_texture_ = createTexture(std::move(*mask_data), mask_path);
+
+            LOG_INFO("Mask loaded successfully: {}", mask_path.string());
+            return true;
+
+        } catch (const std::exception& e) {
+            LOG_INFO("Error loading mask for '{}': {}", image_path.string(), e.what());
+            mask_texture_.reset();
             return false;
         }
     }
@@ -540,6 +601,16 @@ namespace gs::gui {
             if (ImGui::BeginMenu("View")) {
                 ImGui::MenuItem("Fit to Window", "F", &fit_to_window_);
                 ImGui::Separator();
+
+                // Mask overlay controls
+                if (mask_texture_ && mask_texture_->texture.valid()) {
+                    ImGui::MenuItem("Show Mask Overlay", "M", &show_mask_overlay_);
+                    if (show_mask_overlay_) {
+                        ImGui::SliderFloat("Mask Opacity", &mask_opacity_, 0.0f, 1.0f, "%.2f");
+                    }
+                    ImGui::Separator();
+                }
+
                 if (ImGui::MenuItem("Reset View", "R") || ImGui::MenuItem("Actual Size", "1")) {
                     zoom_ = 1.0f;
                     pan_x_ = 0.0f;
@@ -602,10 +673,25 @@ namespace gs::gui {
         float x_offset = (content_size.x - display_width) * 0.5f + pan_x_;
         float y_offset = (content_size.y - display_height) * 0.5f + pan_y_;
 
-        ImGui::SetCursorPos(ImVec2(x_offset, y_offset + ImGui::GetCursorPosY()));
+        // Store the image position for overlay
+        float image_y = y_offset + ImGui::GetCursorPosY();
+
+        ImGui::SetCursorPos(ImVec2(x_offset, image_y));
         ImGui::Image(
             (ImTextureID)(uintptr_t)current_texture_->texture.id(),
             ImVec2(display_width, display_height));
+
+        // Overlay mask if enabled - draw at same position as image
+        if (show_mask_overlay_ && mask_texture_ && mask_texture_->texture.valid()) {
+            ImGui::SetCursorPos(ImVec2(x_offset, image_y));
+
+            // Apply blend mode for overlay effect
+            ImGui::PushStyleVar(ImGuiStyleVar_Alpha, mask_opacity_);
+            ImGui::Image(
+                (ImTextureID)(uintptr_t)mask_texture_->texture.id(),
+                ImVec2(display_width, display_height));
+            ImGui::PopStyleVar();
+        }
 
         if (ImGui::IsItemHovered()) {
             float wheel = ImGui::GetIO().MouseWheel;
@@ -644,6 +730,10 @@ namespace gs::gui {
             }
             if (ImGui::IsKeyPressed(ImGuiKey_F)) {
                 fit_to_window_ = !fit_to_window_;
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_M) && mask_texture_ && mask_texture_->texture.valid()) {
+                show_mask_overlay_ = !show_mask_overlay_;
+                LOG_TRACE("Mask overlay toggled: {}", show_mask_overlay_);
             }
             if (ImGui::IsKeyPressed(ImGuiKey_R) || ImGui::IsKeyPressed(ImGuiKey_1)) {
                 zoom_ = 1.0f;

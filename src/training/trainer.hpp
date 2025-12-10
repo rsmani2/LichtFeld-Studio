@@ -89,6 +89,9 @@ namespace gs::training {
         void load_cameras_info();
 
     private:
+        // Validate masks for all cameras in dataset
+        std::expected<void, std::string> validate_and_prepare_masks(
+            std::shared_ptr<CameraDataset> dataset);
         // Helper for deferred event emission to prevent deadlocks
         struct DeferredEvents {
             std::vector<std::function<void()>> events;
@@ -119,6 +122,7 @@ namespace gs::training {
             int iter,
             Camera* cam,
             torch::Tensor gt_image,
+            torch::Tensor mask,
             RenderMode render_mode,
             std::stop_token stop_token = {});
 
@@ -126,6 +130,13 @@ namespace gs::training {
         std::expected<torch::Tensor, std::string> compute_photometric_loss(
             const RenderOutput& render_output,
             const torch::Tensor& gt_image,
+            const SplatData& splatData,
+            const param::OptimizationParameters& opt_params);
+
+        std::expected<torch::Tensor, std::string> compute_photometric_loss_withMask(
+            const RenderOutput& render_output,
+            const torch::Tensor& gt_image,
+            const torch::Tensor& mask,
             const SplatData& splatData,
             const param::OptimizationParameters& opt_params);
 
@@ -172,6 +183,7 @@ namespace gs::training {
         param::TrainingParameters params_;
         std::optional<std::tuple<std::vector<std::string>, std::vector<std::string>>> provided_splits_;
 
+        torch::Device device_{torch::kCUDA, 0};  // CUDA device to use for training
         torch::Tensor background_{};
         torch::Tensor bg_mix_buffer_;
         std::unique_ptr<TrainingProgress> progress_;

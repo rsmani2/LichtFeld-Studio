@@ -47,6 +47,8 @@ namespace gs {
             EVENT(SaveProject, std::filesystem::path project_dir;);
             EVENT(LoadFile, std::filesystem::path path; bool is_dataset;);
             EVENT(LoadProject, std::filesystem::path path;);
+            EVENT(ExportConfig, std::filesystem::path path;);
+            EVENT(ImportConfig, std::filesystem::path path;);
             EVENT(ClearScene, );
             EVENT(ResetCamera, );
             EVENT(ShowWindow, std::string window_name; bool show;);
@@ -85,6 +87,7 @@ namespace gs {
             EVENT(TrainingResumed, int iteration;);
             EVENT(TrainingCompleted, int iteration; float final_loss; bool success; std::optional<std::string> error;);
             EVENT(TrainingStopped, int iteration; bool user_requested;);
+            EVENT(GutAutoEnabled, );  // Notifies GUI that 3DGUT was auto-enabled due to camera distortion
 
             // Scene state
             EVENT(SceneLoaded,

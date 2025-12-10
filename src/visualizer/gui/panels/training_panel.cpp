@@ -12,6 +12,7 @@
 #include <chrono>
 #include <deque>
 #include <imgui.h>
+#include <torch/cuda.h>
 
 namespace gs::gui::panels {
 
@@ -374,6 +375,24 @@ namespace gs::gui::panels {
                     ImGui::Text("%.4f", opt_params.rotation_lr);
                 }
 
+                // LR Decay Ratio
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("  LR Decay Ratio:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    if (ImGui::InputFloat("##final_lr_fraction", &opt_params.final_lr_fraction, 0.01f, 0.1f, "%.3f")) {
+                        opt_params_changed = true;
+                    }
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.3f", opt_params.final_lr_fraction);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Final LR as fraction of initial (0.01 = decay to 1%%, 0.1 = decay to 10%%, 1.0 = no decay)");
+                }
+
                 // Refinement section - ALL EDITABLE
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -594,6 +613,81 @@ namespace gs::gui::panels {
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
+
+                // Mask Mode selection
+                ImGui::Text("Mask Mode:");
+                if (!can_edit) {
+                    ImGui::BeginDisabled();
+                }
+
+                ImGui::TableNextColumn();
+                const char* mask_mode_items[] = { "None", "Segment", "Ignore", "Alpha Consistent" };
+                int current_mask_mode = static_cast<int>(opt_params.mask_mode);
+                if (ImGui::Combo("##MaskMode", &current_mask_mode, mask_mode_items, IM_ARRAYSIZE(mask_mode_items))) {
+                    opt_params.mask_mode = static_cast<param::MaskMode>(current_mask_mode);
+                    opt_params_changed = true;
+                }
+
+                if (!can_edit) {
+                    ImGui::EndDisabled();
+                }
+
+                // Show mask parameters only when Segment mode is active
+                if (opt_params.mask_mode == param::MaskMode::Segment) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("  Mask Opacity Penalty Weight:");
+                    ImGui::TableNextColumn();
+                    if (can_edit) {
+                        ImGui::PushItemWidth(-1);
+                        if (ImGui::InputFloat("##mask_opacity_penalty_weight", &opt_params.mask_opacity_penalty_weight, 1.0f, 10.0f, "%.1f")) {
+                            opt_params_changed = true;
+                        }
+                        ImGui::PopItemWidth();
+                    } else {
+                        ImGui::Text("%.1f", opt_params.mask_opacity_penalty_weight);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Weight for opacity penalty in background regions (higher = stronger penalty)");
+                    }
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("  Mask Opacity Penalty Power:");
+                    ImGui::TableNextColumn();
+                    if (can_edit) {
+                        ImGui::PushItemWidth(-1);
+                        if (ImGui::SliderFloat("##mask_opacity_penalty_power", &opt_params.mask_opacity_penalty_power, 0.5f, 4.0f, "%.1f")) {
+                            opt_params_changed = true;
+                        }
+                        ImGui::PopItemWidth();
+                    } else {
+                        ImGui::Text("%.1f", opt_params.mask_opacity_penalty_power);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Penalty falloff curve: 1.0=linear, 2.0=quadratic (default), >2.0=gentler on uncertain regions");
+                    }
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("  Mask Threshold:");
+                    ImGui::TableNextColumn();
+                    if (can_edit) {
+                        ImGui::PushItemWidth(-1);
+                        if (ImGui::SliderFloat("##mask_threshold", &opt_params.mask_threshold, 0.0f, 1.0f, "%.2f")) {
+                            opt_params_changed = true;
+                        }
+                        ImGui::PopItemWidth();
+                    } else {
+                        ImGui::Text("%.2f", opt_params.mask_threshold);
+                    }
+                    if (ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("Mask threshold: values >= threshold become 1.0 (definite object), < threshold keep original value (soft falloff for opacity penalty)");
+                    }
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
                 bool bg_modulation_enabled = opt_params.bg_modulation;
                 if (!can_edit) {
                     ImGui::BeginDisabled();
@@ -654,6 +748,87 @@ namespace gs::gui::panels {
                 ImGui::Text("SH Degree:");
                 ImGui::TableNextColumn();
                 ImGui::Text("%d", opt_params.sh_degree);
+
+                ImGui::EndTable();
+            }
+            ImGui::TreePop();
+        }
+
+        // Dataloader Settings
+        if (ImGui::TreeNode("Dataloader Settings")) {
+            if (ImGui::BeginTable("DataloaderTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+                // Number of Workers
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Num Workers:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    int num_workers = opt_params.num_workers;
+                    if (ImGui::InputInt("##num_workers", &num_workers, 1, 4)) {
+                        if (num_workers >= 1 && num_workers <= 64) {
+                            opt_params.num_workers = num_workers;
+                            opt_params_changed = true;
+                        }
+                    }
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%d", opt_params.num_workers);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Number of parallel threads for loading images (1-64)");
+                }
+
+                // GPU Selection
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("GPU:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+
+                    // Get available GPU count
+                    int gpu_count = torch::cuda::is_available() ? torch::cuda::device_count() : 0;
+
+                    // Build GPU dropdown items: "Auto (Default)", "GPU 0", "GPU 1", ...
+                    std::vector<std::string> gpu_items;
+                    gpu_items.push_back("Auto (Default)");
+                    for (int i = 0; i < gpu_count; ++i) {
+                        gpu_items.push_back("GPU " + std::to_string(i));
+                    }
+
+                    // Convert to const char* array for ImGui
+                    std::vector<const char*> gpu_items_cstr;
+                    for (const auto& item : gpu_items) {
+                        gpu_items_cstr.push_back(item.c_str());
+                    }
+
+                    // Current selection: -1 maps to index 0 (Auto), 0+ maps to index 1+
+                    int current_selection = opt_params.gpu_id + 1;
+                    if (current_selection < 0) current_selection = 0;
+                    if (current_selection > gpu_count) current_selection = 0;
+
+                    if (ImGui::Combo("##gpu_selection", &current_selection, gpu_items_cstr.data(), static_cast<int>(gpu_items_cstr.size()))) {
+                        // Convert back: index 0 -> gpu_id=-1, index 1+ -> gpu_id=0+
+                        opt_params.gpu_id = current_selection - 1;
+                        opt_params_changed = true;
+                    }
+
+                    ImGui::PopItemWidth();
+                } else {
+                    if (opt_params.gpu_id == -1) {
+                        ImGui::Text("Auto (Default)");
+                    } else {
+                        ImGui::Text("GPU %d", opt_params.gpu_id);
+                    }
+                }
+                if (ImGui::IsItemHovered()) {
+                    int gpu_count = torch::cuda::is_available() ? torch::cuda::device_count() : 0;
+                    ImGui::SetTooltip("Select CUDA device (%d GPU%s available)", gpu_count, gpu_count == 1 ? "" : "s");
+                }
 
                 ImGui::EndTable();
             }
@@ -751,17 +926,10 @@ namespace gs::gui::panels {
             ImGui::PopStyleColor(2);
 
             // Reset button
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.7f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.8f, 1.0f));
-            if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
-                trainer_manager->resetTraining();
-            }
-            ImGui::PopStyleColor(2);
-
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.3f, 0.3f, 1.0f));
-            if (ImGui::Button("Stop Permanently", ImVec2(-1, 0))) {
-                events::cmd::StopTraining{}.emit();
+            if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
+                trainer_manager->resetTraining();
             }
             ImGui::PopStyleColor(2);
             break;

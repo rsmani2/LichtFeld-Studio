@@ -45,6 +45,7 @@ add_library(gs_visualizer STATIC
         gui/panels/menu_bar.cpp
         gui/panels/menu_bar.hpp
         gui/utils/windows_utils.cpp
+        gui/utils/file_dialogs.cpp
 )
 
 # Set include directories

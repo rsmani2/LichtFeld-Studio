@@ -523,6 +523,13 @@ namespace gs {
             } else {
                 positions = pcd.means;
                 colors = pcd.colors / 255.0f; // Normalize directly
+
+                // Check if colors are all black (or very dark) and randomize if so
+                float color_mean = colors.mean().item<float>();
+                if (color_mean < 0.01f) {
+                    LOG_WARN("Point cloud has no/very dark colors (mean={:.4f}). Randomizing colors.", color_mean);
+                    colors = torch::rand_like(colors);
+                }
             }
 
             scene_center = scene_center.to(positions.device());

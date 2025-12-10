@@ -670,7 +670,7 @@ namespace gs::training {
         auto global_options = std::make_unique<Options>(0.f);
         global_options->eps(1e-15);
         _optimizer = std::make_unique<FusedAdam>(std::move(groups), std::move(global_options));
-        const double gamma = std::pow(0.01, 1.0 / _params->iterations);
+        const double gamma = compute_lr_decay_gamma(_params->final_lr_fraction, _params->iterations);
         _scheduler = std::make_unique<ExponentialLR>(*_optimizer, gamma, 0);
     }
 

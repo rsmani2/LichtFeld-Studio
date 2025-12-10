@@ -7,6 +7,7 @@
 #include "components/bilateral_grid.hpp"
 #include "components/poseopt.hpp"
 #include "components/sparsity_optimizer.hpp"
+#include "strategies/strategy_utils.hpp"
 #include "core/image_io.hpp"
 #include "core/logger.hpp"
 #include "kernels/fused_ssim.cuh"
@@ -16,6 +17,7 @@
 #include "rasterization/rasterizer.hpp"
 
 #include <ATen/cuda/CUDAEvent.h>
+#include <c10/cuda/CUDAFunctions.h>
 #include <atomic>
 #include <chrono>
 #include <cuda_runtime.h>
@@ -67,6 +69,39 @@ namespace gs::training {
         LOG_DEBUG("Trainer cleanup complete");
     }
 
+    std::expected<void, std::string> Trainer::validate_and_prepare_masks(
+        std::shared_ptr<CameraDataset> dataset) {
+
+        if (params_.optimization.mask_mode == param::MaskMode::None) {
+            return {}; // No validation needed
+        }
+
+        LOG_INFO("Checking masks for {} cameras...", dataset->get_cameras().size());
+
+        int masks_found = 0;
+
+        // Lightweight validation - just check if mask files exist
+        // Full validation (content checks) happens during dataset loading
+        for (const auto& cam : dataset->get_cameras()) {
+            if (!cam->mask_path().empty() && std::filesystem::exists(cam->mask_path())) {
+                masks_found++;
+            }
+        }
+
+        if (masks_found == 0) {
+            return std::unexpected(std::format(
+                "Mask mode enabled but no masks found in dataset. "
+                "Expected masks in: {}/masks/",
+                params_.dataset.data_path.string()));
+        }
+
+        LOG_INFO("Found {} mask files{}",
+                 masks_found,
+                 params_.optimization.invert_masks ? " (will be inverted)" : "");
+
+        return {};
+    }
+
     std::expected<void, std::string> Trainer::initialize_bilateral_grid() {
         if (!params_.optimization.use_bilateral_grid) {
             return {};
@@ -84,14 +119,13 @@ namespace gs::training {
                 torch::optim::AdamOptions(params_.optimization.bilateral_grid_lr)
                     .eps(1e-15));
 
-            // Create scheduler with warmup
-            const double gamma = std::pow(0.01, 1.0 / params_.optimization.iterations);
-            bilateral_grid_scheduler_ = std::make_unique<WarmupExponentialLR>(
-                *bilateral_grid_optimizer_,
-                gamma,
-                1000, // warmup steps
-                0.01, // start at 1% of initial LR
-                -1    // all param groups
+            // Create scheduler with configurable warmup
+            bilateral_grid_scheduler_ = create_warmup_scheduler(
+                params_.optimization,
+                bilateral_grid_optimizer_.get(),
+                -1,  // all param groups
+                params_.optimization.bilateral_grid_warmup_steps,
+                params_.optimization.bilateral_grid_warmup_start_lr
             );
 
             LOG_DEBUG("Bilateral grid initialized with size {}x{}x{} and warmup scheduler",
@@ -130,6 +164,163 @@ namespace gs::training {
             return loss;
         } catch (const std::exception& e) {
             return std::unexpected(std::format("Error computing photometric loss: {}", e.what()));
+        }
+    }
+
+    // Helper: Get SSIM map without taking mean (for masked SSIM)
+    namespace {
+        torch::Tensor fused_ssim_map(const torch::Tensor& img1, const torch::Tensor& img2,
+                                     const std::string& padding = "valid", bool train = true) {
+            using namespace fs_internal;
+            torch::Tensor img1_c = img1.contiguous();
+            torch::Tensor img2_c = img2.contiguous();
+
+            // Ensure 4D tensors [N, C, H, W]
+            if (img1_c.dim() == 3) img1_c = img1_c.unsqueeze(0);
+            if (img2_c.dim() == 3) img2_c = img2_c.unsqueeze(0);
+
+            return _FusedSSIM::apply(img1_c, img2_c, padding, train);
+        }
+
+        // Pixel-based opacity penalty for segment mode
+        // Applies strong penalty to opacity outside the mask (in masked/background regions)
+        // Uses configurable power falloff (1-mask)^power to treat uncertain regions more like object
+        torch::Tensor pixelBasedOpacityPenalty(
+            const torch::Tensor& alpha,  // [H, W] rendered alpha
+            const torch::Tensor& mask,   // [H, W] mask (1.0 = keep/object, 0.0 = masked/background)
+            float penalty_weight = 100.0f,
+            float penalty_power = 2.0f) {
+
+            // We want to penalize opacity where mask == 0 (background)
+            // inverted_mask: 1 where we want to penalize (background), 0 where we don't (object)
+            torch::Tensor inverted_mask = 1.0f - mask;
+
+            // Apply power falloff: (1-mask)^power
+            // power=1.0 → linear falloff
+            // power=2.0 → quadratic falloff (gentler on uncertain regions)
+            // power>2.0 → even gentler on uncertain regions
+            // Examples with power=2.0:
+            //   mask=1.0 → weight=0.0 (no penalty)
+            //   mask=0.5 → weight=0.25 (gentle penalty, treated more like object)
+            //   mask=0.0 → weight=1.0 (full penalty)
+            torch::Tensor penalty_weight_map = torch::pow(inverted_mask, penalty_power);
+
+            // Penalty on alpha values in background regions, weighted by power curve
+            torch::Tensor penalty = (alpha * penalty_weight_map).mean() * penalty_weight;
+            return penalty;
+        }
+    } // anonymous namespace
+
+    std::expected<torch::Tensor, std::string> Trainer::compute_photometric_loss_withMask(
+        const RenderOutput& render_output,
+        const torch::Tensor& gt_image,
+        const torch::Tensor& mask,
+        const SplatData& splatData,
+        const param::OptimizationParameters& opt_params) {
+        try {
+            torch::Tensor rendered = render_output.image;
+            torch::Tensor gt = gt_image;
+
+            // Ensure both tensors are 4D (batch, channels, height, width)
+            rendered = rendered.dim() == 3 ? rendered.unsqueeze(0) : rendered;
+            gt = gt.dim() == 3 ? gt.unsqueeze(0) : gt;
+
+            TORCH_CHECK(rendered.sizes() == gt.sizes(),
+                        "ERROR: size mismatch – rendered ", rendered.sizes(),
+                        " vs. ground truth ", gt.sizes());
+
+            // Mask should be [H, W] - grayscale with 1.0 = keep/object, 0.0 = masked/background
+            torch::Tensor mask_2d = mask;
+            if (mask_2d.dim() == 3) {
+                // If [1, H, W], squeeze
+                mask_2d = mask_2d.squeeze(0);
+            }
+            TORCH_CHECK(mask_2d.dim() == 2, "Mask should be 2D [H, W], got ", mask_2d.dim(), "D");
+
+            // Mask inversion and validation now happens once during dataset loading for performance
+            // See validate_and_prepare_masks() and dataset.hpp mask loading
+
+            // Expand mask to match image channels [1, C, H, W]
+            torch::Tensor mask_expanded = mask_2d.unsqueeze(0).unsqueeze(0); // [1, 1, H, W]
+            mask_expanded = mask_expanded.expand_as(rendered); // [1, C, H, W]
+
+            torch::Tensor loss;
+
+            if (opt_params.mask_mode == param::MaskMode::Segment) {
+                // Segment mode: Compute loss only on object regions + opacity penalty outside mask
+                // Note: mask is already threshold-clamped during dataset loading
+                // (values >= threshold are 1.0, < threshold preserve soft falloff)
+
+                // Weighted L1 loss on object regions
+                torch::Tensor l1_diff = torch::abs(rendered - gt);
+                torch::Tensor masked_l1 = (l1_diff * mask_expanded).sum() / (mask_expanded.sum() + 1e-8f);
+
+                // Weighted SSIM loss on object regions
+                // Use "same" padding so SSIM map matches input/mask dimensions (no cropping needed)
+                torch::Tensor ssim_map = fused_ssim_map(rendered, gt, "same", /*train=*/true);
+
+                // Use mask for SSIM weighting
+                torch::Tensor masked_ssim_map = ssim_map * mask_expanded;
+                torch::Tensor masked_ssim = masked_ssim_map.sum() / (mask_expanded.sum() + 1e-8f);
+                torch::Tensor ssim_loss = 1.0f - masked_ssim;
+
+                // Combine L1 and SSIM
+                loss = (1.0f - opt_params.lambda_dssim) * masked_l1 +
+                       opt_params.lambda_dssim * ssim_loss;
+
+                // Add opacity penalty for pixels outside the mask
+                torch::Tensor alpha = render_output.alpha.squeeze(); // [H, W]
+                torch::Tensor opacity_penalty = pixelBasedOpacityPenalty(
+                    alpha, mask_2d,
+                    opt_params.mask_opacity_penalty_weight,
+                    opt_params.mask_opacity_penalty_power);
+                loss = loss + opacity_penalty;
+
+            } else if (opt_params.mask_mode == param::MaskMode::Ignore) {
+                // Ignore mode: Compute loss only on object regions (no opacity penalty)
+                // Note: mask is already threshold-clamped during dataset loading
+
+                // Weighted L1 loss on object regions
+                torch::Tensor l1_diff = torch::abs(rendered - gt);
+                torch::Tensor masked_l1 = (l1_diff * mask_expanded).sum() / (mask_expanded.sum() + 1e-8f);
+
+                // Weighted SSIM loss on object regions
+                // Use "same" padding so SSIM map matches input/mask dimensions (no cropping needed)
+                torch::Tensor ssim_map = fused_ssim_map(rendered, gt, "same", /*train=*/true);
+
+                // Use mask for SSIM weighting
+                torch::Tensor masked_ssim_map = ssim_map * mask_expanded;
+                torch::Tensor masked_ssim = masked_ssim_map.sum() / (mask_expanded.sum() + 1e-8f);
+                torch::Tensor ssim_loss = 1.0f - masked_ssim;
+
+                loss = (1.0f - opt_params.lambda_dssim) * masked_l1 +
+                       opt_params.lambda_dssim * ssim_loss;
+
+            } else if (opt_params.mask_mode == param::MaskMode::AlphaConsistent) {
+                // Alpha-consistent mode: Enforce exact alpha values from mask
+                // Note: mask is already threshold-clamped during dataset loading
+
+                // Standard photometric loss
+                auto l1_loss = torch::l1_loss(rendered, gt);
+                auto ssim_loss = 1.0f - fused_ssim(rendered, gt, "valid", /*train=*/true);
+                torch::Tensor photo_loss = (1.0f - opt_params.lambda_dssim) * l1_loss +
+                                          opt_params.lambda_dssim * ssim_loss;
+
+                // Alpha consistency loss: rendered alpha should match the mask
+                // (mask already has values >= threshold as 1.0, < threshold preserved)
+                torch::Tensor alpha = render_output.alpha.squeeze(); // [H, W]
+                torch::Tensor alpha_loss = torch::l1_loss(alpha, mask_2d) * 10.0f; // Weight for alpha consistency
+
+                loss = photo_loss + alpha_loss;
+
+            } else {
+                // Should not reach here if mask_mode validation is proper
+                return std::unexpected("Invalid mask mode in compute_photometric_loss_withMask");
+            }
+
+            return loss;
+        } catch (const std::exception& e) {
+            return std::unexpected(std::format("Error computing masked photometric loss: {}", e.what()));
         }
     }
 
@@ -206,7 +397,7 @@ namespace gs::training {
                 }
                 return *loss_result;
             }
-            return torch::zeros({1}, torch::kFloat32).to(torch::kCUDA).requires_grad_();
+            return torch::zeros({1}, torch::kFloat32).to(device_).requires_grad_();
         } catch (const std::exception& e) {
             return std::unexpected(std::format("Error computing sparsity loss: {}", e.what()));
         }
@@ -298,6 +489,28 @@ namespace gs::training {
         try {
             params_ = params;
 
+            // Copy mask parameters from optimization params to dataset config for use during loading
+            params_.dataset.invert_masks = params_.optimization.invert_masks;
+            params_.dataset.mask_threshold = params_.optimization.mask_threshold;
+
+            // Set GPU device if specified
+            if (params.optimization.gpu_id >= 0) {
+                int device_count = torch::cuda::device_count();
+                if (params.optimization.gpu_id >= device_count) {
+                    return std::unexpected(std::format(
+                        "Invalid GPU ID {}. Only {} GPU(s) available.",
+                        params.optimization.gpu_id, device_count));
+                }
+                c10::cuda::set_device(params.optimization.gpu_id);
+                device_ = torch::Device(torch::kCUDA, params.optimization.gpu_id);
+                LOG_INFO("Using GPU {}/{}", params.optimization.gpu_id, device_count - 1);
+            } else {
+                // Auto mode - use default device (usually GPU 0)
+                int current_device = c10::cuda::current_device();
+                device_ = torch::Device(torch::kCUDA, current_device);
+                LOG_INFO("Using default GPU {} (auto mode)", current_device);
+            }
+
             // Handle dataset split based on evaluation flag
             if (params.optimization.enable_eval) {
                 // Create train/val split
@@ -332,6 +545,14 @@ namespace gs::training {
 
             train_dataset_size_ = train_dataset_->size().value();
 
+            // Validate masks if mask mode is enabled
+            if (params.optimization.mask_mode != param::MaskMode::None) {
+                auto mask_validation = validate_and_prepare_masks(train_dataset_);
+                if (!mask_validation) {
+                    return std::unexpected(mask_validation.error());
+                }
+            }
+
             m_cam_id_to_cam.clear();
             // Setup camera cache
             for (const auto& cam : base_dataset_->get_cameras()) {
@@ -339,8 +560,8 @@ namespace gs::training {
             }
             LOG_DEBUG("Camera cache initialized with {} cameras", m_cam_id_to_cam.size());
 
-            // Re-initialize strategy with new parameters
-            strategy_->initialize(params.optimization);
+            // Re-initialize strategy with parameters (gut may have been auto-enabled during dataset loading)
+            strategy_->initialize(params_.optimization);
             LOG_DEBUG("Strategy initialized");
 
             // Initialize bilateral grid if enabled
@@ -600,6 +821,7 @@ namespace gs::training {
         int iter,
         Camera* cam,
         torch::Tensor gt_image,
+        torch::Tensor mask,
         RenderMode render_mode,
         std::stop_token stop_token) {
         try {
@@ -684,16 +906,28 @@ namespace gs::training {
                 r_output.image = bilateral_grid_->apply(r_output.image, cam->uid());
             }
 
-            // Compute losses
-            auto loss_result = compute_photometric_loss(r_output,
-                                                        gt_image,
-                                                        strategy_->get_model(),
-                                                        params_.optimization);
-            if (!loss_result) {
-                return std::unexpected(loss_result.error());
+            // Compute losses - use masked version if mask is available and mask_mode is not None
+            torch::Tensor loss;
+            if (mask.numel() > 0 && params_.optimization.mask_mode != param::MaskMode::None) {
+                auto loss_result = compute_photometric_loss_withMask(r_output,
+                                                                     gt_image,
+                                                                     mask,
+                                                                     strategy_->get_model(),
+                                                                     params_.optimization);
+                if (!loss_result) {
+                    return std::unexpected(loss_result.error());
+                }
+                loss = *loss_result;
+            } else {
+                auto loss_result = compute_photometric_loss(r_output,
+                                                            gt_image,
+                                                            strategy_->get_model(),
+                                                            params_.optimization);
+                if (!loss_result) {
+                    return std::unexpected(loss_result.error());
+                }
+                loss = *loss_result;
             }
-
-            torch::Tensor loss = *loss_result;
             loss.backward();
             float loss_value = loss.item<float>();
 
@@ -940,9 +1174,10 @@ namespace gs::training {
                 auto& batch = *loader;
                 auto camera_with_image = batch[0].data;
                 Camera* cam = camera_with_image.camera;
-                torch::Tensor gt_image = std::move(camera_with_image.image).to(torch::kCUDA, /*non_blocking=*/true);
+                torch::Tensor gt_image = std::move(camera_with_image.image).to(device_, /*non_blocking=*/true);
+                torch::Tensor mask = std::move(camera_with_image.mask).to(device_, /*non_blocking=*/true);
 
-                auto step_result = train_step(iter, cam, gt_image, render_mode, stop_token);
+                auto step_result = train_step(iter, cam, gt_image, mask, render_mode, stop_token);
                 if (!step_result) {
                     return std::unexpected(step_result.error());
                 }

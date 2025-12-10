@@ -241,6 +241,20 @@ namespace gs::loader {
 
                 camdata._image_name = std::filesystem::path(camdata._image_path).filename().string();
 
+                // Try both mask formats: prefer image_name.png (e.g., image.jpg.png), fallback to image_name (e.g., image.jpg)
+                std::filesystem::path masks_dir = dir_path / "masks";
+                std::filesystem::path mask_path_png = masks_dir / (camdata._image_name + ".png");
+                std::filesystem::path mask_path_same = masks_dir / camdata._image_name;
+
+                if (std::filesystem::exists(mask_path_png)) {
+                    camdata._mask_path = mask_path_png;  // Prefer .ext.png format
+                } else if (std::filesystem::exists(mask_path_same)) {
+                    camdata._mask_path = mask_path_same;  // Fallback to .ext format
+                } else {
+                    // No mask found, leave empty
+                    camdata._mask_path = "";
+                }
+
                 camdata._width = w;
                 camdata._height = h;
 

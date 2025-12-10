@@ -19,12 +19,29 @@ namespace gs::gui {
          * @param rgSpec File type filters (can be nullptr)
          * @param cFileTypes Number of file type filters
          * @param blnDirectory True to select folders, false for files
+         * @param defaultFolder Default folder path to open (can be nullptr)
          * @return HRESULT indicating success or failure
          */
         HRESULT selectFileNative(PWSTR& strDirectory,
                                  COMDLG_FILTERSPEC rgSpec[] = nullptr,
                                  UINT cFileTypes = 0,
-                                 bool blnDirectory = false);
+                                 bool blnDirectory = false,
+                                 LPCWSTR defaultFolder = nullptr);
+
+        /**
+         * Opens a native Windows save file dialog
+         * @param strDirectory Output path selected by the user
+         * @param rgSpec File type filters (can be nullptr)
+         * @param cFileTypes Number of file type filters
+         * @param defaultFileName Default file name to suggest
+         * @param defaultFolder Default folder path to open (can be nullptr)
+         * @return HRESULT indicating success or failure
+         */
+        HRESULT saveFileNative(PWSTR& strDirectory,
+                               COMDLG_FILTERSPEC rgSpec[] = nullptr,
+                               UINT cFileTypes = 0,
+                               LPCWSTR defaultFileName = nullptr,
+                               LPCWSTR defaultFolder = nullptr);
     } // namespace utils
 
     // in windows- open file browser that search for lfs project
@@ -33,5 +50,9 @@ namespace gs::gui {
     void OpenPlyFileDialog();
     // in windows- open file browser that search directories
     void OpenDatasetFolderDialog();
+    // in windows- open file browser for exporting config JSON
+    void ExportConfigFileDialog();
+    // in windows- open file browser for importing config JSON
+    void ImportConfigFileDialog();
 #endif
 } // namespace gs::gui

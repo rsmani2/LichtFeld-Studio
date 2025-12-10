@@ -85,6 +85,7 @@ namespace gs {
                     {"opacity_lr", defaults.opacity_lr, "Learning rate for opacity updates"},
                     {"scaling_lr", defaults.scaling_lr, "Learning rate for scaling updates"},
                     {"rotation_lr", defaults.rotation_lr, "Learning rate for rotation updates"},
+                    {"final_lr_fraction", defaults.final_lr_fraction, "Final LR as fraction of initial (0.01 = decay to 1%)"},
                     {"lambda_dssim", defaults.lambda_dssim, "DSSIM loss weight"},
                     {"min_opacity", defaults.min_opacity, "Minimum opacity threshold"},
                     {"refine_every", defaults.refine_every, "Interval between densification steps"},
@@ -97,6 +98,7 @@ namespace gs {
                     {"init_scaling", defaults.init_scaling, "Initial scaling value for new Gaussians"},
                     {"sh_degree", defaults.sh_degree, "Spherical harmonics degree"},
                     {"num_workers", defaults.num_workers, "Number of image loader threads"},
+                    {"gpu_id", defaults.gpu_id, "GPU device ID to use (-1 = auto/default, 0+ = specific GPU)"},
                     {"max_cap", defaults.max_cap, "Maximum number of Gaussians for MCMC strategy"},
                     {"render_mode", defaults.render_mode, "Render mode: RGB, D, ED, RGB_D, RGB_ED"},
                     {"strategy", defaults.strategy, "Optimization strategy: mcmc, default"},
@@ -110,6 +112,8 @@ namespace gs {
                     {"bilateral_grid_W", defaults.bilateral_grid_W, "Bilateral grid W dimension"},
                     {"bilateral_grid_lr", defaults.bilateral_grid_lr, "Learning rate for bilateral grid"},
                     {"tv_loss_weight", defaults.tv_loss_weight, "Weight for total variation loss"},
+                    {"bilateral_grid_warmup_steps", defaults.bilateral_grid_warmup_steps, "Warmup steps for bilateral grid scheduler"},
+                    {"bilateral_grid_warmup_start_lr", defaults.bilateral_grid_warmup_start_lr, "Starting LR factor for bilateral grid warmup"},
                     {"prune_opacity", defaults.prune_opacity, "Opacity pruning threshold"},
                     {"grow_scale3d", defaults.grow_scale3d, "3D scale threshold for duplication"},
                     {"grow_scale2d", defaults.grow_scale2d, "2D scale threshold for splitting"},
@@ -239,6 +243,7 @@ namespace gs {
             opt_json["opacity_lr"] = opacity_lr;
             opt_json["scaling_lr"] = scaling_lr;
             opt_json["rotation_lr"] = rotation_lr;
+            opt_json["final_lr_fraction"] = final_lr_fraction;
             opt_json["lambda_dssim"] = lambda_dssim;
             opt_json["min_opacity"] = min_opacity;
             opt_json["refine_every"] = refine_every;
@@ -251,6 +256,7 @@ namespace gs {
             opt_json["init_opacity"] = init_opacity;
             opt_json["init_scaling"] = init_scaling;
             opt_json["num_workers"] = num_workers;
+            opt_json["gpu_id"] = gpu_id;
             opt_json["max_cap"] = max_cap;
             opt_json["render_mode"] = render_mode;
             opt_json["pose_optimization"] = pose_optimization;
@@ -260,12 +266,15 @@ namespace gs {
             opt_json["enable_save_eval_images"] = enable_save_eval_images;
             opt_json["strategy"] = strategy;
             opt_json["skip_intermediate"] = skip_intermediate_saving;
+            opt_json["bg_modulation"] = bg_modulation;
             opt_json["use_bilateral_grid"] = use_bilateral_grid;
             opt_json["bilateral_grid_X"] = bilateral_grid_X;
             opt_json["bilateral_grid_Y"] = bilateral_grid_Y;
             opt_json["bilateral_grid_W"] = bilateral_grid_W;
             opt_json["bilateral_grid_lr"] = bilateral_grid_lr;
             opt_json["tv_loss_weight"] = tv_loss_weight;
+            opt_json["bilateral_grid_warmup_steps"] = bilateral_grid_warmup_steps;
+            opt_json["bilateral_grid_warmup_start_lr"] = bilateral_grid_warmup_start_lr;
             opt_json["prune_opacity"] = prune_opacity;
             opt_json["grow_scale3d"] = grow_scale3d;
             opt_json["grow_scale2d"] = grow_scale2d;
@@ -274,6 +283,7 @@ namespace gs {
             opt_json["reset_every"] = reset_every;
             opt_json["pause_refine_after_reset"] = pause_refine_after_reset;
             opt_json["revised_opacity"] = revised_opacity;
+            opt_json["gut"] = gut;
             opt_json["steps_scaler"] = steps_scaler;
             opt_json["antialiasing"] = antialiasing;
             opt_json["sh_degree_interval"] = sh_degree_interval;
@@ -287,6 +297,27 @@ namespace gs {
             opt_json["init_rho"] = init_rho;
             opt_json["prune_ratio"] = prune_ratio;
 
+            // Serialize mask_mode enum as string
+            switch (mask_mode) {
+                case param::MaskMode::None:
+                    opt_json["mask_mode"] = "none";
+                    break;
+                case param::MaskMode::Segment:
+                    opt_json["mask_mode"] = "segment";
+                    break;
+                case param::MaskMode::Ignore:
+                    opt_json["mask_mode"] = "ignore";
+                    break;
+                case param::MaskMode::AlphaConsistent:
+                    opt_json["mask_mode"] = "alpha_consistent";
+                    break;
+            }
+
+            opt_json["invert_masks"] = invert_masks;
+            opt_json["mask_opacity_penalty_weight"] = mask_opacity_penalty_weight;
+            opt_json["mask_opacity_penalty_power"] = mask_opacity_penalty_power;
+            opt_json["mask_threshold"] = mask_threshold;
+
             return opt_json;
         }
 
@@ -299,6 +330,9 @@ namespace gs {
             params.opacity_lr = json["opacity_lr"];
             params.scaling_lr = json["scaling_lr"];
             params.rotation_lr = json["rotation_lr"];
+            if (json.contains("final_lr_fraction")) {
+                params.final_lr_fraction = json["final_lr_fraction"];
+            }
             params.lambda_dssim = json["lambda_dssim"];
             params.min_opacity = json["min_opacity"];
             params.refine_every = json["refine_every"];
@@ -321,6 +355,9 @@ namespace gs {
             }
             if (json.contains("num_workers")) {
                 params.num_workers = json["num_workers"];
+            }
+            if (json.contains("gpu_id")) {
+                params.gpu_id = json["gpu_id"];
             }
             if (json.contains("max_cap")) {
                 params.max_cap = json["max_cap"];
@@ -379,6 +416,9 @@ namespace gs {
             if (json.contains("skip_intermediate")) {
                 params.skip_intermediate_saving = json["skip_intermediate"];
             }
+            if (json.contains("bg_modulation")) {
+                params.bg_modulation = json["bg_modulation"];
+            }
             if (json.contains("use_bilateral_grid")) {
                 params.use_bilateral_grid = json["use_bilateral_grid"];
             }
@@ -396,6 +436,12 @@ namespace gs {
             }
             if (json.contains("tv_loss_weight")) {
                 params.tv_loss_weight = json["tv_loss_weight"];
+            }
+            if (json.contains("bilateral_grid_warmup_steps")) {
+                params.bilateral_grid_warmup_steps = json["bilateral_grid_warmup_steps"];
+            }
+            if (json.contains("bilateral_grid_warmup_start_lr")) {
+                params.bilateral_grid_warmup_start_lr = json["bilateral_grid_warmup_start_lr"];
             }
             if (json.contains("prune_opacity")) {
                 params.prune_opacity = json["prune_opacity"];
@@ -420,6 +466,9 @@ namespace gs {
             }
             if (json.contains("revised_opacity")) {
                 params.revised_opacity = json["revised_opacity"];
+            }
+            if (json.contains("gut")) {
+                params.gut = json["gut"];
             }
             if (json.contains("steps_scaler")) {
                 params.steps_scaler = json["steps_scaler"];
@@ -456,6 +505,39 @@ namespace gs {
             }
             if (json.contains("prune_ratio")) {
                 params.prune_ratio = json["prune_ratio"];
+            }
+
+            // Deserialize mask_mode from string
+            if (json.contains("mask_mode")) {
+                std::string mode = json["mask_mode"];
+                if (mode == "none") {
+                    params.mask_mode = param::MaskMode::None;
+                } else if (mode == "segment") {
+                    params.mask_mode = param::MaskMode::Segment;
+                } else if (mode == "ignore") {
+                    params.mask_mode = param::MaskMode::Ignore;
+                } else if (mode == "alpha_consistent") {
+                    params.mask_mode = param::MaskMode::AlphaConsistent;
+                } else {
+                    std::println(stderr, "Warning: Invalid mask mode '{}' in JSON. Using 'none'", mode);
+                    params.mask_mode = param::MaskMode::None;
+                }
+            }
+
+            if (json.contains("invert_masks")) {
+                params.invert_masks = json["invert_masks"];
+            }
+
+            if (json.contains("mask_opacity_penalty_weight")) {
+                params.mask_opacity_penalty_weight = json["mask_opacity_penalty_weight"];
+            }
+
+            if (json.contains("mask_opacity_penalty_power")) {
+                params.mask_opacity_penalty_power = json["mask_opacity_penalty_power"];
+            }
+
+            if (json.contains("mask_threshold")) {
+                params.mask_threshold = json["mask_threshold"];
             }
 
             return params;
@@ -584,6 +666,8 @@ namespace gs {
             json["test_every"] = test_every;
             json["max_width"] = max_width;
             json["loading_params"] = loading_params.to_json();
+            json["invert_masks"] = invert_masks;
+            json["mask_threshold"] = mask_threshold;
 
             return json;
         }
@@ -600,6 +684,14 @@ namespace gs {
 
             if (j.contains("loading_params")) {
                 dataset.loading_params = LoadingParams::from_json(j["loading_params"]);
+            }
+
+            if (j.contains("invert_masks")) {
+                dataset.invert_masks = j["invert_masks"].get<bool>();
+            }
+
+            if (j.contains("mask_threshold")) {
+                dataset.mask_threshold = j["mask_threshold"].get<float>();
             }
 
             return dataset;

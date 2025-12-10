@@ -10,7 +10,7 @@
 #include "gui/panels/tools_panel.hpp"
 #include "gui/panels/training_panel.hpp"
 #include "gui/ui_widgets.hpp"
-#include "gui/utils/windows_utils.hpp"
+#include "gui/utils/file_dialogs.hpp"
 #include "gui/windows/file_browser.hpp"
 #include "gui/windows/project_changed_dialog_box.hpp"
 
@@ -50,6 +50,11 @@ namespace gs::gui {
         speed_overlay_visible_ = false;
         speed_overlay_duration_ = std::chrono::milliseconds(3000); // 3 seconds
 
+        // Initialize notification popup state
+        notification_visible_ = false;
+        notification_is_error_ = false;
+        notification_duration_ = std::chrono::milliseconds(3000); // 3 seconds default
+
         // Initialize focus state
         viewport_has_focus_ = false;
 
@@ -62,36 +67,35 @@ namespace gs::gui {
 
     void GuiManager::initMenuBar() {
         menu_bar_->setOnImportDataset([this]() {
-            window_states_["file_browser"] = true;
-#ifdef WIN32
-            // show native windows file dialog for project file selection
-            OpenDatasetFolderDialog();
-
-            // hide the file browser
-            events::cmd::ShowWindow{.window_name = "file_browser", .show = false}.emit();
-#endif // WIN32
+            OpenDatasetFolderDialog([this](const std::string& path) {
+                std::filesystem::path dataset_path(path);
+                if (std::filesystem::is_directory(dataset_path)) {
+                    events::cmd::LoadFile{.path = dataset_path, .is_dataset = true}.emit();
+                    LOG_INFO("Loading dataset: {}", dataset_path.string());
+                }
+                // hide the file browser
+                events::cmd::ShowWindow{.window_name = "file_browser", .show = false}.emit();
+            });
         });
 
         menu_bar_->setOnOpenProject([this]() {
-            window_states_["file_browser"] = true;
-#ifdef WIN32
-            // show native windows file dialog for project file selection
-            OpenProjectFileDialog();
-
-            // hide the file browser
-            events::cmd::ShowWindow{.window_name = "file_browser", .show = false}.emit();
-#endif // WIN32
+            OpenProjectFileDialog([this](const std::string& path) {
+                std::filesystem::path project_path(path);
+                events::cmd::LoadProject{.path = project_path}.emit();
+                LOG_INFO("Loading project file: {}", project_path.string());
+                // hide the file browser
+                events::cmd::ShowWindow{.window_name = "file_browser", .show = false}.emit();
+            });
         });
 
         menu_bar_->setOnImportPLY([this]() {
-            window_states_["file_browser"] = true;
-#ifdef WIN32
-            // show native windows file dialog for project file selection
-            OpenPlyFileDialog();
-
-            // hide the file browser
-            events::cmd::ShowWindow{.window_name = "file_browser", .show = false}.emit();
-#endif // WIN32
+            OpenPlyFileDialog([this](const std::string& path) {
+                std::filesystem::path ply_path(path);
+                events::cmd::LoadFile{.path = ply_path}.emit();
+                LOG_INFO("Loading PLY file: {}", ply_path.string());
+                // hide the file browser
+                events::cmd::ShowWindow{.window_name = "file_browser", .show = false}.emit();
+            });
         });
 
         menu_bar_->setOnSaveProjectAs([this]() {
@@ -102,6 +106,27 @@ namespace gs::gui {
             if (viewer_->project_) {
                 events::cmd::SaveProject{viewer_->project_->getProjectOutputFolder().string()}.emit();
             }
+        });
+
+        menu_bar_->setOnExportConfig([this]() {
+            ExportConfigFileDialog([](const std::string& path) {
+                events::cmd::ExportConfig{.path = path}.emit();
+                LOG_INFO("Exporting config to: {}", path);
+            });
+        });
+
+        menu_bar_->setOnImportConfig([this]() {
+            ImportConfigFileDialog([](const std::string& path) {
+                events::cmd::ImportConfig{.path = path}.emit();
+                LOG_INFO("Importing config from: {}", path);
+            });
+#ifndef WIN32
+            // On Linux, also show the file browser
+            // Set default path to parameter directory for config imports
+            auto param_dir = std::filesystem::absolute("parameter");
+            file_browser_->setCurrentPath(param_dir);
+            window_states_["file_browser"] = true;
+#endif
         });
 
         menu_bar_->setOnExit([this]() {
@@ -335,6 +360,12 @@ namespace gs::gui {
             project_changed_dialog_box_->render(&window_states_["project_changed_dialog_box"]);
         }
 
+        // 3DGUT auto-enabled warning notification
+        if (viewer_->hasGutAutoEnabledWarning()) {
+            showNotificationPopup("Camera distortion detected!\n3DGUT rasterizer has been automatically enabled.", false, 4000);
+            viewer_->clearGutAutoEnabledWarning();
+        }
+
         if (window_states_["save_project_browser_before_exit"]) {
 #ifdef WIN32
             bool was_project_saved = save_project_browser_->SaveProjectFileDialog(&window_states_["save_project_browser_before_exit"]);
@@ -347,6 +378,26 @@ namespace gs::gui {
                 LOG_INFO("Exiting LichtFeldStudio gracefully after project save");
             }
         }
+
+        // Update cross-platform file dialogs (for Linux/other platforms)
+#ifndef WIN32
+        RenderExportConfigDialog();
+
+        // Handle file browser callbacks for config import
+        if (window_states_["file_browser"]) {
+            auto import_cb = GetImportConfigCallback();
+            if (import_cb) {
+                // Set file browser callback to handle config import
+                file_browser_->setOnFileSelected([import_cb](const std::filesystem::path& path, bool is_dataset) {
+                    // Only handle .json files for config import
+                    if (!is_dataset && path.extension() == ".json") {
+                        import_cb(path.string());
+                        ClearPendingCallbacks();
+                    }
+                });
+            }
+        }
+#endif
 
         if (window_states_["show_save_browser"]) {
 #ifdef WIN32
@@ -363,6 +414,9 @@ namespace gs::gui {
 
         // Render speed overlay if visible
         renderSpeedOverlay();
+
+        // Render notification popup if visible
+        renderNotificationPopup();
 
         // Render split view indicator if enabled
         if (rendering_manager) {
@@ -693,6 +747,103 @@ namespace gs::gui {
         max_speed_ = max_speed;
         speed_overlay_visible_ = true;
         speed_overlay_start_time_ = std::chrono::steady_clock::now();
+    }
+
+    void GuiManager::renderNotificationPopup() {
+        // Check if notification should be hidden
+        if (notification_visible_) {
+            auto now = std::chrono::steady_clock::now();
+            if (now - notification_start_time_ >= notification_duration_) {
+                notification_visible_ = false;
+            }
+        } else {
+            return;
+        }
+
+        // Get viewport for positioning
+        const ImGuiViewport* viewport = ImGui::GetMainViewport();
+
+        // Position popup in the center of the screen
+        const float popup_width = 450.0f;
+        const float popup_height = 120.0f;
+
+        ImVec2 popup_pos(
+            viewport->WorkPos.x + (viewport->WorkSize.x - popup_width) * 0.5f,
+            viewport->WorkPos.y + (viewport->WorkSize.y - popup_height) * 0.5f);
+
+        ImGui::SetNextWindowPos(popup_pos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(popup_width, popup_height), ImGuiCond_Always);
+
+        // Calculate fade effect based on time remaining
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - notification_start_time_).count();
+        float fade_alpha = 1.0f;
+        if (elapsed > notification_duration_.count() - 500) {
+            float fade_time = notification_duration_.count() - elapsed;
+            fade_alpha = fade_time / 500.0f;
+        }
+
+        // Style the popup
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 12.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f, 20.0f));
+
+        ImVec4 bg_color = notification_is_error_
+            ? ImVec4(0.15f, 0.05f, 0.05f, 0.95f * fade_alpha)  // Dark red for errors
+            : ImVec4(0.05f, 0.15f, 0.05f, 0.95f * fade_alpha); // Dark green for success
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, bg_color);
+        ImGui::PushStyleColor(ImGuiCol_Border, notification_is_error_
+            ? ImVec4(0.8f, 0.2f, 0.2f, fade_alpha)   // Red border for errors
+            : ImVec4(0.2f, 0.8f, 0.2f, fade_alpha)); // Green border for success
+
+        ImGuiWindowFlags window_flags =
+            ImGuiWindowFlags_NoTitleBar |
+            ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoSavedSettings |
+            ImGuiWindowFlags_NoDocking;
+
+        if (ImGui::Begin("##NotificationPopup", nullptr, window_flags)) {
+            ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(8.0f, 12.0f));
+
+            // Title
+            ImVec4 title_color = notification_is_error_
+                ? ImVec4(1.0f, 0.4f, 0.4f, fade_alpha)  // Light red for errors
+                : ImVec4(0.4f, 1.0f, 0.4f, fade_alpha); // Light green for success
+
+            ImGui::PushStyleColor(ImGuiCol_Text, title_color);
+            const char* title = notification_is_error_ ? "Error" : "Success";
+            ImVec2 title_size = ImGui::CalcTextSize(title);
+            ImGui::SetCursorPosX((popup_width - title_size.x) * 0.5f);
+            ImGui::Text("%s", title);
+            ImGui::PopStyleColor();
+
+            ImGui::Spacing();
+            ImGui::Separator();
+            ImGui::Spacing();
+
+            // Message (word-wrapped)
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.95f, 0.95f, fade_alpha));
+            ImGui::PushTextWrapPos(ImGui::GetCursorPos().x + popup_width - 40.0f);
+            ImGui::TextWrapped("%s", notification_message_.c_str());
+            ImGui::PopTextWrapPos();
+            ImGui::PopStyleColor();
+
+            ImGui::PopStyleVar();
+        }
+        ImGui::End();
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor(2);
+    }
+
+    void GuiManager::showNotificationPopup(const std::string& message, bool is_error, int duration_ms) {
+        notification_message_ = message;
+        notification_is_error_ = is_error;
+        notification_visible_ = true;
+        notification_start_time_ = std::chrono::steady_clock::now();
+        notification_duration_ = std::chrono::milliseconds(duration_ms);
     }
 
     void GuiManager::renderDatasetErrorPopup() {
