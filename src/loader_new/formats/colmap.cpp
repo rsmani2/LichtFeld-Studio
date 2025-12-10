@@ -16,7 +16,6 @@
 #include <stdexcept>
 #include <unordered_map>
 #include <vector>
-#include <iostream>
 
 namespace lfs::loader {
 
@@ -644,33 +643,6 @@ namespace lfs::loader {
         std::vector<float> camera_positions;
         camera_positions.reserve(images.size() * 3);
 
-        // Verify actual image dimensions and compute correction if needed
-        float scale_x = 1.0f, scale_y = 1.0f;
-        int actual_w = 0, actual_h = 0;
-        if (!images.empty()) {
-            fs::path first_image = images_path / images[0].name;
-            if (fs::exists(first_image)) {
-                auto it = cam_map.find(images[0].camera_id);
-                if (it != cam_map.end()) {
-                    auto [w, h, channels] = lfs::core::get_image_info(first_image);
-                    actual_w = w;
-                    actual_h = h;
-                    int expected_w = it->second.width;
-                    int expected_h = it->second.height;
-
-                    scale_x = static_cast<float>(actual_w) / expected_w;
-                    scale_y = static_cast<float>(actual_h) / expected_h;
-
-                    if (std::abs(scale_x - 1.0f) > 1e-5 || std::abs(scale_y - 1.0f) > 1e-5) {
-                        LOG_WARN("[LFS] Image dimension mismatch detected!");
-                        LOG_INFO("[LFS]   Expected (from COLMAP): {}x{}", expected_w, expected_h);
-                        LOG_INFO("[LFS]   Actual (from image file): {}x{}", actual_w, actual_h);
-                        LOG_INFO("[LFS]   Applying correction scale: {:.3f}x{:.3f}", scale_x, scale_y);
-                    }
-                }
-            }
-        }
-
         for (size_t i = 0; i < images.size(); ++i) {
             const ImageData& img = images[i];
 
@@ -824,21 +796,7 @@ namespace lfs::loader {
                 throw std::runtime_error("Unsupported camera model");
             }
 
-            // Apply dimension correction if needed
-            if (std::abs(scale_x - 1.0f) > 1e-5 || std::abs(scale_y - 1.0f) > 1e-5) {
-                focal_x *= scale_x;
-                focal_y *= scale_y;
-                center_x *= scale_x;
-                center_y *= scale_y;
-            }
-
-            // Use actual dimensions if corrected, otherwise use COLMAP dimensions
-            int cam_width = (actual_w > 0) ? actual_w : cam_data.width;
-            int cam_height = (actual_h > 0) ? actual_h : cam_data.height;
-
-            // Find mask path if available
             std::filesystem::path mask_path = find_mask_path(base_path, img.name);
-
             // Create Camera
             auto camera = std::make_shared<Camera>(
                 R,
@@ -851,8 +809,8 @@ namespace lfs::loader {
                 img.name,
                 images_path / img.name,
                 mask_path,
-                cam_width,
-                cam_height,
+                cam_data.width,
+                cam_data.height,
                 static_cast<int>(i));
 
             cameras.push_back(std::move(camera));
