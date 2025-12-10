@@ -15,6 +15,7 @@
 #include <vector>
 
 #ifdef _WIN32
+#define NOMINMAX  // Prevent Windows min/max macros
 #include <io.h>
 #include <windows.h>
 #else
@@ -119,7 +120,8 @@ namespace lfs::loader {
 
         // Unpack rotation from 10-10-10-2 bit format
         inline void unpack_rotation(uint32_t value, float& qx, float& qy, float& qz, float& qw) {
-            constexpr float norm = 1.0f / (std::sqrt(2.0f) * 0.5f);
+            constexpr float SQRT2 = 1.41421356f;  // std::sqrt not constexpr on MSVC
+            constexpr float norm = 1.0f / (SQRT2 * 0.5f);
             constexpr float scale = 1.0f / 1023.0f;
 
             const float a = (static_cast<float>((value >> 20) & 0x3FF) * scale - 0.5f) * norm;
@@ -437,7 +439,8 @@ namespace lfs::loader {
             }
 
             // Scale by sqrt(2)/2 and map to [0,1]
-            constexpr float inv_norm = std::sqrt(2.0f) * 0.5f;
+            constexpr float SQRT2 = 1.41421356f;  // std::sqrt not constexpr on MSVC
+            constexpr float inv_norm = SQRT2 * 0.5f;
             a = a * inv_norm * 0.5f + 0.5f;
             b = b * inv_norm * 0.5f + 0.5f;
             c = c * inv_norm * 0.5f + 0.5f;
