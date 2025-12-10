@@ -38,12 +38,12 @@ class Viewport {
 
         // Camera state
         glm::mat3 R = glm::mat3(1.0f);
-        glm::vec3 t = glm::vec3(0.0f, 0.0f, -8.0f);
+        glm::vec3 t = glm::vec3(0.0f, 3.0f, -8.0f);
         glm::vec3 pivot = glm::vec3(0.0f);
 
         // Home position
         glm::mat3 home_R = glm::mat3(1.0f);
-        glm::vec3 home_t = glm::vec3(0.0f, 0.0f, -8.0f);
+        glm::vec3 home_t = glm::vec3(0.0f, 3.0f, -8.0f);
         glm::vec3 home_pivot = glm::vec3(0.0f);
         bool home_saved = true;
 
