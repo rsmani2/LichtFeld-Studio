@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 
 // cuda.h defines CUDA_VERSION which GLM needs to detect CUDA version properly
 // Must be included before any GLM headers

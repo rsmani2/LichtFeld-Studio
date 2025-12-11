@@ -43,7 +43,7 @@ target_link_libraries(lfs_rasterizer
 
 target_compile_options(lfs_rasterizer PRIVATE
         # CUDA
-        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-O0 -g -G -lineinfo>
+        $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Debug>>:-O0 -g -G -lineinfo --expt-relaxed-constexpr>
         $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CONFIG:Release>>:-O3 --use_fast_math --expt-relaxed-constexpr --diag-suppress=20012,186,221>
 
         # CUDA on Windows: Pass /utf-8 to MSVC when invoked by nvcc
