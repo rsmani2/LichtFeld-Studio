@@ -342,7 +342,7 @@ namespace lfs::vis::gui {
         const unsigned int vis_tex = is_visible ? m_icons.visible : m_icons.hidden;
         const ImVec4 vis_tint = is_visible
             ? ImVec4(0.4f, 0.9f, 0.4f, 1.0f)  // Green for visible
-            : ImVec4(0.5f, 0.5f, 0.5f, 0.4f); // Gray for hidden
+            : ImVec4(0.7f, 0.5f, 0.5f, 0.8f); // Reddish-gray for hidden
 
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, withAlpha(t.palette.surface_bright, 0.5f));
