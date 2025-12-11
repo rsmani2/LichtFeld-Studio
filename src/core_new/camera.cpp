@@ -143,10 +143,12 @@ namespace lfs::core {
           _cam_position(std::move(other._cam_position)),
           _cached_mask(std::move(other._cached_mask)),
           _mask_loaded(other._mask_loaded),
+          _dimensions_finalized(other._dimensions_finalized),
           _stream(other._stream) {
         // Take ownership of the stream
         other._stream = nullptr;
         other._mask_loaded = false;
+        other._dimensions_finalized = false;
     }
 
     Camera& Camera::operator=(Camera&& other) noexcept {
@@ -179,11 +181,13 @@ namespace lfs::core {
             _cam_position = std::move(other._cam_position);
             _cached_mask = std::move(other._cached_mask);
             _mask_loaded = other._mask_loaded;
+            _dimensions_finalized = other._dimensions_finalized;
 
             // Take ownership of the stream
             _stream = other._stream;
             other._stream = nullptr;
             other._mask_loaded = false;
+            other._dimensions_finalized = false;
         }
         return *this;
     }
@@ -241,51 +245,16 @@ namespace lfs::core {
         return std::make_tuple(fx, fy, cx, cy);
     }
 
-    Tensor Camera::load_and_get_image(int resize_factor, int max_width) {
-        auto& loader = lfs::loader::CacheLoader::getInstance();
-        // Load image synchronously - returns preprocessed tensor [C,H,W] float32
-        lfs::loader::LoadParams params{
-            .resize_factor = resize_factor,
-            .max_width = max_width,
-            .cuda_stream = _stream  // Use camera's CUDA stream
-        };
-
-        auto image = loader.load_cached_image(_image_path, params);
-
-        // Extract dimensions from tensor shape
-        auto shape = image.shape();
-        int old_width = _image_width;
-        int old_height = _image_height;
-        _image_width = shape[2];
-        _image_height = shape[1];
-
-        LOG_DEBUG("load_and_get_image(): Tensor shape [C,H,W]=[{},{},{}], setting dimensions: {}x{} → {}x{}",
-                  shape[0], shape[1], shape[2], old_width, old_height, _image_width, _image_height);
-
-        // Transfer to CUDA if not already there (GPU decode returns tensors already on CUDA!)
-        if (image.device() != Device::CUDA) {
-            image = image.to(Device::CUDA, _stream);
-            // Sync stream to ensure transfer completes
-            if (_stream) {
-                cudaStreamSynchronize(_stream);
-            }
+    void Camera::finalize_dimensions(const int resize_factor, const int max_width) {
+        if (_dimensions_finalized) {
+            return;
         }
 
-        return image;
-    }
-
-    void Camera::load_image_size(int resize_factor, int max_width) {
-        auto result = get_image_info(_image_path);
-
-        int w = std::get<0>(result);
-        int h = std::get<1>(result);
-
-        LOG_DEBUG("load_image_size(): Original dimensions from file: {}x{}, resize_factor={}, max_width={}",
-                  w, h, resize_factor, max_width);
+        const auto [w, h, c] = get_image_info(_image_path);
 
         if (resize_factor > 0) {
             if (w % resize_factor || h % resize_factor) {
-                LOG_WARN("width or height are not divisible by resize_factor w {} h {} resize_factor {}", w, h, resize_factor);
+                LOG_WARN("Dimensions {}x{} not divisible by resize_factor {}", w, h, resize_factor);
             }
             _image_width = w / resize_factor;
             _image_height = h / resize_factor;
@@ -294,26 +263,43 @@ namespace lfs::core {
             _image_height = h;
         }
 
-        LOG_DEBUG("load_image_size(): After resize_factor: {}x{}", _image_width, _image_height);
-
         if (max_width > 0 && (_image_width > max_width || _image_height > max_width)) {
-            int old_width = _image_width;
-            int old_height = _image_height;
-
+            const int prev_w = _image_width;
+            const int prev_h = _image_height;
             if (_image_width > _image_height) {
                 _image_width = max_width;
-                _image_height = (old_height * max_width) / old_width;  // Fixed: Use old_width
-                LOG_DEBUG("load_image_size(): Resized {}x{} → {}x{} (limited by max_width={})",
-                         old_width, old_height, _image_width, _image_height, max_width);
+                _image_height = (prev_h * max_width) / prev_w;
             } else {
                 _image_height = max_width;
-                _image_width = (old_width * max_width) / old_height;  // Fixed: Use old_height
-                LOG_DEBUG("load_image_size(): Resized {}x{} → {}x{} (limited by max_width={})",
-                         old_width, old_height, _image_width, _image_height, max_width);
+                _image_width = (prev_w * max_width) / prev_h;
             }
         }
 
-        LOG_DEBUG("load_image_size(): Final dimensions: {}x{}", _image_width, _image_height);
+        _dimensions_finalized = true;
+    }
+
+    Tensor Camera::load_and_get_image(const int resize_factor, const int max_width) {
+        auto& loader = lfs::loader::CacheLoader::getInstance();
+        const lfs::loader::LoadParams params{
+            .resize_factor = resize_factor,
+            .max_width = max_width,
+            .cuda_stream = _stream
+        };
+
+        auto image = loader.load_cached_image(_image_path, params);
+
+        if (image.device() != Device::CUDA) {
+            image = image.to(Device::CUDA, _stream);
+            if (_stream) {
+                cudaStreamSynchronize(_stream);
+            }
+        }
+
+        return image;
+    }
+
+    void Camera::load_image_size(const int resize_factor, const int max_width) {
+        finalize_dimensions(resize_factor, max_width);
     }
 
     size_t Camera::get_num_bytes_from_file(int resize_factor, int max_width) const {

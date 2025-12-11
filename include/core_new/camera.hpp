@@ -43,7 +43,12 @@ namespace lfs::core {
         // Initialize GPU tensors on demand
         void initialize_cuda_tensors();
 
-        // Load image from disk and return it
+        // Compute and lock image dimensions. Must be called before concurrent access.
+        void finalize_dimensions(int resize_factor, int max_width);
+
+        bool dimensions_finalized() const noexcept { return _dimensions_finalized; }
+
+        // Load image tensor. Does not modify camera state.
         Tensor load_and_get_image(int resize_factor = -1, int max_width = 3840);
 
         // Load mask from disk, process it, and return it (cached)
@@ -131,11 +136,10 @@ namespace lfs::core {
         Tensor _world_view_transform;
         Tensor _cam_position;
 
-        // Mask caching (processed mask stored on GPU)
         Tensor _cached_mask;
         bool _mask_loaded = false;
+        bool _dimensions_finalized = false;
 
-        // CUDA stream for async operations
         cudaStream_t _stream = nullptr;
     };
     inline float focal2fov(float focal, int pixels) {

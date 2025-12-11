@@ -212,6 +212,11 @@ public:
             }
         }
 
+        // Lock camera dimensions before concurrent training access
+        for (const auto& cam : cameras_) {
+            cam->finalize_dimensions(config_.resize_factor, config_.max_width);
+        }
+
         std::cout << "Dataset created with " << indices_.size()
                   << " images (split: " << static_cast<int>(split_) << ")" << std::endl;
     }
