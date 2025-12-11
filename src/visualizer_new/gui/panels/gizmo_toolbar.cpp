@@ -8,6 +8,7 @@
 #include "core_new/events.hpp"
 #include "core_new/image_io.hpp"
 #include "core_new/logger.hpp"
+#include "gui/ui_widgets.hpp"
 #include "internal/resource_paths.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "theme/theme.hpp"
@@ -213,6 +214,7 @@ namespace lfs::vis::gui::panels {
         const float pos_x = viewport_pos.x + (viewport_size.x - toolbar_size.x) * 0.5f;
         const float pos_y = viewport_pos.y + TOOLBAR_MARGIN_Y;
 
+        widgets::DrawWindowShadow({pos_x, pos_y}, toolbar_size, theme().sizes.window_rounding);
         ImGui::SetNextWindowPos(ImVec2(pos_x, pos_y), ImGuiCond_Always);
         ImGui::SetNextWindowSize(toolbar_size, ImGuiCond_Always);
 
@@ -289,6 +291,7 @@ namespace lfs::vis::gui::panels {
             const float sub_pos_x = viewport_pos.x + (viewport_size.x - sub_size.x) * 0.5f;
             const float sub_pos_y = viewport_pos.y + toolbar_size.y + SUBTOOLBAR_OFFSET_Y;
 
+            widgets::DrawWindowShadow({sub_pos_x, sub_pos_y}, sub_size, theme().sizes.window_rounding);
             ImGui::SetNextWindowPos(ImVec2(sub_pos_x, sub_pos_y), ImGuiCond_Always);
             ImGui::SetNextWindowSize(sub_size, ImGuiCond_Always);
 
@@ -344,6 +347,7 @@ namespace lfs::vis::gui::panels {
             const float sub_x = viewport_pos.x + (viewport_size.x - sub_size.x) * 0.5f;
             const float sub_y = viewport_pos.y + toolbar_size.y + SUBTOOLBAR_OFFSET_Y;
 
+            widgets::DrawWindowShadow({sub_x, sub_y}, sub_size, theme().sizes.window_rounding);
             ImGui::SetNextWindowPos(ImVec2(sub_x, sub_y), ImGuiCond_Always);
             ImGui::SetNextWindowSize(sub_size, ImGuiCond_Always);
 
@@ -383,6 +387,7 @@ namespace lfs::vis::gui::panels {
             const float sub_x = viewport_pos.x + (viewport_size.x - sub_size.x) * 0.5f;
             const float sub_y = viewport_pos.y + toolbar_size.y + SUBTOOLBAR_OFFSET_Y;
 
+            widgets::DrawWindowShadow({sub_x, sub_y}, sub_size, theme().sizes.window_rounding);
             ImGui::SetNextWindowPos(ImVec2(sub_x, sub_y), ImGuiCond_Always);
             ImGui::SetNextWindowSize(sub_size, ImGuiCond_Always);
 
@@ -465,6 +470,7 @@ namespace lfs::vis::gui::panels {
             viewport_pos.y + MARGIN_TOP
         };
 
+        widgets::DrawWindowShadow(pos, size, theme().sizes.window_rounding);
         ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
         ImGui::SetNextWindowSize(size, ImGuiCond_Always);
 

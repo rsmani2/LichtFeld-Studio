@@ -464,6 +464,18 @@ bool saveTheme(const Theme& t, const std::string& path) {
         viewport["border_alpha"] = t.viewport.border_alpha;
         viewport["border_darken"] = t.viewport.border_darken;
 
+        auto& shadows = j["shadows"];
+        shadows["enabled"] = t.shadows.enabled;
+        shadows["offset"] = vec2ToJson(t.shadows.offset);
+        shadows["blur"] = t.shadows.blur;
+        shadows["alpha"] = t.shadows.alpha;
+
+        auto& vignette = j["vignette"];
+        vignette["enabled"] = t.vignette.enabled;
+        vignette["intensity"] = t.vignette.intensity;
+        vignette["radius"] = t.vignette.radius;
+        vignette["softness"] = t.vignette.softness;
+
         std::ofstream file(path);
         if (!file.is_open()) return false;
         file << j.dump(2);
@@ -555,6 +567,22 @@ bool loadTheme(Theme& t, const std::string& path) {
             t.viewport.border_size = v.value("border_size", t.viewport.border_size);
             t.viewport.border_alpha = v.value("border_alpha", t.viewport.border_alpha);
             t.viewport.border_darken = v.value("border_darken", t.viewport.border_darken);
+        }
+
+        if (j.contains("shadows")) {
+            const auto& sh = j["shadows"];
+            t.shadows.enabled = sh.value("enabled", t.shadows.enabled);
+            if (sh.contains("offset")) t.shadows.offset = vec2FromJson(sh["offset"]);
+            t.shadows.blur = sh.value("blur", t.shadows.blur);
+            t.shadows.alpha = sh.value("alpha", t.shadows.alpha);
+        }
+
+        if (j.contains("vignette")) {
+            const auto& v = j["vignette"];
+            t.vignette.enabled = v.value("enabled", t.vignette.enabled);
+            t.vignette.intensity = v.value("intensity", t.vignette.intensity);
+            t.vignette.radius = v.value("radius", t.vignette.radius);
+            t.vignette.softness = v.value("softness", t.vignette.softness);
         }
 
         return true;

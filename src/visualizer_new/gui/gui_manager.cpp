@@ -739,6 +739,11 @@ namespace lfs::vis::gui {
         // Update viewport focus based on mouse position
         updateViewportFocus();
 
+        // Draw vignette effect on viewport
+        if (viewport_size_.x > 0 && viewport_size_.y > 0) {
+            widgets::DrawViewportVignette(viewport_pos_, viewport_size_);
+        }
+
         // Mask viewport corners with background for rounded effect
         if (!ui_hidden_ && viewport_size_.x > 0 && viewport_size_.y > 0) {
             const auto& t = theme();

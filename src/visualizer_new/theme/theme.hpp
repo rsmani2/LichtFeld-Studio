@@ -80,6 +80,20 @@ struct ThemeViewport {
     float border_darken = 0.15f;
 };
 
+struct ThemeShadows {
+    bool enabled = true;
+    ImVec2 offset = {4.0f, 4.0f};
+    float blur = 12.0f;
+    float alpha = 0.35f;
+};
+
+struct ThemeVignette {
+    bool enabled = true;
+    float intensity = 0.3f;
+    float radius = 0.7f;
+    float softness = 0.5f;
+};
+
 // Complete theme
 struct Theme {
     std::string name;
@@ -88,6 +102,8 @@ struct Theme {
     ThemeFonts fonts;
     ThemeMenu menu;
     ThemeViewport viewport;
+    ThemeShadows shadows;
+    ThemeVignette vignette;
 
     // ImU32 accessors for ImDrawList
     [[nodiscard]] ImU32 primary_u32() const;

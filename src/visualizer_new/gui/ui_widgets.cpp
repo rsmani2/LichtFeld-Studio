@@ -181,4 +181,54 @@ namespace lfs::vis::gui::widgets {
     void DrawModeStatusWithContentSwitch(const UIContext& ctx) {
         DrawModeStatus(ctx);
     }
+
+    void DrawWindowShadow(const ImVec2& pos, const ImVec2& size, const float rounding) {
+        const auto& t = theme();
+        if (!t.shadows.enabled) return;
+
+        constexpr int LAYER_COUNT = 16;
+        constexpr float FALLOFF_SCALE = 0.12f;
+        constexpr float ROUNDING_SCALE = 0.3f;
+
+        auto* const draw_list = ImGui::GetBackgroundDrawList();
+        const ImVec2& off = t.shadows.offset;
+        const float blur = t.shadows.blur;
+        const float base_alpha = t.shadows.alpha * 255.0f;
+
+        for (int i = 0; i < LAYER_COUNT; ++i) {
+            const float t_val = static_cast<float>(i) / (LAYER_COUNT - 1);
+            const float inv_t = 1.0f - t_val;
+            const float falloff = inv_t * inv_t * inv_t;
+            const int alpha = static_cast<int>(base_alpha * falloff * FALLOFF_SCALE);
+            if (alpha < 1) continue;
+
+            const float expand = blur * t_val;
+            const ImVec2 p1 = {pos.x + off.x - expand, pos.y + off.y - expand};
+            const ImVec2 p2 = {pos.x + size.x + off.x + expand, pos.y + size.y + off.y + expand};
+            draw_list->AddRectFilled(p1, p2, IM_COL32(0, 0, 0, alpha), rounding + expand * ROUNDING_SCALE);
+        }
+    }
+
+    void DrawViewportVignette(const ImVec2& pos, const ImVec2& size) {
+        const auto& t = theme();
+        if (!t.vignette.enabled) return;
+
+        constexpr float EDGE_SCALE = 0.5f;
+        constexpr ImU32 TRANSPARENT = IM_COL32(0, 0, 0, 0);
+
+        auto* const draw_list = ImGui::GetForegroundDrawList();
+        const float edge_mult = (1.0f - t.vignette.radius) * EDGE_SCALE * (1.0f + t.vignette.softness);
+        const float edge_w = size.x * edge_mult;
+        const float edge_h = size.y * edge_mult;
+        const ImU32 dark = IM_COL32(0, 0, 0, static_cast<int>(t.vignette.intensity * 255.0f));
+
+        const float x1 = pos.x, y1 = pos.y;
+        const float x2 = pos.x + size.x, y2 = pos.y + size.y;
+
+        draw_list->AddRectFilledMultiColor({x1, y1}, {x1 + edge_w, y2}, dark, TRANSPARENT, TRANSPARENT, dark);
+        draw_list->AddRectFilledMultiColor({x2 - edge_w, y1}, {x2, y2}, TRANSPARENT, dark, dark, TRANSPARENT);
+        draw_list->AddRectFilledMultiColor({x1, y1}, {x2, y1 + edge_h}, dark, dark, TRANSPARENT, TRANSPARENT);
+        draw_list->AddRectFilledMultiColor({x1, y2 - edge_h}, {x2, y2}, TRANSPARENT, TRANSPARENT, dark, dark);
+    }
+
 } // namespace lfs::vis::gui::widgets

@@ -6,6 +6,7 @@
 
 #include "gui/ui_context.hpp"
 #include <glm/glm.hpp>
+#include <imgui.h>
 #include <string>
 
 namespace lfs::vis::gui::widgets {
@@ -22,4 +23,10 @@ namespace lfs::vis::gui::widgets {
     void DrawModeStatusWithContentSwitch(const UIContext& ctx);
     // Mode display helpers
     void DrawModeStatus(const UIContext& ctx);
+
+    // Shadow drawing for floating panels
+    void DrawWindowShadow(const ImVec2& pos, const ImVec2& size, float rounding = 6.0f);
+
+    // Vignette effect for viewport
+    void DrawViewportVignette(const ImVec2& pos, const ImVec2& size);
 } // namespace lfs::vis::gui::widgets
