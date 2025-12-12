@@ -32,6 +32,7 @@
 #include "tools/selection_tool.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "rendering_new/rendering.hpp"
+#include "core_new/events.hpp"
 #include "scene/scene.hpp"
 #include "scene/scene_manager.hpp"
 #include "theme/theme.hpp"
@@ -836,23 +837,41 @@ namespace lfs::vis::gui {
                     const bool mouse_in_gizmo = mouse.x >= gizmo_x && mouse.x <= gizmo_x + VIEWPORT_GIZMO_SIZE &&
                                                 mouse.y >= gizmo_y && mouse.y <= gizmo_y + VIEWPORT_GIZMO_SIZE;
 
-                    // Update hover highlighting
                     const int hovered_axis = engine->hitTestViewportGizmo(glm::vec2(mouse.x, mouse.y), vp_pos, vp_size);
                     engine->setViewportGizmoHover(hovered_axis);
 
-                    // Drag-to-orbit
                     if (!ImGui::GetIO().WantCaptureMouse) {
                         const glm::vec2 mouse_pos(mouse.x, mouse.y);
                         const float time = static_cast<float>(ImGui::GetTime());
 
                         if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && mouse_in_gizmo) {
-                            viewport_gizmo_dragging_ = true;
-                            viewport.camera.startRotateAroundCenter(mouse_pos, time);
+                            if (hovered_axis >= 0 && hovered_axis <= 5) {
+                                // Snap to axis view
+                                const int axis = hovered_axis % 3;
+                                const bool negative = hovered_axis >= 3;
+                                const glm::mat3 rotation = engine->getAxisViewRotation(axis, negative);
+                                const float dist = glm::length(viewport.camera.pivot - viewport.camera.t);
 
-                            // Capture cursor for infinite drag
-                            if (GLFWwindow* const window = glfwGetCurrentContext()) {
-                                glfwGetCursorPos(window, &gizmo_drag_start_cursor_.x, &gizmo_drag_start_cursor_.y);
-                                glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                                viewport.camera.pivot = glm::vec3(0.0f);
+                                viewport.camera.R = rotation;
+                                viewport.camera.t = -rotation[2] * dist;
+
+                                const auto& settings = rendering_manager->getSettings();
+                                lfs::core::events::ui::GridSettingsChanged{
+                                    .enabled = settings.show_grid,
+                                    .plane = axis,
+                                    .opacity = settings.grid_opacity
+                                }.emit();
+
+                                rendering_manager->markDirty();
+                            } else {
+                                // Drag to orbit
+                                viewport_gizmo_dragging_ = true;
+                                viewport.camera.startRotateAroundCenter(mouse_pos, time);
+                                if (GLFWwindow* const window = glfwGetCurrentContext()) {
+                                    glfwGetCursorPos(window, &gizmo_drag_start_cursor_.x, &gizmo_drag_start_cursor_.y);
+                                    glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+                                }
                             }
                         }
 

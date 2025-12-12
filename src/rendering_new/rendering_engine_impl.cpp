@@ -483,16 +483,17 @@ namespace lfs::rendering {
         const glm::vec2& click_pos,
         const glm::vec2& viewport_pos,
         const glm::vec2& viewport_size) const {
-
-        if (const auto axis = viewport_gizmo_.hitTest(click_pos, viewport_pos, viewport_size)) {
-            return static_cast<int>(*axis);
+        if (const auto hit = viewport_gizmo_.hitTest(click_pos, viewport_pos, viewport_size)) {
+            return static_cast<int>(hit->axis) + (hit->negative ? 3 : 0);
         }
         return -1;
     }
 
     void RenderingEngineImpl::setViewportGizmoHover(const int axis) {
         if (axis >= 0 && axis <= 2) {
-            viewport_gizmo_.setHoveredAxis(static_cast<GizmoAxis>(axis));
+            viewport_gizmo_.setHoveredAxis(static_cast<GizmoAxis>(axis), false);
+        } else if (axis >= 3 && axis <= 5) {
+            viewport_gizmo_.setHoveredAxis(static_cast<GizmoAxis>(axis - 3), true);
         } else {
             viewport_gizmo_.setHoveredAxis(std::nullopt);
         }

@@ -17,6 +17,12 @@
 
 namespace lfs::rendering {
 
+    namespace {
+        constexpr float HOVER_SCALE = 1.2f;
+        constexpr float HOVER_BRIGHTNESS = 1.3f;
+        constexpr float HIT_RADIUS_SCALE = 2.5f;
+    }
+
     constexpr glm::vec3 ViewportGizmo::AXIS_COLORS[];
 
     ViewportGizmo::ViewportGizmo() = default;
@@ -337,33 +343,27 @@ namespace lfs::rendering {
             float dist = glm::length(camSpacePos);
             float scaleFactor = dist / refDist;
 
-            // Highlight hovered sphere (scale up slightly and brighten)
-            const bool is_hovered = hovered_axis_.has_value() && static_cast<int>(*hovered_axis_) == i;
-            const float hover_scale = is_hovered ? 1.2f : 1.0f;
-            const float hover_brightness = is_hovered ? 1.3f : 1.0f;
+            const bool is_hovered = hovered_axis_.has_value() &&
+                                    static_cast<int>(*hovered_axis_) == i && !hovered_negative_;
+            const float scale = is_hovered ? HOVER_SCALE : 1.0f;
+            const float brightness = is_hovered ? HOVER_BRIGHTNESS : 1.0f;
 
-            glm::mat4 model = glm::translate(glm::mat4(1), labelPos) *
-                              glm::scale(glm::mat4(1), glm::vec3(sphereRadius * scaleFactor * hover_scale));
-            glm::mat4 mvp = proj * view * model;
-            if (auto result = s->set("uMVP", mvp); !result)
-                return result;
-            if (auto result = s->set("uModel", glm::mat4(1.0f)); !result)
-                return result;
-            const glm::vec3 color = glm::min(AXIS_COLORS[i] * hover_brightness, glm::vec3(1.0f));
-            if (auto result = s->set("uColor", color); !result)
-                return result;
-            if (auto result = s->set("uAlpha", 1.0f); !result)
-                return result;
-            if (auto result = s->set("uUseLighting", 0); !result)
-                return result;
+            const glm::mat4 model = glm::translate(glm::mat4(1), labelPos) *
+                                    glm::scale(glm::mat4(1), glm::vec3(sphereRadius * scaleFactor * scale));
+            const glm::mat4 mvp = proj * view * model;
+            if (auto r = s->set("uMVP", mvp); !r) return r;
+            if (auto r = s->set("uModel", glm::mat4(1.0f)); !r) return r;
+            const glm::vec3 color = glm::min(AXIS_COLORS[i] * brightness, glm::vec3(1.0f));
+            if (auto r = s->set("uColor", color); !r) return r;
+            if (auto r = s->set("uAlpha", 1.0f); !r) return r;
+            if (auto r = s->set("uUseLighting", 0); !r) return r;
             glDrawArrays(GL_TRIANGLES, sphere_vertex_start_, sphere_vertex_count_);
 
-            // Calculate screen position
-            glm::vec4 clipPos = proj * view * glm::vec4(labelPos, 1.0f);
+            const glm::vec4 clipPos = proj * view * glm::vec4(labelPos, 1.0f);
             if (clipPos.w > 0) {
-                glm::vec3 ndcPos = glm::vec3(clipPos) / clipPos.w;
-                float gizmoX = (ndcPos.x * 0.5f + 0.5f) * size_;
-                float gizmoY = (ndcPos.y * 0.5f + 0.5f) * size_;
+                const glm::vec3 ndcPos = glm::vec3(clipPos) / clipPos.w;
+                const float gizmoX = (ndcPos.x * 0.5f + 0.5f) * size_;
+                const float gizmoY = (ndcPos.y * 0.5f + 0.5f) * size_;
 
                 sphereInfo[i].screenPos.x = gizmoX + gizmo_x;
                 sphereInfo[i].screenPos.y = gizmo_y + gizmoY;
@@ -371,7 +371,6 @@ namespace lfs::rendering {
                 sphereInfo[i].index = i;
                 sphereInfo[i].visible = true;
 
-                // Convert GL to ImGui coords for hit-testing
                 sphere_hits_[i].screen_pos = glm::vec2(
                     sphereInfo[i].screenPos.x, fb_height - sphereInfo[i].screenPos.y);
                 sphere_hits_[i].radius = sphereRadius * scaleFactor * size_ * 0.5f;
@@ -382,8 +381,8 @@ namespace lfs::rendering {
             }
         }
 
-        // Draw rings for negative axis directions
-        constexpr glm::vec3 DEFAULT_NORMAL(0.0f, 0.0f, 1.0f);
+        // Draw rings (negative axis indicators)
+        constexpr glm::vec3 RING_NORMAL(0.0f, 0.0f, 1.0f);
         const glm::vec3 camWorldPos = -glm::transpose(view_rotation) * glm::vec3(view[3]);
 
         for (int i = 0; i < 3; i++) {
@@ -394,11 +393,15 @@ namespace lfs::rendering {
             const float scaleFactor = glm::length(camSpacePos) / refDist;
             const glm::vec3 toCam = glm::normalize(camWorldPos - pos);
 
-            // Rotate ring to face camera
+            const bool is_hovered = hovered_axis_.has_value() &&
+                                    static_cast<int>(*hovered_axis_) == i && hovered_negative_;
+            const float scale = is_hovered ? HOVER_SCALE : 1.0f;
+            const float brightness = is_hovered ? HOVER_BRIGHTNESS : 1.0f;
+
             glm::mat4 faceRotation(1.0f);
-            const float dot = glm::dot(DEFAULT_NORMAL, toCam);
+            const float dot = glm::dot(RING_NORMAL, toCam);
             if (dot < 0.999f && dot > -0.999f) {
-                const glm::vec3 axis = glm::normalize(glm::cross(DEFAULT_NORMAL, toCam));
+                const glm::vec3 axis = glm::normalize(glm::cross(RING_NORMAL, toCam));
                 faceRotation = glm::rotate(glm::mat4(1.0f), std::acosf(dot), axis);
             } else if (dot <= -0.999f) {
                 faceRotation = glm::rotate(glm::mat4(1.0f), std::numbers::pi_v<float>, glm::vec3(0, 1, 0));
@@ -406,16 +409,30 @@ namespace lfs::rendering {
 
             const glm::mat4 model = glm::translate(glm::mat4(1), pos) *
                                     faceRotation *
-                                    glm::scale(glm::mat4(1), glm::vec3(sphereRadius * scaleFactor));
+                                    glm::scale(glm::mat4(1), glm::vec3(sphereRadius * scaleFactor * scale));
             const glm::mat4 mvp = proj * view * model;
 
             if (auto r = s->set("uMVP", mvp); !r) return r;
             if (auto r = s->set("uModel", model); !r) return r;
-            if (auto r = s->set("uColor", AXIS_COLORS[i]); !r) return r;
+            const glm::vec3 color = glm::min(AXIS_COLORS[i] * brightness, glm::vec3(1.0f));
+            if (auto r = s->set("uColor", color); !r) return r;
             if (auto r = s->set("uAlpha", 1.0f); !r) return r;
             if (auto r = s->set("uUseLighting", 0); !r) return r;
 
             glDrawArrays(GL_TRIANGLES, ring_vertex_start_, ring_vertex_count_);
+
+            const glm::vec4 clipPos = proj * view * glm::vec4(pos, 1.0f);
+            if (clipPos.w > 0) {
+                const glm::vec3 ndcPos = glm::vec3(clipPos) / clipPos.w;
+                const float ringX = (ndcPos.x * 0.5f + 0.5f) * size_;
+                const float ringY = (ndcPos.y * 0.5f + 0.5f) * size_;
+
+                ring_hits_[i].screen_pos = glm::vec2(ringX + gizmo_x, fb_height - ringY - gizmo_y);
+                ring_hits_[i].radius = sphereRadius * scaleFactor * size_ * 0.5f;
+                ring_hits_[i].visible = true;
+            } else {
+                ring_hits_[i].visible = false;
+            }
         }
 
         // Sort spheres by depth
@@ -522,9 +539,9 @@ namespace lfs::rendering {
         return {};
     }
 
-    std::optional<GizmoAxis> ViewportGizmo::hitTest(const glm::vec2& click_pos,
-                                                     const glm::vec2& viewport_pos,
-                                                     const glm::vec2& viewport_size) const {
+    std::optional<GizmoHitResult> ViewportGizmo::hitTest(const glm::vec2& click_pos,
+                                                          const glm::vec2& viewport_pos,
+                                                          const glm::vec2& viewport_size) const {
         if (!initialized_) return std::nullopt;
 
         // Gizmo bounds (lower-right corner in ImGui coords)
@@ -537,17 +554,25 @@ namespace lfs::rendering {
             return std::nullopt;
         }
 
-        // Check sphere hits with expanded radius for easier clicking
-        constexpr float HIT_RADIUS_SCALE = 2.5f;
+        // Check spheres (positive axes)
         for (int i = 0; i < 3; ++i) {
             if (!sphere_hits_[i].visible) continue;
-
             const float dx = click_pos.x - sphere_hits_[i].screen_pos.x;
             const float dy = click_pos.y - sphere_hits_[i].screen_pos.y;
-            const float hit_radius = sphere_hits_[i].radius * HIT_RADIUS_SCALE;
+            const float r = sphere_hits_[i].radius * HIT_RADIUS_SCALE;
+            if (dx * dx + dy * dy <= r * r) {
+                return GizmoHitResult{static_cast<GizmoAxis>(i), false};
+            }
+        }
 
-            if (dx * dx + dy * dy <= hit_radius * hit_radius) {
-                return static_cast<GizmoAxis>(i);
+        // Check rings (negative axes)
+        for (int i = 0; i < 3; ++i) {
+            if (!ring_hits_[i].visible) continue;
+            const float dx = click_pos.x - ring_hits_[i].screen_pos.x;
+            const float dy = click_pos.y - ring_hits_[i].screen_pos.y;
+            const float r = ring_hits_[i].radius * HIT_RADIUS_SCALE;
+            if (dx * dx + dy * dy <= r * r) {
+                return GizmoHitResult{static_cast<GizmoAxis>(i), true};
             }
         }
 
