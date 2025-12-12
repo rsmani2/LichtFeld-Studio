@@ -66,8 +66,6 @@ set(OPTIONAL_TEST_FILES
     test_ply_save_comparison.cpp  # PLY saving comparison between legacy and new
     test_mcmc_add_new_gs_comparison.cpp  # Compare MCMC add_new_gs between legacy and new
     test_mcmc_relocate_optimizer_state_bug.cpp  # Test optimizer state bug in relocate_gs
-    test_training_debug.cpp     # Training debug module - compare legacy vs new training
-    test_gsplat_training_debug.cpp  # gsplat training debug
     test_gsplat_vs_legacy_gsplat_gut.cpp  # gsplat GUT comparison
     test_tensor_benchmark.cpp
     test_memory_pool_benchmark.cpp  # benchmarks CudaMemoryPool (now internal)
@@ -179,7 +177,6 @@ target_link_libraries(lichtfeld_tests PRIVATE
     gs_visualizer
     gs_rendering
     gs_training
-    gs_training_debug  # Training debug module
     gs_training_kernels
     gs_project
     gs_geometry
