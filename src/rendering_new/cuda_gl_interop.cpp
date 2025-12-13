@@ -11,6 +11,7 @@
 // clang-format on
 
 #include "core_new/logger.hpp"
+#include "core_new/tensor.hpp"
 #include "cuda_gl_interop.hpp"
 #include <format>
 

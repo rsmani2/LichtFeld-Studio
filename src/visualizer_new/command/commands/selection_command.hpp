@@ -5,7 +5,7 @@
 #pragma once
 
 #include "command/command.hpp"
-#include "core_new/tensor.hpp"
+#include "core_new/tensor_fwd.hpp"
 #include <memory>
 
 namespace lfs::vis {

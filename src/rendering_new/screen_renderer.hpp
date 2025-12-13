@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "core_new/tensor.hpp"
+#include "core_new/tensor_fwd.hpp"
 #include "framebuffer_factory.hpp"
 #include "gl_resources.hpp"
 #include "shader.hpp"

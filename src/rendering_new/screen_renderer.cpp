@@ -4,6 +4,7 @@
 
 #include "screen_renderer.hpp"
 #include "core_new/logger.hpp"
+#include "core_new/tensor.hpp"
 
 #ifdef CUDA_GL_INTEROP_ENABLED
 #include "cuda_gl_interop.hpp"

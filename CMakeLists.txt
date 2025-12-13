@@ -12,6 +12,17 @@ if ("${CMAKE_TOOLCHAIN_FILE}" STREQUAL "")
 endif()
 
 cmake_minimum_required(VERSION 3.30)
+
+# Suppress CMake developer warnings
+set(CMAKE_SUPPRESS_DEVELOPER_WARNINGS ON CACHE BOOL "" FORCE)
+
+# Default to Release build
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    message(STATUS "No build type specified, defaulting to Release")
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type" FORCE)
+    set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
+endif()
+
 project(LichtFeld-Studio LANGUAGES CUDA CXX C)
 
 # Get git version info
@@ -59,19 +70,27 @@ endif()
 # Build fat binaries for all modern SMs (>= minimum). When OFF (default), build for the native GPU only.
 option(BUILD_CUDA_ALL_SM "Build CUDA fat binaries targeting all modern SMs (>= minimum SM)" OFF)
 
-# Compiler cache: sccache (recommended, caches CUDA) or ccache
+# Compiler cache (CUDA caching disabled on Windows due to nvcc compatibility issues)
 find_program(SCCACHE_PROGRAM sccache)
 find_program(CCACHE_PROGRAM ccache)
 if(SCCACHE_PROGRAM)
     set(CMAKE_C_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
     set(CMAKE_CXX_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
-    set(CMAKE_CUDA_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
-    message(STATUS "Compiler cache: sccache")
+    if(WIN32)
+        message(STATUS "Compiler cache: sccache (C/C++ only, CUDA uncached)")
+    else()
+        set(CMAKE_CUDA_COMPILER_LAUNCHER "${SCCACHE_PROGRAM}")
+        message(STATUS "Compiler cache: sccache")
+    endif()
 elseif(CCACHE_PROGRAM)
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-    set(CMAKE_CUDA_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
-    message(STATUS "Compiler cache: ccache")
+    if(WIN32)
+        message(STATUS "Compiler cache: ccache (C/C++ only, CUDA uncached)")
+    else()
+        set(CMAKE_CUDA_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
+        message(STATUS "Compiler cache: ccache")
+    endif()
 endif()
 
 # Minimum SM (compute capability) to include when BUILD_CUDA_ALL_SM=ON.

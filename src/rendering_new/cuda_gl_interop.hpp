@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "core_new/tensor.hpp"
+#include "core_new/tensor_fwd.hpp"
 #include <cuda_runtime.h>
 #include <memory>
 #include <optional>
