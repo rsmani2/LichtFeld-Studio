@@ -754,37 +754,33 @@ namespace lfs::vis {
         }
 
         bool split_view_active = settings_.split_view_mode != SplitViewMode::Disabled;
-
-        // For GT comparison, ensure we have a valid render texture
-        if (settings_.split_view_mode == SplitViewMode::GTComparison) {
-            if (current_camera_id_ < 0) {
-                split_view_active = false;
-                LOG_TRACE("GT comparison mode but no camera selected");
-            } else if (!render_texture_valid_ && model) {
-                // Force render to texture for GT comparison
-                renderToTexture(context, scene_manager, model);
-            }
-        }
-
-        // Determine render triggers
         bool should_render = false;
         const bool needs_render_now = needs_render_.load();
         const bool is_training = scene_manager && scene_manager->hasDataset() &&
                                  scene_manager->getTrainerManager() &&
                                  scene_manager->getTrainerManager()->isRunning();
 
-        // Training render interval
+        // Invalidate render cache periodically during training
         if (is_training) {
             const auto now = std::chrono::steady_clock::now();
-            const float interval_sec = framerate_controller_.getSettings().training_frame_refresh_time_sec;
-            const auto interval_ms = static_cast<int>(interval_sec * 1000.0f);
-            if (now - last_training_render_ > std::chrono::milliseconds(interval_ms)) {
+            const auto interval = std::chrono::duration<float>(
+                framerate_controller_.getSettings().training_frame_refresh_time_sec);
+            if (now - last_training_render_ > interval) {
                 should_render = true;
+                render_texture_valid_ = false;
                 last_training_render_ = now;
             }
         }
 
-        // Dirty flag, no cache, or split view active
+        // GT comparison requires valid render texture
+        if (settings_.split_view_mode == SplitViewMode::GTComparison) {
+            if (current_camera_id_ < 0) {
+                split_view_active = false;
+            } else if (!render_texture_valid_ && model) {
+                renderToTexture(context, scene_manager, model);
+            }
+        }
+
         if (!cached_result_.image || needs_render_now || split_view_active) {
             should_render = true;
             needs_render_ = false;
