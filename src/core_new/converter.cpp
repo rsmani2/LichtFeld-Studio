@@ -16,7 +16,7 @@ namespace lfs::core {
 namespace {
 
     constexpr size_t SH_CHANNELS = 3;
-    constexpr const char* VALID_EXTENSIONS[] = {".ply", ".sog", ".resume"};
+    constexpr const char* VALID_EXTENSIONS[] = {".ply", ".sog", ".spz", ".resume"};
 
     enum class OverwriteChoice { YES, NO, ALL };
 
@@ -69,6 +69,7 @@ namespace {
         switch (format) {
             case param::OutputFormat::PLY:  return ".ply";
             case param::OutputFormat::SOG:  return ".sog";
+            case param::OutputFormat::SPZ:  return ".spz";
             case param::OutputFormat::HTML: return ".html";
         }
         return ".ply";
@@ -136,6 +137,9 @@ namespace {
                 break;
             case param::OutputFormat::SOG:
                 result = lfs::io::save_sog(*splat, {.output_path = output, .kmeans_iterations = params.sog_iterations});
+                break;
+            case param::OutputFormat::SPZ:
+                result = lfs::io::save_spz(*splat, {.output_path = output});
                 break;
             case param::OutputFormat::HTML:
                 result = lfs::io::export_html(*splat, {.output_path = output, .kmeans_iterations = params.sog_iterations});

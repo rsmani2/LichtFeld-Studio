@@ -154,7 +154,7 @@ namespace lfs::core {
         };
 
         // Output format for conversion tool
-        enum class OutputFormat { PLY, SOG, HTML };
+        enum class OutputFormat { PLY, SOG, SPZ, HTML };
 
         // Parameters for the convert command
         struct ConvertParameters {

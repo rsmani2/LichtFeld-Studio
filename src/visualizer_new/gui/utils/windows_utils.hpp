@@ -57,6 +57,7 @@ namespace lfs::vis::gui {
     std::filesystem::path SaveJsonFileDialog(const std::string& defaultName);
     std::filesystem::path OpenJsonFileDialog();
     std::filesystem::path SaveSogFileDialog(const std::string& defaultName);
+    std::filesystem::path SaveSpzFileDialog(const std::string& defaultName);
     std::filesystem::path SaveHtmlFileDialog(const std::string& defaultName);
 
 } // namespace lfs::vis::gui

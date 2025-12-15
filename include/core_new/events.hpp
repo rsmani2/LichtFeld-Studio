@@ -17,7 +17,7 @@ namespace lfs::core {
     class Scene;
 
     // Export format enum
-    enum class ExportFormat { PLY, SOG, HTML_VIEWER };
+    enum class ExportFormat { PLY, SOG, SPZ, HTML_VIEWER };
 
 // Clean event macro - uses lfs::core::event::bus()
 #define EVENT(Name, ...)                                   \
@@ -114,7 +114,7 @@ namespace lfs::core {
             EVENT(SceneLoaded,
                   Scene* scene;
                   std::filesystem::path path;
-                  enum class Type{PLY, Dataset, SOG, Checkpoint} type;
+                  enum class Type{PLY, Dataset, SOG, SPZ, Checkpoint} type;
                   size_t num_gaussians;
                   int checkpoint_iteration = 0;);
             EVENT(SceneCleared, );

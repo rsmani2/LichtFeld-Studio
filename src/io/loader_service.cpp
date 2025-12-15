@@ -10,6 +10,7 @@
 #include "io/loaders/colmap_loader.hpp"
 #include "io/loaders/ply_loader.hpp"
 #include "io/loaders/sogs_loader.hpp"
+#include "io/loaders/spz_loader.hpp"
 #include <format>
 
 namespace lfs::io {
@@ -20,6 +21,7 @@ namespace lfs::io {
         // Register default loaders
         registry_->registerLoader(std::make_unique<PLYLoader>());
         registry_->registerLoader(std::make_unique<SogLoader>());
+        registry_->registerLoader(std::make_unique<SpzLoader>());
         registry_->registerLoader(std::make_unique<CheckpointLoader>());
         registry_->registerLoader(std::make_unique<ColmapLoader>());
         registry_->registerLoader(std::make_unique<BlenderLoader>());
@@ -62,7 +64,7 @@ namespace lfs::io {
                 message = std::format(
                     "Cannot open '{}' - unsupported file format.\n\n"
                     "Supported formats:\n"
-                    "  - Gaussian Splat files: .ply, .sog\n"
+                    "  - Gaussian Splat files: .ply, .sog, .spz\n"
                     "  - Training checkpoints: .resume\n"
                     "  - NeRF transforms: .json",
                     filename);

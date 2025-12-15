@@ -78,4 +78,18 @@ namespace lfs::io {
      */
     [[nodiscard]] Result<void> export_html(const SplatData& splat_data, const HtmlExportOptions& options);
 
+    // ============================================================================
+    // SPZ Export (Niantic compressed format)
+    // ============================================================================
+
+    struct SpzSaveOptions {
+        std::filesystem::path output_path;
+    };
+
+    /**
+     * @brief Save SplatData to SPZ (Niantic compressed gaussian splat) format
+     * @return Result<void> - success or Error with details
+     */
+    [[nodiscard]] Result<void> save_spz(const SplatData& splat_data, const SpzSaveOptions& options);
+
 } // namespace lfs::io

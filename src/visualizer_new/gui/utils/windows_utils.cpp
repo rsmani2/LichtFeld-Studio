@@ -323,6 +323,38 @@ namespace lfs::vis::gui {
 #endif
     }
 
+    std::filesystem::path SaveSpzFileDialog(const std::string& defaultName) {
+#ifdef _WIN32
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] = {{L"SPZ File (Niantic)", L"*.spz"}};
+        const std::wstring wDefaultName(defaultName.begin(), defaultName.end());
+
+        if (SUCCEEDED(utils::saveFileNative(filePath, rgSpec, 1, wDefaultName.c_str()))) {
+            std::filesystem::path result(filePath);
+            CoTaskMemFree(filePath);
+            if (result.extension() != ".spz") {
+                result += ".spz";
+            }
+            return result;
+        }
+        return {};
+#else
+        const std::string primary = "zenity --file-selection --save --confirm-overwrite "
+                                    "--file-filter='SPZ files (Niantic)|*.spz' "
+                                    "--filename='" + defaultName + ".spz' 2>/dev/null";
+        const std::string fallback = "kdialog --getsavefilename . 'SPZ files (*.spz)' 2>/dev/null";
+
+        const std::string result = runDialogCommand(primary, fallback);
+        if (result.empty()) return {};
+
+        std::filesystem::path path(result);
+        if (path.extension() != ".spz") {
+            path += ".spz";
+        }
+        return path;
+#endif
+    }
+
     std::filesystem::path SaveHtmlFileDialog(const std::string& defaultName) {
 #ifdef _WIN32
         PWSTR filePath = nullptr;

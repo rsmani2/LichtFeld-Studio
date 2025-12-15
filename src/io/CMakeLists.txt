@@ -48,6 +48,16 @@ if(MSVC)
     )
 endif()
 
+# SPZ library (Niantic compressed format) - MIT licensed
+add_library(spz_lib STATIC
+        ${CMAKE_SOURCE_DIR}/external/spz/load-spz.cc
+        ${CMAKE_SOURCE_DIR}/external/spz/splat-types.cc
+        ${CMAKE_SOURCE_DIR}/external/spz/splat-c-types.cc
+)
+target_include_directories(spz_lib PUBLIC ${CMAKE_SOURCE_DIR}/external/spz)
+target_link_libraries(spz_lib PRIVATE ZLIB::ZLIB)
+target_compile_features(spz_lib PUBLIC cxx_std_17)
+
 # Main IO library
 add_library(lfs_io STATIC
         # Implementation file only (header is in include/io/)
@@ -72,6 +82,8 @@ add_library(lfs_io STATIC
         formats/html.hpp
         formats/html.cpp
         formats/html_viewer_resources.hpp
+        formats/spz.hpp
+        formats/spz.cpp
 
         # Concrete loader implementations
         loaders/ply_loader.hpp
@@ -82,6 +94,8 @@ add_library(lfs_io STATIC
         loaders/blender_loader.cpp
         loaders/sogs_loader.hpp
         loaders/sogs_loader.cpp
+        loaders/spz_loader.hpp
+        loaders/spz_loader.cpp
         loaders/checkpoint_loader.hpp
         loaders/checkpoint_loader.cpp
         cache_image_loader.cpp
@@ -99,6 +113,7 @@ target_include_directories(lfs_io
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/external/nvImageCodec/include
+        ${CMAKE_SOURCE_DIR}/external/spz
 )
 
 # Find the actual WebP library targets
@@ -153,6 +168,7 @@ target_link_libraries(lfs_io
         CUDA::cudart           # CUDA runtime for nvImageCodec
         lfs_io_cuda            # IO-specific CUDA kernels (morton, k-means)
         lfs_core_cuda          # Core CUDA utilities (lanczos_resize for nvcodec)
+        spz_lib                # Niantic SPZ compressed format
 )
 
 # Link nvImageCodec if available

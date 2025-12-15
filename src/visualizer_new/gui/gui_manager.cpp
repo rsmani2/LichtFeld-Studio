@@ -191,6 +191,9 @@ namespace lfs::vis::gui {
             case ExportFormat::SOG:
                 path = SaveSogFileDialog(default_name);
                 break;
+            case ExportFormat::SPZ:
+                path = SaveSpzFileDialog(default_name);
+                break;
             case ExportFormat::HTML_VIEWER:
                 path = SaveHtmlFileDialog(default_name);
                 break;
@@ -2089,6 +2092,17 @@ namespace lfs::vis::gui {
                     }
                     break;
                 }
+                case ExportFormat::SPZ: {
+                    update_progress(0.1f, "Writing SPZ");
+                    const lfs::io::SpzSaveOptions options{.output_path = path};
+                    if (auto result = lfs::io::save_spz(*splat_data, options); result) {
+                        success = true;
+                        update_progress(1.0f, "Complete");
+                    } else {
+                        error_msg = result.error().message;
+                    }
+                    break;
+                }
                 case ExportFormat::HTML_VIEWER: {
                     const HtmlViewerExportOptions options{
                         .output_path = path,
@@ -2173,7 +2187,8 @@ namespace lfs::vis::gui {
                 switch (export_state_.format) {
                 case ExportFormat::PLY: format_name = "PLY"; break;
                 case ExportFormat::SOG: format_name = "SOG"; break;
-                case ExportFormat::HTML_VIEWER:    format_name = "HTML"; break;
+                case ExportFormat::SPZ: format_name = "SPZ"; break;
+                case ExportFormat::HTML_VIEWER: format_name = "HTML"; break;
                 }
                 ImGui::Text("Exporting %s...", format_name);
             }

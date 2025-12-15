@@ -218,7 +218,12 @@ namespace lfs::vis {
             // Determine file type for event
             auto ext = path.extension().string();
             std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
-            auto file_type = (ext == ".sog") ? state::SceneLoaded::Type::SOG : state::SceneLoaded::Type::PLY;
+            state::SceneLoaded::Type file_type = state::SceneLoaded::Type::PLY;
+            if (ext == ".sog") {
+                file_type = state::SceneLoaded::Type::SOG;
+            } else if (ext == ".spz") {
+                file_type = state::SceneLoaded::Type::SPZ;
+            }
 
             // Emit events
             state::SceneLoaded{
@@ -1270,6 +1275,8 @@ namespace lfs::vis {
                     info.source_type = "SOG";
                 } else if (ext == ".ply") {
                     info.source_type = "PLY";
+                } else if (ext == ".spz") {
+                    info.source_type = "SPZ";
                 }
             }
             break;

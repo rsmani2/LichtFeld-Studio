@@ -304,7 +304,7 @@ TEST_F(LoaderComparisonTest, LoadCOLMAPDataset) {
 
     // Check both succeeded
     ASSERT_TRUE(old_result.has_value()) << "Old loader failed: " << old_result.error();
-    ASSERT_TRUE(new_result.has_value()) << "New loader failed: " << new_result.error();
+    ASSERT_TRUE(new_result.has_value()) << "New loader failed: " << new_result.error().format();
 
     // Compare loader names
     EXPECT_EQ(old_result->loader_used, new_result->loader_used)
@@ -619,7 +619,7 @@ TEST_F(LoaderComparisonTest, InvalidPathHandling) {
     }
 
     // New loader might throw or return error
-    std::optional<std::expected<lfs::io::LoadResult, std::string>> new_result;
+    std::optional<lfs::io::Result<lfs::io::LoadResult>> new_result;
     try {
         new_result = new_loader->load(invalid_path);
     } catch (const std::exception& e) {
@@ -638,7 +638,7 @@ TEST_F(LoaderComparisonTest, InvalidPathHandling) {
     if (new_result.has_value()) {
         EXPECT_FALSE(new_result->has_value()) << "New loader should fail on invalid path";
         if (!new_result->has_value()) {
-            std::cout << "New loader error: " << new_result->error() << std::endl;
+            std::cout << "New loader error: " << new_result->error().format() << std::endl;
         }
     }
 }
@@ -781,7 +781,7 @@ TEST_F(LoaderComparisonTest, BlenderDatasetComparison) {
     auto new_result = new_loader->load(lego_path, new_options);
 
     ASSERT_TRUE(old_result.has_value()) << "Old loader failed: " << old_result.error();
-    ASSERT_TRUE(new_result.has_value()) << "New loader failed: " << new_result.error();
+    ASSERT_TRUE(new_result.has_value()) << "New loader failed: " << new_result.error().format();
 
     auto& old_scene = std::get<gs::loader::LoadedScene>(old_result->data);
     auto& new_scene = std::get<lfs::io::LoadedScene>(new_result->data);
@@ -984,7 +984,7 @@ TEST_F(LoaderComparisonTest, GardenLoadingBenchmark) {
                 auto start = std::chrono::high_resolution_clock::now();
 
                 auto new_result = new_loader->load(garden_path, new_options);
-                ASSERT_TRUE(new_result.has_value()) << "New loader failed: " << new_result.error();
+                ASSERT_TRUE(new_result.has_value()) << "New loader failed: " << new_result.error().format();
 
                 auto& new_scene = std::get<lfs::io::LoadedScene>(new_result->data);
                 auto& new_pc = *new_scene.point_cloud;
@@ -1008,7 +1008,7 @@ TEST_F(LoaderComparisonTest, GardenLoadingBenchmark) {
                 auto start = std::chrono::high_resolution_clock::now();
 
                 auto new_result = new_loader->load(garden_path, new_options);
-                ASSERT_TRUE(new_result.has_value()) << "New loader failed: " << new_result.error();
+                ASSERT_TRUE(new_result.has_value()) << "New loader failed: " << new_result.error().format();
 
                 auto& new_scene = std::get<lfs::io::LoadedScene>(new_result->data);
                 auto& new_pc = *new_scene.point_cloud;

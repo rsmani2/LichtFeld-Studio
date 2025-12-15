@@ -254,7 +254,7 @@ namespace {
                         return std::unexpected(std::format("Path does not exist: {}", view_path.string()));
                     }
 
-                    constexpr std::array<std::string_view, 3> SUPPORTED_EXTENSIONS = {".ply", ".sog", ".resume"};
+                    constexpr std::array<std::string_view, 4> SUPPORTED_EXTENSIONS = {".ply", ".sog", ".spz", ".resume"};
                     const auto is_supported = [&](const std::filesystem::path& p) {
                         auto ext = p.extension().string();
                         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -271,13 +271,13 @@ namespace {
 
                         if (params.view_paths.empty()) {
                             return std::unexpected(std::format(
-                                "No supported files (.ply, .sog, .resume) found in: {}", view_path.string()));
+                                "No supported files (.ply, .sog, .spz, .resume) found in: {}", view_path.string()));
                         }
                         LOG_DEBUG("Found {} view files in directory", params.view_paths.size());
                     } else {
                         if (!is_supported(view_path)) {
                             return std::unexpected(std::format(
-                                "Unsupported format. Expected: .ply, .sog, .resume. Got: {}", view_path.string()));
+                                "Unsupported format. Expected: .ply, .sog, .spz, .resume. Got: {}", view_path.string()));
                         }
                         params.view_paths.push_back(view_path);
                     }
@@ -621,19 +621,20 @@ namespace {
     constexpr const char* CONVERT_HELP_FOOTER =
         "\n"
         "EXAMPLES:\n"
-        "  LichtFeld-Studio convert input.ply output.sog --sh-degree 0\n"
+        "  LichtFeld-Studio convert input.ply output.spz --sh-degree 0\n"
         "  LichtFeld-Studio convert input.ply -f html\n"
         "  LichtFeld-Studio convert ./splats/ -f sog --sh-degree 2\n"
         "\n"
         "SUPPORTED FORMATS:\n"
-        "  Input:  .ply, .sog, .resume (checkpoint)\n"
-        "  Output: .ply, .sog, .html\n"
+        "  Input:  .ply, .sog, .spz, .resume (checkpoint)\n"
+        "  Output: .ply, .sog, .spz, .html\n"
         "\n";
 
     std::optional<lfs::core::param::OutputFormat> parseFormat(const std::string& str) {
         using lfs::core::param::OutputFormat;
         if (str == "ply" || str == ".ply") return OutputFormat::PLY;
         if (str == "sog" || str == ".sog") return OutputFormat::SOG;
+        if (str == "spz" || str == ".spz") return OutputFormat::SPZ;
         if (str == "html" || str == ".html") return OutputFormat::HTML;
         return std::nullopt;
     }
@@ -657,7 +658,7 @@ lfs::core::args::parse_args(int argc, const char* const argv[]) {
     ::args::Positional<std::string> input(parser, "input", "Input file or directory");
     ::args::Positional<std::string> output(parser, "output", "Output file (optional)");
     ::args::ValueFlag<int> sh_degree(parser, "degree", "SH degree [0-3], -1 to keep original (default: -1)", {"sh-degree"});
-    ::args::ValueFlag<std::string> format(parser, "format", "Output format: ply, sog, html", {'f', "format"});
+    ::args::ValueFlag<std::string> format(parser, "format", "Output format: ply, sog, spz, html", {'f', "format"});
     ::args::ValueFlag<int> sog_iter(parser, "iterations", "K-means iterations for SOG (default: 10)", {"sog-iterations"});
     ::args::Flag overwrite(parser, "overwrite", "Overwrite existing files without prompting", {'y', "overwrite"});
 

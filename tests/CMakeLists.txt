@@ -130,6 +130,7 @@ set(OPTIONAL_TEST_FILES
     test_sog_html_export.cpp  # Consolidated SOG/HTML export regression tests
     test_rasterizer_crash_dump.cpp  # Reproduce rasterizer crash from crash dump
     test_gsplat_rasterizer.cpp  # GSplat rasterizer tests
+    test_spz_format.cpp  # Tests for SPZ (Niantic compressed) format support
 )
 
 foreach(TEST_FILE ${OPTIONAL_TEST_FILES})
@@ -161,13 +162,15 @@ target_include_directories(lichtfeld_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/src/training_new  # New libtorch-free (for test_lfs_*.cpp)
     ${CMAKE_SOURCE_DIR}/src               # Old torch-based (for existing tests)
+    ${CMAKE_SOURCE_DIR}/external/spz      # SPZ library headers
     ${CUDAToolkit_INCLUDE_DIRS}
     ${OPENGL_INCLUDE_DIRS}
 )
 
-# Define TEST_DATA_DIR for tests
+# Define TEST_DATA_DIR and PROJECT_ROOT_PATH for tests
 target_compile_definitions(lichtfeld_tests PRIVATE
     TEST_DATA_DIR="${CMAKE_SOURCE_DIR}/data"
+    PROJECT_ROOT_PATH="${CMAKE_SOURCE_DIR}"
 )
 
 # Link libraries - Fix linking order and add missing dependencies
@@ -197,6 +200,7 @@ target_link_libraries(lichtfeld_tests PRIVATE
     # Backend libraries
     gsplat_backend
     fastgs_backend
+    spz_lib  # Niantic SPZ format library
 
     # External libraries (using custom test_main.cpp instead of gtest_main)
     GTest::gtest
