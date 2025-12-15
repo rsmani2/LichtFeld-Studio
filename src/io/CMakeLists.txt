@@ -27,8 +27,10 @@ target_link_libraries(lfs_io_cuda
 
 set_target_properties(lfs_io_cuda PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON
+        CUDA_RESOLVE_DEVICE_SYMBOLS ON
         CUDA_STANDARD 20
         CUDA_STANDARD_REQUIRED ON
+        POSITION_INDEPENDENT_CODE ON
 )
 
 # CUDA compiler options for lfs_io_cuda
