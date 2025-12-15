@@ -142,7 +142,7 @@ namespace {
             ::args::ValueFlag<float> init_extent(parser, "init_extent", "Extent of random initialization", {"init-extent"});
             ::args::ValueFlagList<std::string> timelapse_images(parser, "timelapse_images", "Image filenames to render timelapse images for", {"timelapse-images"});
             ::args::ValueFlag<int> timelapse_every(parser, "timelapse_every", "Render timelapse image every N iterations (default: 50)", {"timelapse-every"});
-            ::args::ValueFlag<std::string> init_ply(parser, "init_ply", "Optional PLY splat file for initialization", {"init-ply"});
+            ::args::ValueFlag<std::string> init_path(parser, "path", "Initialize from splat file (.ply, .sog, .spz, .resume)", {"init"});
             ::args::ValueFlag<int> tile_mode(parser, "tile_mode", "Tile mode for memory-efficient training: 1=1 tile, 2=2 tiles, 4=4 tiles (default: 1)", {"tile-mode"});
 
             // Sparsity optimization arguments
@@ -300,13 +300,12 @@ namespace {
                 }
             }
 
-            if (init_ply) {
-                const auto ply_path = ::args::get(init_ply);
-                params.init_ply = ply_path;
+            if (init_path) {
+                const auto path = ::args::get(init_path);
+                params.init_path = path;
 
-                // Check if PLY file exists
-                if (!std::filesystem::exists(ply_path)) {
-                    return std::unexpected(std::format("Initialization PLY file does not exist: {}", ply_path));
+                if (!std::filesystem::exists(path)) {
+                    return std::unexpected(std::format("Initialization file does not exist: {}", path));
                 }
             }
 

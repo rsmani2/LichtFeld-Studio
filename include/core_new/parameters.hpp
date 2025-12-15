@@ -146,8 +146,8 @@ namespace lfs::core {
             // Viewer mode: splat files to load (.ply, .sog, .resume)
             std::vector<std::filesystem::path> view_paths;
 
-            // Optional PLY splat file for initialization
-            std::optional<std::string> init_ply = std::nullopt;
+            // Optional splat file for initialization (.ply, .sog, .spz, .resume)
+            std::optional<std::string> init_path = std::nullopt;
 
             // Checkpoint to resume training from
             std::optional<std::filesystem::path> resume_checkpoint = std::nullopt;

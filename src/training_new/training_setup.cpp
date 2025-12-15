@@ -5,6 +5,7 @@
 #include "training_setup.hpp"
 #include "core_new/logger.hpp"
 #include "core_new/point_cloud.hpp"
+#include "core_new/splat_data.hpp"
 #include "core_new/splat_data_transform.hpp"
 #include "dataset.hpp"
 #include "io/loader.hpp"
@@ -105,38 +106,59 @@ namespace lfs::training {
                 // Add dataset root node
                 auto dataset_id = scene.addDataset(dataset_name);
 
-                // Handle init_ply case: load SplatData directly
-                if (params.init_ply.has_value()) {
-                    auto ply_loader = lfs::io::Loader::create();
-                    auto ply_load_result = ply_loader->load(params.init_ply.value());
+                // Load from --init file
+                if (params.init_path.has_value()) {
+                    const std::filesystem::path init_file(params.init_path.value());
+                    const auto ext = init_file.extension().string();
 
-                    if (!ply_load_result) {
-                        return std::unexpected(std::format(
-                            "Failed to load initialization PLY file '{}': {}",
-                            params.init_ply.value(),
-                            ply_load_result.error().format()));
-                    }
-
-                    try {
-                        auto splat_data = std::move(*std::get<std::shared_ptr<lfs::core::SplatData>>(ply_load_result->data));
-                        auto model = std::make_unique<lfs::core::SplatData>(std::move(splat_data));
-
-                        // Apply command-line sh_degree if specified and lower than loaded
-                        const int target_sh = params.optimization.sh_degree;
-                        if (target_sh >= 0 && target_sh < model->get_max_sh_degree()) {
-                            LOG_INFO("Truncating init_ply SH degree from {} to {}",
-                                     model->get_max_sh_degree(), target_sh);
-                            truncateSHDegree(*model, target_sh);
+                    // Point cloud PLY: initialize Gaussians from xyz+colors
+                    if (ext == ".ply" && !lfs::io::is_gaussian_splat_ply(init_file)) {
+                        auto pc_result = lfs::io::load_ply_point_cloud(init_file);
+                        if (!pc_result) {
+                            return std::unexpected(std::format("Failed to load '{}': {}",
+                                params.init_path.value(), pc_result.error()));
                         }
 
-                        LOG_INFO("Adding training model from init_ply to scene (size={}, sh_degree={})",
-                                 model->size(), model->get_max_sh_degree());
+                        const auto scene_center = pc_result->means.mean({0});
+                        auto splat_result = lfs::core::init_model_from_pointcloud(
+                            params, scene_center, *pc_result, static_cast<int>(pc_result->size()));
+
+                        if (!splat_result) {
+                            return std::unexpected(std::format("Init failed: {}", splat_result.error()));
+                        }
+
+                        auto model = std::make_unique<lfs::core::SplatData>(std::move(*splat_result));
+                        LOG_INFO("Initialized {} Gaussians from {} (sh={})",
+                                 model->size(), init_file.filename().string(), model->get_max_sh_degree());
                         scene.addSplat("Model", std::move(model), dataset_id);
                         scene.setTrainingModelNode("Model");
-                    } catch (const std::bad_variant_access&) {
-                        return std::unexpected(std::format(
-                            "Initialization PLY file '{}' did not contain valid SplatData",
-                            params.init_ply.value()));
+                    } else {
+                        // Gaussian splat file
+                        auto loader = lfs::io::Loader::create();
+                        auto load_result = loader->load(params.init_path.value());
+
+                        if (!load_result) {
+                            return std::unexpected(std::format("Failed to load '{}': {}",
+                                params.init_path.value(), load_result.error().format()));
+                        }
+
+                        try {
+                            auto splat_data = std::move(*std::get<std::shared_ptr<lfs::core::SplatData>>(load_result->data));
+                            auto model = std::make_unique<lfs::core::SplatData>(std::move(splat_data));
+
+                            const int target_sh = params.optimization.sh_degree;
+                            if (target_sh >= 0 && target_sh < model->get_max_sh_degree()) {
+                                LOG_INFO("Truncating SH: {} -> {}", model->get_max_sh_degree(), target_sh);
+                                truncateSHDegree(*model, target_sh);
+                            }
+
+                            LOG_INFO("Loaded {} Gaussians from {} (sh={})",
+                                     model->size(), init_file.filename().string(), model->get_max_sh_degree());
+                            scene.addSplat("Model", std::move(model), dataset_id);
+                            scene.setTrainingModelNode("Model");
+                        } catch (const std::bad_variant_access&) {
+                            return std::unexpected(std::format("'{}': invalid SplatData", params.init_path.value()));
+                        }
                     }
                 } else {
                     // Add point cloud as a POINTCLOUD node (defer SplatData creation until training starts)
@@ -225,7 +247,7 @@ namespace lfs::training {
         const lfs::core::param::TrainingParameters& params,
         lfs::vis::Scene& scene) {
 
-        // Skip if training model already exists (e.g., from init_ply)
+        // Skip if training model already exists (e.g., from --init)
         if (scene.getTrainingModel() != nullptr) {
             return {};
         }

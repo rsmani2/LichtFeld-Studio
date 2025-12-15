@@ -853,4 +853,94 @@ namespace lfs::io {
         return {};
     }
 
+    bool is_gaussian_splat_ply(const std::filesystem::path& filepath) {
+        if (!std::filesystem::exists(filepath)) return false;
+
+        std::ifstream file(filepath, std::ios::binary);
+        if (!file) return false;
+
+        std::string line;
+        bool has_opacity = false, has_scale = false, has_rotation = false;
+
+        while (std::getline(file, line)) {
+            if (line.find("end_header") != std::string::npos) break;
+            if (line.find("property") != std::string::npos) {
+                if (line.find("opacity") != std::string::npos) has_opacity = true;
+                if (line.find("scale_0") != std::string::npos) has_scale = true;
+                if (line.find("rot_0") != std::string::npos) has_rotation = true;
+            }
+        }
+        return has_opacity && has_scale && has_rotation;
+    }
+
+    std::expected<lfs::core::PointCloud, std::string> load_ply_point_cloud(const std::filesystem::path& filepath) {
+        constexpr uint8_t DEFAULT_COLOR = 255;
+
+        if (!std::filesystem::exists(filepath)) {
+            return std::unexpected(std::format("File not found: {}", filepath.string()));
+        }
+
+        try {
+            std::ifstream file(filepath, std::ios::binary);
+            if (!file) {
+                return std::unexpected(std::format("Cannot open: {}", filepath.string()));
+            }
+
+            tinyply::PlyFile ply;
+            ply.parse_header(file);
+
+            std::shared_ptr<tinyply::PlyData> vertices;
+            try {
+                vertices = ply.request_properties_from_element("vertex", {"x", "y", "z"});
+            } catch (const std::exception& e) {
+                return std::unexpected(std::format("Missing vertices: {}", e.what()));
+            }
+
+            std::shared_ptr<tinyply::PlyData> colors;
+            bool has_colors = false;
+            try {
+                colors = ply.request_properties_from_element("vertex", {"red", "green", "blue"});
+                has_colors = true;
+            } catch (...) {}
+
+            ply.read(file);
+
+            const size_t N = vertices->count;
+            LOG_DEBUG("Point cloud: {} points", N);
+
+            using namespace lfs::core;
+            Tensor positions = Tensor::zeros({N, 3}, Device::CPU, DataType::Float32);
+            float* const pos_ptr = positions.ptr<float>();
+
+            if (vertices->t == tinyply::Type::FLOAT32) {
+                std::memcpy(pos_ptr, vertices->buffer.get(), N * 3 * sizeof(float));
+            } else if (vertices->t == tinyply::Type::FLOAT64) {
+                const auto* src = reinterpret_cast<const double*>(vertices->buffer.get());
+                for (size_t i = 0; i < N * 3; ++i) pos_ptr[i] = static_cast<float>(src[i]);
+            } else {
+                return std::unexpected("Unsupported vertex type");
+            }
+
+            Tensor color_tensor;
+            if (has_colors && colors && colors->count == N) {
+                if (colors->t == tinyply::Type::UINT8) {
+                    color_tensor = Tensor::zeros({N, 3}, Device::CPU, DataType::UInt8);
+                    std::memcpy(color_tensor.ptr<uint8_t>(), colors->buffer.get(), N * 3);
+                } else if (colors->t == tinyply::Type::FLOAT32) {
+                    Tensor float_colors = Tensor::zeros({N, 3}, Device::CPU, DataType::Float32);
+                    std::memcpy(float_colors.ptr<float>(), colors->buffer.get(), N * 3 * sizeof(float));
+                    color_tensor = (float_colors * 255.0f).clamp(0, 255).to(DataType::UInt8);
+                } else {
+                    color_tensor = Tensor::full({N, 3}, DEFAULT_COLOR, Device::CPU, DataType::UInt8);
+                }
+            } else {
+                color_tensor = Tensor::full({N, 3}, DEFAULT_COLOR, Device::CPU, DataType::UInt8);
+            }
+
+            return PointCloud(std::move(positions), std::move(color_tensor));
+        } catch (const std::exception& e) {
+            return std::unexpected(std::format("Load failed: {}", e.what()));
+        }
+    }
+
 } // namespace lfs::io

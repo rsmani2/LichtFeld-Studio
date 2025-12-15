@@ -47,25 +47,22 @@ namespace gs::training {
 
                 // Initialize model directly with point cloud
                 std::expected<SplatData, std::string> splat_result;
-                if (params.init_ply.has_value()) {
-                    // I don't like this
-                    // PLYLoader is not exposed publicly so I have to use the general Loader class
-                    // which might load any format
+                if (params.init_path.has_value()) {
                     auto loader = loader::Loader::create();
-                    auto ply_load_result = loader->load(params.init_ply.value());
+                    auto load_result = loader->load(params.init_path.value());
 
-                    if (!ply_load_result) {
+                    if (!load_result) {
                         splat_result = std::unexpected(std::format(
-                            "Failed to load initialization PLY file '{}': {}",
-                            params.init_ply.value(),
-                            ply_load_result.error()));
+                            "Failed to load '{}': {}",
+                            params.init_path.value(),
+                            load_result.error()));
                     } else {
                         try {
-                            splat_result = std::move(*std::get<std::shared_ptr<SplatData>>(ply_load_result->data));
+                            splat_result = std::move(*std::get<std::shared_ptr<SplatData>>(load_result->data));
                         } catch (const std::bad_variant_access&) {
                             splat_result = std::unexpected(std::format(
-                                "Initialization PLY file '{}' did not contain valid SplatData",
-                                params.init_ply.value()));
+                                "'{}' did not contain valid SplatData",
+                                params.init_path.value()));
                         }
                     }
 
