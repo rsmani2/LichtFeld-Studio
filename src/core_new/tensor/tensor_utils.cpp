@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <functional>
 
 #define CHECK_CUDA(call)                              \
     do {                                              \

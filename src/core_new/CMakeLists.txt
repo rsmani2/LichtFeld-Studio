@@ -19,11 +19,12 @@ set(CORE_SOURCES
         camera.cpp
         converter.cpp
         image_io.cpp
+        logger.cpp
         parameters.cpp
         splat_data.cpp
         splat_data_export.cpp
         splat_data_transform.cpp
-        sogs.cpp  # Full SOG implementation with kmeans and morton encoding
+        sogs.cpp
         tensor_debug.cpp
         tinyply.cpp
         training_snapshot.cpp

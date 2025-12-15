@@ -19,8 +19,8 @@ target_include_directories(lfs_io_cuda
 )
 
 target_link_libraries(lfs_io_cuda
-        PUBLIC
-        lfs_core
+        INTERFACE
+        lfs_core      # Propagate to consumers, not linked during device linking
         PRIVATE
         CUDA::cudart
 )

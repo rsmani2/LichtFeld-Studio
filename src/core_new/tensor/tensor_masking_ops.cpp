@@ -9,6 +9,7 @@
 #include <execution>
 #include <numeric>
 #include <ranges>
+#include <format>
 
 #define CHECK_CUDA(call)                                        \
     do {                                                        \
@@ -1809,7 +1810,7 @@ namespace lfs::core {
         const size_t new_size = current_size + n_rows;
 
         if (new_size > capacity_) {
-            throw std::runtime_error(fmt::format(
+            throw std::runtime_error(std::format(
                 "append_zeros() requires sufficient capacity: current={}, n_rows={}, new_size={}, capacity={}",
                 current_size, n_rows, new_size, capacity_));
         }

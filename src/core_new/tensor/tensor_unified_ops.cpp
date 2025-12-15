@@ -15,6 +15,7 @@
 #include <cuda_runtime.h>
 #include <curand.h>
 #include <numeric>
+#include <format>
 
 namespace lfs::core {
 
@@ -1226,7 +1227,7 @@ namespace lfs::core {
         }
 
         if (resolved_dim < 0 || resolved_dim >= static_cast<int>(tensors[0].shape().rank())) {
-            throw std::invalid_argument(fmt::format(
+            throw std::invalid_argument(std::format(
                 "Invalid dimension for cat: dim={}, rank={}", dim, tensors[0].shape().rank()));
         }
 
@@ -1265,14 +1266,14 @@ namespace lfs::core {
                     LOG_ERROR("    - Bug in tensor creation code (e.g., zeros_dims empty)");
                 }
                 LOG_ERROR("================================================================");
-                throw std::runtime_error(fmt::format(
+                throw std::runtime_error(std::format(
                     "cat() rank mismatch: tensor 0 has rank {} (shape {}), tensor {} has rank {} (shape {})",
                     first_shape.rank(), first_shape.str(), i, shape.rank(), shape.str()));
             }
 
             for (size_t d = 0; d < shape.rank(); ++d) {
                 if (d != static_cast<size_t>(resolved_dim) && shape[d] != first_shape[d]) {
-                    throw std::invalid_argument(fmt::format(
+                    throw std::invalid_argument(std::format(
                         "cat() dimension mismatch: all dimensions except dim={} must match. "
                         "Tensor 0 shape: {}, Tensor {} shape: {}, mismatch at dimension {}",
                         dim, first_shape.str(), i, shape.str(), d));
@@ -1280,13 +1281,13 @@ namespace lfs::core {
             }
 
             if (tensors[i].device() != first_device) {
-                throw std::invalid_argument(fmt::format(
+                throw std::invalid_argument(std::format(
                     "cat() device mismatch: tensor 0 is on device {}, tensor {} is on device {}",
                     static_cast<int>(first_device), i, static_cast<int>(tensors[i].device())));
             }
 
             if (tensors[i].dtype() != first_dtype) {
-                throw std::invalid_argument(fmt::format(
+                throw std::invalid_argument(std::format(
                     "cat() dtype mismatch: tensor 0 has dtype {}, tensor {} has dtype {}",
                     static_cast<int>(first_dtype), i, static_cast<int>(tensors[i].dtype())));
             }
