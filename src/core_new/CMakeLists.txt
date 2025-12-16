@@ -36,7 +36,7 @@ target_include_directories(lfs_core
     PUBLIC
         ${CMAKE_SOURCE_DIR}/include
         ${CMAKE_BINARY_DIR}/include  # For generated config.h
-        ${CMAKE_SOURCE_DIR}/gsplat    # For gsplat headers (Common.h)
+        ${CMAKE_SOURCE_DIR}/cuda/include  # For Common.h (camera model types)
         ${CMAKE_SOURCE_DIR}/fastgs    # For fastgs headers
         ${CUDAToolkit_INCLUDE_DIRS}   # For CUDA interop in Camera
     PRIVATE
