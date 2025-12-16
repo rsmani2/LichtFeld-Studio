@@ -282,4 +282,38 @@ namespace lfs::vis::gui::widgets {
         ImGui::Separator();
     }
 
+    bool ColoredButton(const char* label, const ButtonStyle style, const ImVec2& size) {
+        constexpr float TINT_NORMAL = 0.15f;
+        constexpr float TINT_HOVER = 0.25f;
+        constexpr float TINT_ACTIVE = 0.35f;
+
+        const auto& t = theme();
+        const ImVec4& base = t.palette.surface;
+
+        const ImVec4 accent = [&]() {
+            switch (style) {
+            case ButtonStyle::Primary: return t.palette.primary;
+            case ButtonStyle::Success: return t.palette.success;
+            case ButtonStyle::Warning: return t.palette.warning;
+            case ButtonStyle::Error:   return t.palette.error;
+            default:                   return t.palette.text_dim;
+            }
+        }();
+
+        const auto blend = [&](const float f) {
+            return ImVec4{base.x + (accent.x - base.x) * f,
+                          base.y + (accent.y - base.y) * f,
+                          base.z + (accent.z - base.z) * f, 1.0f};
+        };
+
+        ImGui::PushStyleColor(ImGuiCol_Button, blend(TINT_NORMAL));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, blend(TINT_HOVER));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, blend(TINT_ACTIVE));
+
+        const bool clicked = ImGui::Button(label, size);
+
+        ImGui::PopStyleColor(3);
+        return clicked;
+    }
+
 } // namespace lfs::vis::gui::widgets

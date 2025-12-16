@@ -34,6 +34,10 @@ namespace lfs::vis::gui::widgets {
     bool IconButton(const char* id, unsigned int texture, const ImVec2& size, bool selected = false,
                     const char* fallback_label = "?");
 
+    // Semantic colored buttons - subtle tint on surface, stronger on hover
+    enum class ButtonStyle { Primary, Success, Warning, Error, Secondary };
+    bool ColoredButton(const char* label, ButtonStyle style, const ImVec2& size = {-1, 0});
+
     // Typography
     void SectionHeader(const char* text, const FontSet& fonts);
 

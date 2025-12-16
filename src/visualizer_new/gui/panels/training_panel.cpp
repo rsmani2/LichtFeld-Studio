@@ -1601,67 +1601,47 @@ namespace lfs::vis::gui::panels {
         auto trainer_state = trainer_manager->getState();
         int current_iteration = trainer_manager->getCurrentIteration();
 
+        using widgets::ColoredButton;
+        using widgets::ButtonStyle;
+
         const auto& t = theme();
+        constexpr ImVec2 FULL_WIDTH = {-1, 0};
+
         // Render controls based on trainer state
         switch (trainer_state) {
         case TrainerManager::State::Idle:
             ImGui::TextColored(darken(t.palette.text_dim, 0.15f), "No trainer loaded");
             break;
 
-        case TrainerManager::State::Ready:
-            ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.success, 0.3f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.success, 0.15f));
-            {
-                const char* const label = current_iteration > 0 ? "Resume Training" : "Start Training";
-                if (ImGui::Button(label, ImVec2(-1, 0))) {
-                    lfs::core::events::cmd::StartTraining{}.emit();
-                }
+        case TrainerManager::State::Ready: {
+            const char* const label = current_iteration > 0 ? "Resume Training" : "Start Training";
+            if (ColoredButton(label, ButtonStyle::Success, FULL_WIDTH)) {
+                lfs::core::events::cmd::StartTraining{}.emit();
             }
-            ImGui::PopStyleColor(2);
-
             if (current_iteration > 0) {
-                ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.secondary, 0.2f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.secondary, 0.05f));
-                if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
+                if (ColoredButton("Reset Training", ButtonStyle::Secondary, FULL_WIDTH)) {
                     lfs::core::events::cmd::ResetTraining{}.emit();
                 }
-                ImGui::PopStyleColor(2);
             }
-
             break;
+        }
 
         case TrainerManager::State::Running:
-            ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.warning, 0.2f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.warning, 0.05f));
-            if (ImGui::Button("Pause", ImVec2(-1, 0))) {
+            if (ColoredButton("Pause", ButtonStyle::Warning, FULL_WIDTH)) {
                 lfs::core::events::cmd::PauseTraining{}.emit();
             }
-            ImGui::PopStyleColor(2);
             break;
 
         case TrainerManager::State::Paused:
-            ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.success, 0.3f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.success, 0.15f));
-            if (ImGui::Button("Resume", ImVec2(-1, 0))) {
+            if (ColoredButton("Resume", ButtonStyle::Success, FULL_WIDTH)) {
                 lfs::core::events::cmd::ResumeTraining{}.emit();
             }
-            ImGui::PopStyleColor(2);
-
-            // Reset button
-            ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.secondary, 0.2f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.secondary, 0.05f));
-            if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
+            if (ColoredButton("Reset Training", ButtonStyle::Secondary, FULL_WIDTH)) {
                 lfs::core::events::cmd::ResetTraining{}.emit();
             }
-            ImGui::PopStyleColor(2);
-
-            ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.error, 0.3f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.error, 0.15f));
-            if (ImGui::Button("Clear", ImVec2(-1, 0))) {
-                // Clear scene completely - this stops training, clears trainer, and resets to empty state
+            if (ColoredButton("Clear", ButtonStyle::Error, FULL_WIDTH)) {
                 lfs::core::events::cmd::ClearScene{}.emit();
             }
-            ImGui::PopStyleColor(2);
             break;
 
         case TrainerManager::State::Finished: {
@@ -1675,7 +1655,7 @@ namespace lfs::vis::gui::panels {
                 break;
             case FinishReason::Error:
                 ImGui::TextColored(t.palette.error, "Training Error!");
-                if (auto error_msg = trainer_manager->getLastError(); !error_msg.empty()) {
+                if (const auto error_msg = trainer_manager->getLastError(); !error_msg.empty()) {
                     ImGui::TextWrapped("%s", error_msg.c_str());
                 }
                 break;
@@ -1683,26 +1663,17 @@ namespace lfs::vis::gui::panels {
                 ImGui::TextColored(t.palette.text_dim, "Training Finished");
             }
 
-            // Switch to Edit Mode button (only for completed training)
             if (reason == FinishReason::Completed || reason == FinishReason::UserStopped) {
-                ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.success, 0.3f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.success, 0.15f));
-                if (ImGui::Button("Switch to Edit Mode", ImVec2(-1, 0))) {
+                if (ColoredButton("Switch to Edit Mode", ButtonStyle::Success, FULL_WIDTH)) {
                     lfs::core::events::cmd::SwitchToEditMode{}.emit();
                 }
-                ImGui::PopStyleColor(2);
                 if (ImGui::IsItemHovered()) {
                     ImGui::SetTooltip("Keep trained model, discard dataset");
                 }
             }
-
-            // Reset button
-            ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.secondary, 0.2f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.secondary, 0.05f));
-            if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
+            if (ColoredButton("Reset Training", ButtonStyle::Secondary, FULL_WIDTH)) {
                 lfs::core::events::cmd::ResetTraining{}.emit();
             }
-            ImGui::PopStyleColor(2);
             break;
         }
 
@@ -1714,15 +1685,11 @@ namespace lfs::vis::gui::panels {
         // Save checkpoint button (available during training)
         if (trainer_state == TrainerManager::State::Running ||
             trainer_state == TrainerManager::State::Paused) {
-
-            ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.info, 0.3f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.info, 0.15f));
-            if (ImGui::Button("Save Checkpoint", ImVec2(-1, 0))) {
+            if (ColoredButton("Save Checkpoint", ButtonStyle::Primary, FULL_WIDTH)) {
                 lfs::core::events::cmd::SaveCheckpoint{}.emit();
                 state.save_in_progress = true;
                 state.save_start_time = std::chrono::steady_clock::now();
             }
-            ImGui::PopStyleColor(2);
         }
 
         ImGui::Separator();
