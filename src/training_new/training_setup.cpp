@@ -394,4 +394,22 @@ namespace lfs::training {
         return {};
     }
 
+    std::expected<void, std::string> validateDatasetPath(
+        const lfs::core::param::TrainingParameters& params) {
+
+        auto data_loader = lfs::io::Loader::create();
+
+        lfs::io::LoadOptions load_options{
+            .resize_factor = params.dataset.resize_factor,
+            .max_width = params.dataset.max_width,
+            .images_folder = params.dataset.images,
+            .validate_only = true};
+
+        auto result = data_loader->load(params.dataset.data_path, load_options);
+        if (!result) {
+            return std::unexpected(result.error().format());
+        }
+        return {};
+    }
+
 } // namespace lfs::training

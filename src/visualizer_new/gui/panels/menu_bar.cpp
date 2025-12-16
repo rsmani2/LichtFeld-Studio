@@ -157,6 +157,11 @@ namespace lfs::vis::gui {
 
         if (ImGui::BeginMainMenuBar()) {
             if (ImGui::BeginMenu("File")) {
+                const bool can_clear = !can_clear_ || can_clear_();
+                if (ImGui::MenuItem("New Project", nullptr, false, can_clear) && on_new_project_) {
+                    on_new_project_();
+                }
+                ImGui::Separator();
                 if (ImGui::MenuItem("Import Dataset") && on_import_dataset_) {
                     on_import_dataset_();
                 }
@@ -464,6 +469,10 @@ namespace lfs::vis::gui {
         ImGui::PopStyleVar(3);
     }
 
+    void MenuBar::setOnNewProject(std::function<void()> callback) {
+        on_new_project_ = std::move(callback);
+    }
+
     void MenuBar::setOnImportDataset(std::function<void()> callback) {
         on_import_dataset_ = std::move(callback);
     }
@@ -478,6 +487,10 @@ namespace lfs::vis::gui {
 
     void MenuBar::setOnExit(std::function<void()> callback) {
         on_exit_ = std::move(callback);
+    }
+
+    void MenuBar::setCanClearCheck(std::function<bool()> check) {
+        can_clear_ = std::move(check);
     }
 
     namespace {

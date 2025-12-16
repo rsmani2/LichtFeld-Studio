@@ -36,6 +36,7 @@
 #include "scene/scene.hpp"
 #include "scene/scene_manager.hpp"
 #include "theme/theme.hpp"
+#include "training/training_state.hpp"
 #include "visualizer_impl.hpp"
 
 #include <algorithm>
@@ -196,6 +197,16 @@ namespace lfs::vis::gui {
 
         menu_bar_->setOnExit([this]() {
             glfwSetWindowShouldClose(viewer_->getWindow(), true);
+        });
+
+        menu_bar_->setOnNewProject([this]() {
+            lfs::core::events::cmd::ClearScene{}.emit();
+        });
+
+        menu_bar_->setCanClearCheck([this]() {
+            auto* trainer_mgr = viewer_->getTrainerManager();
+            if (!trainer_mgr) return true;
+            return trainer_mgr->canPerform(TrainingAction::ClearScene);
         });
     }
 
@@ -1024,8 +1035,15 @@ namespace lfs::vis::gui {
                         case TrainerManager::State::Running:   base_mode = "Training"; color = t.palette.warning; show_training_progress = true; break;
                         case TrainerManager::State::Paused:    base_mode = "Paused";   color = t.palette.text_dim; show_training_progress = true; break;
                         case TrainerManager::State::Ready:     base_mode = (current_iter > 0) ? "Resume" : "Ready"; color = t.palette.success; break;
-                        case TrainerManager::State::Completed: base_mode = "Complete"; color = t.palette.success; show_training_progress = true; break;
-                        case TrainerManager::State::Error:     base_mode = "Error";    color = t.palette.error; break;
+                        case TrainerManager::State::Finished: {
+                            const auto reason = trainer_mgr->getStateMachine().getFinishReason();
+                            if (reason == FinishReason::Completed) {
+                                base_mode = "Complete"; color = t.palette.success; show_training_progress = true;
+                            } else {
+                                base_mode = "Error"; color = t.palette.error;
+                            }
+                            break;
+                        }
                         default: break;
                         }
                         // Add strategy and method info

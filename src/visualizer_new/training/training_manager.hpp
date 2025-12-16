@@ -7,6 +7,7 @@
 #include "core_new/camera.hpp"
 #include "core_new/parameters.hpp"
 #include "training_new/trainer.hpp"
+#include "training_state.hpp"
 #include <atomic>
 #include <deque>
 #include <memory>
@@ -22,15 +23,9 @@ namespace lfs::vis {
 
     class TrainerManager {
     public:
-        enum class State {
-            Idle,      // No trainer loaded
-            Ready,     // Trainer loaded, ready to start
-            Running,   // Training in progress
-            Paused,    // Training paused
-            Stopping,  // Stop requested, waiting for thread
-            Completed, // Training finished successfully
-            Error      // Training encountered an error
-        };
+        // Legacy State enum for backwards compatibility
+        // Use TrainingState from training_state.hpp for new code
+        using State = TrainingState;
 
         TrainerManager();
         ~TrainerManager();
@@ -67,22 +62,23 @@ namespace lfs::vis {
         void pauseTrainingTemporary();
         void resumeTrainingTemporary();
 
-        // State queries
-        State getState() const { return state_.load(); }
-        bool isRunning() const { return state_ == State::Running; }
-        bool isPaused() const { return state_ == State::Paused; }
-        bool isTrainingActive() const {
-            auto s = state_.load();
-            return s == State::Running || s == State::Paused;
+        // State machine access
+        [[nodiscard]] const TrainingStateMachine& getStateMachine() const { return state_machine_; }
+        [[nodiscard]] bool canPerform(TrainingAction action) const { return state_machine_.canPerform(action); }
+        [[nodiscard]] std::string_view getActionBlockedReason(TrainingAction action) const {
+            return state_machine_.getActionBlockedReason(action);
         }
-        bool canStart() const { return state_ == State::Ready; }
-        bool canPause() const { return state_ == State::Running; }
-        bool canResume() const { return state_ == State::Paused; }
-        bool canStop() const { return isTrainingActive(); }
-        bool canReset() const {
-            auto s = state_.load();
-            return s == State::Paused || s == State::Completed || s == State::Ready;
-        }
+
+        // State queries (delegate to state machine)
+        [[nodiscard]] TrainingState getState() const { return state_machine_.getState(); }
+        [[nodiscard]] bool isRunning() const { return state_machine_.isInState(TrainingState::Running); }
+        [[nodiscard]] bool isPaused() const { return state_machine_.isInState(TrainingState::Paused); }
+        [[nodiscard]] bool isTrainingActive() const { return state_machine_.isActive(); }
+        [[nodiscard]] bool canStart() const { return canPerform(TrainingAction::Start); }
+        [[nodiscard]] bool canPause() const { return canPerform(TrainingAction::Pause); }
+        [[nodiscard]] bool canResume() const { return canPerform(TrainingAction::Resume); }
+        [[nodiscard]] bool canStop() const { return canPerform(TrainingAction::Stop); }
+        [[nodiscard]] bool canReset() const { return canPerform(TrainingAction::Reset); }
 
         // Progress information - directly query trainer
         int getCurrentIteration() const;
@@ -123,23 +119,26 @@ namespace lfs::vis {
         void applyPendingParams();
 
     private:
-
         // Training thread function
         void trainingThreadFunc(std::stop_token stop_token);
 
         // State management
-        void setState(State new_state);
         void handleTrainingComplete(bool success, const std::string& error = "");
         void setupEventHandlers();
+        void setupStateMachineCallbacks();
+
+        // Resource cleanup (called by state machine)
+        void cleanupTrainingResources(const TrainingResources& resources);
+        void updateResourceTracking();
 
         // Member variables
         std::unique_ptr<lfs::training::Trainer> trainer_;
         std::unique_ptr<std::jthread> training_thread_;
         VisualizerImpl* viewer_ = nullptr;
-        Scene* scene_ = nullptr;  // Non-owning pointer to Scene (for Scene-based trainer mode)
+        Scene* scene_ = nullptr;
 
-        // State tracking
-        std::atomic<State> state_{State::Idle};
+        // State machine (single source of truth for state)
+        TrainingStateMachine state_machine_;
         std::string last_error_;
         mutable std::mutex state_mutex_;
 
@@ -148,8 +147,8 @@ namespace lfs::vis {
         std::mutex completion_mutex_;
         bool training_complete_ = false;
 
-        // Loss buffer (the only metric we need to store)
-        int max_loss_points_ = 200;
+        // Loss buffer
+        static constexpr int MAX_LOSS_POINTS = 200;
         std::deque<float> loss_buffer_;
         mutable std::mutex loss_buffer_mutex_;
 

@@ -160,6 +160,7 @@ namespace lfs::vis {
         void loadCheckpointForTraining(const std::filesystem::path& path,
                                        const lfs::core::param::TrainingParameters& params);
         void clear();
+        void switchToEditMode();  // Keep trained model, discard dataset
 
         // For rendering - gets appropriate model
         const lfs::core::SplatData* getModelForRendering() const;

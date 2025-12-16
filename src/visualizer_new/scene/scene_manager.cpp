@@ -53,6 +53,10 @@ namespace lfs::vis {
             clear();
         });
 
+        cmd::SwitchToEditMode::when([this](const auto&) {
+            switchToEditMode();
+        });
+
         // Handle PLY cycling with proper event emission for UI updates
         cmd::CyclePLY::when([this](const auto&) {
             // Check if rendering manager has split view enabled (in PLY comparison mode)
@@ -369,6 +373,37 @@ namespace lfs::vis {
     }
 
     void SceneManager::removePLY(const std::string& name, const bool keep_children) {
+        const auto& training_name = scene_.getTrainingModelNodeName();
+
+        // Check if node is or contains training model
+        const auto isTrainingNode = [&]() -> bool {
+            if (training_name.empty()) return false;
+            if (name == training_name) return true;
+            for (const auto* n = scene_.getNode(training_name); n && n->parent_id != NULL_NODE; ) {
+                n = scene_.getNodeById(n->parent_id);
+                if (n && n->name == name) return true;
+            }
+            return false;
+        };
+
+        const bool affects_training = isTrainingNode();
+
+        // Use state machine to check if deletion is allowed
+        if (affects_training && trainer_manager_) {
+            if (!trainer_manager_->canPerform(TrainingAction::DeleteTrainingNode)) {
+                LOG_WARN("Cannot delete '{}': {}", name,
+                         trainer_manager_->getActionBlockedReason(TrainingAction::DeleteTrainingNode));
+                return;
+            }
+
+            // Clean up training state if deleting training model (e.g., while paused)
+            LOG_INFO("Stopping training due to node deletion: {}", name);
+            trainer_manager_->stopTraining();
+            trainer_manager_->waitForCompletion();
+            trainer_manager_->clearTrainer();
+            scene_.setTrainingModelNode("");
+        }
+
         std::string parent_name;
         if (const auto* node = scene_.getNode(name)) {
             if (node->parent_id != NULL_NODE) {
@@ -382,12 +417,13 @@ namespace lfs::vis {
         {
             std::lock_guard lock(state_mutex_);
             splat_paths_.erase(name);
-            selected_nodes_.erase(name);  // Remove from selection
+            selected_nodes_.erase(name);
         }
 
         if (scene_.getNodeCount() == 0) {
             std::lock_guard lock(state_mutex_);
             content_type_ = ContentType::Empty;
+            dataset_path_.clear();
         }
 
         state::PLYRemoved{.name = name, .children_kept = keep_children, .parent_of_removed = parent_name}.emit();
@@ -928,30 +964,35 @@ namespace lfs::vis {
         try {
             LOG_INFO("Loading dataset: {}", path.string());
 
-            // Stop any existing training
-            if (trainer_manager_) {
-                LOG_DEBUG("Clearing existing trainer");
-                trainer_manager_->clearTrainer();
-            }
-
-            // Clear scene
-            clear();
-
             // Setup training parameters
             auto dataset_params = params;
             dataset_params.dataset.data_path = path;
+
+            // Validate dataset BEFORE clearing scene
+            auto validation_result = lfs::training::validateDatasetPath(dataset_params);
+            if (!validation_result) {
+                LOG_ERROR("Dataset validation failed: {}", validation_result.error());
+                state::DatasetLoadCompleted{
+                    .path = path,
+                    .success = false,
+                    .error = validation_result.error(),
+                    .num_images = 0,
+                    .num_points = 0}
+                    .emit();
+                return;
+            }
+
+            // Validation passed - now clear and load
+            if (trainer_manager_) {
+                trainer_manager_->clearTrainer();
+            }
+            clear();
+
             cached_params_ = dataset_params;
 
-            LOG_DEBUG("Loading training data into scene");
-            LOG_TRACE("Dataset path: {}", path.string());
-            LOG_TRACE("Iterations: {}", dataset_params.optimization.iterations);
-
-            // Load training data into Scene (unified path)
             auto load_result = lfs::training::loadTrainingDataIntoScene(dataset_params, scene_);
             if (!load_result) {
                 LOG_ERROR("Failed to load training data: {}", load_result.error());
-
-                // Emit failure event instead of throwing
                 state::DatasetLoadCompleted{
                     .path = path,
                     .success = false,
@@ -959,7 +1000,6 @@ namespace lfs::vis {
                     .num_images = 0,
                     .num_points = 0}
                     .emit();
-
                 return;
             }
 
@@ -1044,11 +1084,7 @@ namespace lfs::vis {
         LOG_TIMER("SceneManager::loadCheckpointForTraining");
 
         try {
-            if (trainer_manager_) {
-                trainer_manager_->clearTrainer();
-            }
-            clear();
-
+            // === Phase 1: Validate checkpoint BEFORE clearing scene ===
             const auto header_result = lfs::training::load_checkpoint_header(path);
             if (!header_result) {
                 throw std::runtime_error("Failed to load checkpoint header: " + header_result.error());
@@ -1081,8 +1117,21 @@ namespace lfs::vis {
                                         checkpoint_params.dataset.data_path.string());
             }
 
+            // Validate dataset structure before clearing
+            const auto validation_result = lfs::training::validateDatasetPath(checkpoint_params);
+            if (!validation_result) {
+                throw std::runtime_error("Failed to load training data: " + validation_result.error());
+            }
+
+            // === Phase 2: Clear scene (validation passed) ===
+            if (trainer_manager_) {
+                trainer_manager_->clearTrainer();
+            }
+            clear();
+
             cached_params_ = checkpoint_params;
 
+            // === Phase 3: Load data ===
             const auto load_result = lfs::training::loadTrainingDataIntoScene(checkpoint_params, scene_);
             if (!load_result) {
                 throw std::runtime_error("Failed to load training data: " + load_result.error());
@@ -1156,10 +1205,15 @@ namespace lfs::vis {
     void SceneManager::clear() {
         LOG_DEBUG("Clearing scene");
 
-        // Stop training if active
+        // Check if clearing is allowed via state machine
         if (trainer_manager_ && content_type_ == ContentType::Dataset) {
-            LOG_DEBUG("Stopping training before clearing");
-            cmd::StopTraining{}.emit();
+            if (!trainer_manager_->canPerform(TrainingAction::ClearScene)) {
+                LOG_WARN("Cannot clear scene: {}",
+                         trainer_manager_->getActionBlockedReason(TrainingAction::ClearScene));
+                return;
+            }
+            LOG_DEBUG("Clearing trainer before scene");
+            // clearTrainer() handles stop, wait, and cleanup internally
             trainer_manager_->clearTrainer();
         }
 
@@ -1176,6 +1230,48 @@ namespace lfs::vis {
         emitSceneChanged();
 
         LOG_INFO("Scene cleared");
+    }
+
+    void SceneManager::switchToEditMode() {
+        if (content_type_ != ContentType::Dataset) {
+            LOG_WARN("switchToEditMode: not in dataset mode");
+            return;
+        }
+
+        const std::string model_name = scene_.getTrainingModelNodeName();
+        auto* model_node = model_name.empty() ? nullptr : scene_.getMutableNode(model_name);
+        if (!model_node || !model_node->model) {
+            LOG_WARN("switchToEditMode: no training model");
+            return;
+        }
+
+        auto splat_data = std::move(model_node->model);
+        const size_t num_gaussians = splat_data->size();
+
+        if (trainer_manager_) {
+            trainer_manager_->clearTrainer();
+        }
+        scene_.clear();
+
+        constexpr const char* MODEL_NAME = "Trained Model";
+        scene_.addNode(MODEL_NAME, std::move(splat_data));
+
+        {
+            std::lock_guard lock(state_mutex_);
+            content_type_ = ContentType::SplatFiles;
+            dataset_path_.clear();
+            splat_paths_.clear();
+        }
+
+        state::SceneLoaded{
+            .scene = nullptr,
+            .path = {},
+            .type = state::SceneLoaded::Type::PLY,
+            .num_gaussians = num_gaussians
+        }.emit();
+        emitSceneChanged();
+
+        LOG_INFO("Switched to Edit Mode: {} gaussians", num_gaussians);
     }
 
     const lfs::core::SplatData* SceneManager::getModelForRendering() const {

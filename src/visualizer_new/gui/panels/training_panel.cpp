@@ -1657,41 +1657,54 @@ namespace lfs::vis::gui::panels {
 
             ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.error, 0.3f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.error, 0.15f));
-            if (ImGui::Button("Stop Permanently", ImVec2(-1, 0))) {
-                lfs::core::events::cmd::StopTraining{}.emit();
+            if (ImGui::Button("Clear", ImVec2(-1, 0))) {
+                // Clear scene completely - this stops training, clears trainer, and resets to empty state
+                lfs::core::events::cmd::ClearScene{}.emit();
             }
             ImGui::PopStyleColor(2);
             break;
 
-        case TrainerManager::State::Completed:
-            ImGui::TextColored(t.palette.success, "Training Complete!");
+        case TrainerManager::State::Finished: {
+            const auto reason = trainer_manager->getStateMachine().getFinishReason();
+            switch (reason) {
+            case FinishReason::Completed:
+                ImGui::TextColored(t.palette.success, "Training Complete!");
+                break;
+            case FinishReason::UserStopped:
+                ImGui::TextColored(t.palette.text_dim, "Training Stopped");
+                break;
+            case FinishReason::Error:
+                ImGui::TextColored(t.palette.error, "Training Error!");
+                if (auto error_msg = trainer_manager->getLastError(); !error_msg.empty()) {
+                    ImGui::TextWrapped("%s", error_msg.c_str());
+                }
+                break;
+            default:
+                ImGui::TextColored(t.palette.text_dim, "Training Finished");
+            }
 
-            // Reset button for completed state
+            // Switch to Edit Mode button (only for completed training)
+            if (reason == FinishReason::Completed || reason == FinishReason::UserStopped) {
+                ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.success, 0.3f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.success, 0.15f));
+                if (ImGui::Button("Switch to Edit Mode", ImVec2(-1, 0))) {
+                    lfs::core::events::cmd::SwitchToEditMode{}.emit();
+                }
+                ImGui::PopStyleColor(2);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Keep trained model, discard dataset");
+                }
+            }
+
+            // Reset button
             ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.secondary, 0.2f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.secondary, 0.05f));
-            if (ImGui::Button("Reset for New Training", ImVec2(-1, 0))) {
+            if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
                 lfs::core::events::cmd::ResetTraining{}.emit();
             }
             ImGui::PopStyleColor(2);
-
             break;
-
-        case TrainerManager::State::Error:
-            ImGui::TextColored(t.palette.error, "Training Error!");
-            {
-                auto error_msg = trainer_manager->getLastError();
-                if (!error_msg.empty()) {
-                    ImGui::TextWrapped("%s", error_msg.c_str());
-                }
-                // Reset button
-                ImGui::PushStyleColor(ImGuiCol_Button, darken(t.palette.secondary, 0.2f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, darken(t.palette.secondary, 0.05f));
-                if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
-                    lfs::core::events::cmd::ResetTraining{}.emit();
-                }
-                ImGui::PopStyleColor(2);
-            }
-            break;
+        }
 
         case TrainerManager::State::Stopping:
             ImGui::TextColored(t.palette.text_dim, "Stopping...");
@@ -1741,8 +1754,16 @@ namespace lfs::vis::gui::panels {
         case TrainerManager::State::Running: state_str = "Running"; break;
         case TrainerManager::State::Paused: state_str = "Paused"; break;
         case TrainerManager::State::Stopping: state_str = "Stopping"; break;
-        case TrainerManager::State::Completed: state_str = "Completed"; break;
-        case TrainerManager::State::Error: state_str = "Error"; break;
+        case TrainerManager::State::Finished: {
+            const auto reason = trainer_manager->getStateMachine().getFinishReason();
+            switch (reason) {
+            case FinishReason::Completed: state_str = "Completed"; break;
+            case FinishReason::UserStopped: state_str = "Stopped"; break;
+            case FinishReason::Error: state_str = "Error"; break;
+            default: state_str = "Finished";
+            }
+            break;
+        }
         }
 
         // Static tracker instance

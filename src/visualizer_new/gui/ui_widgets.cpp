@@ -107,7 +107,7 @@ namespace lfs::vis::gui::widgets {
             break;
 
         case SceneManager::ContentType::SplatFiles:
-            mode_str = "Splat Viewer";
+            mode_str = "Edit Mode";
             mode_color = t.palette.info;
             break;
 
@@ -133,14 +133,27 @@ namespace lfs::vis::gui::widgets {
                     mode_str = "Training (Paused)";
                     mode_color = lighten(t.palette.warning, -0.3f);
                     break;
-                case TrainerManager::State::Completed:
-                    mode_str = "Training Complete";
-                    mode_color = t.palette.success;
+                case TrainerManager::State::Finished: {
+                    const auto reason = trainer_manager->getStateMachine().getFinishReason();
+                    switch (reason) {
+                    case FinishReason::Completed:
+                        mode_str = "Training Complete";
+                        mode_color = t.palette.success;
+                        break;
+                    case FinishReason::UserStopped:
+                        mode_str = "Training Stopped";
+                        mode_color = t.palette.text_dim;
+                        break;
+                    case FinishReason::Error:
+                        mode_str = "Training Error";
+                        mode_color = t.palette.error;
+                        break;
+                    default:
+                        mode_str = "Training Finished";
+                        mode_color = t.palette.text_dim;
+                    }
                     break;
-                case TrainerManager::State::Error:
-                    mode_str = "Training Error";
-                    mode_color = t.palette.error;
-                    break;
+                }
                 case TrainerManager::State::Stopping:
                     mode_str = "Stopping...";
                     mode_color = darken(t.palette.error, 0.3f);

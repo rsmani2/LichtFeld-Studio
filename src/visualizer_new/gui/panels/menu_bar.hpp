@@ -25,10 +25,14 @@ namespace lfs::vis::gui {
         void render();
         void setFonts(const FontSet& fonts) { fonts_ = fonts; }
 
+        void setOnNewProject(std::function<void()> callback);
         void setOnImportDataset(std::function<void()> callback);
         void setOnImportPLY(std::function<void()> callback);
         void setOnExport(std::function<void()> callback);
         void setOnExit(std::function<void()> callback);
+
+        // Permission check for New Project (returns true if clearing is allowed)
+        void setCanClearCheck(std::function<bool()> check);
 
         void renderGettingStartedWindow();
         void renderAboutWindow();
@@ -60,10 +64,12 @@ namespace lfs::vis::gui {
         void updateThumbnails();
         void renderVideoCard(const char* title, const char* video_id, const char* url);
 
+        std::function<void()> on_new_project_;
         std::function<void()> on_import_dataset_;
         std::function<void()> on_import_ply_;
         std::function<void()> on_export_;
         std::function<void()> on_exit_;
+        std::function<bool()> can_clear_;
 
         bool show_about_window_ = false;
         bool show_getting_started_ = false;

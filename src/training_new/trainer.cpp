@@ -497,6 +497,12 @@ namespace lfs::training {
         train_dataset_.reset();
         val_dataset_.reset();
 
+        // Release GPU memory pools back to system
+        lfs::core::CudaMemoryPool::instance().trim_cached_memory();
+        lfs::core::GlobalArenaManager::instance().get_arena().emergency_cleanup();
+        cudaDeviceSynchronize();
+        LOG_DEBUG("GPU memory released");
+
         initialized_ = false;
         is_running_ = false;
         training_complete_ = false;

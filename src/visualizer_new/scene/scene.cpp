@@ -3,11 +3,15 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "scene/scene.hpp"
+#include "core_new/cuda/memory_arena.hpp"
 #include "core_new/logger.hpp"
 #include "core_new/splat_data_transform.hpp"
+#include "core_new/tensor/internal/memory_pool.hpp"
+#include "io/cache_image_loader.hpp"
 #include "training_new/dataset.hpp"
 
 #include <algorithm>
+#include <cuda_runtime.h>
 #include <limits>
 #include <array>
 #include <cmath>
@@ -164,7 +168,7 @@ namespace lfs::vis {
                                [&name](const std::unique_ptr<Node>& node) { return node->name == name; });
         if (it_final == nodes_.end()) return; // Already removed somehow
 
-        // Copy name before erasing since 'name' may be a reference to the node's name member
+        // Copy before erase - 'name' may reference the node being deleted
         const std::string name_copy = name;
 
         id_to_index_.erase(id);
@@ -257,6 +261,15 @@ namespace lfs::vis {
         val_cameras_.reset();
         initial_point_cloud_.reset();
         training_model_node_.clear();
+
+        if (lfs::io::CacheLoader::hasInstance()) {
+            lfs::io::CacheLoader::getInstance().reset_cache();
+        }
+
+        // Release GPU memory
+        cudaDeviceSynchronize();
+        lfs::core::CudaMemoryPool::instance().trim_cached_memory();
+        lfs::core::GlobalArenaManager::instance().get_arena().emergency_cleanup();
     }
 
     std::pair<std::string, std::string> Scene::cycleVisibilityWithNames() {

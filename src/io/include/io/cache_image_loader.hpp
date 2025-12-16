@@ -72,6 +72,7 @@ namespace lfs::io {
 
         static CacheLoader& getInstance(bool use_cpu_memory, bool use_fs_cache);
         static CacheLoader& getInstance();
+        static bool hasInstance() { return instance_ != nullptr; }
 
         [[nodiscard]] lfs::core::Tensor load_cached_image(const std::filesystem::path& path, const LoadParams& params);
 

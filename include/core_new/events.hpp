@@ -51,6 +51,7 @@ namespace lfs::core {
             EVENT(LoadFile, std::filesystem::path path; bool is_dataset;);
             EVENT(LoadCheckpointForTraining, std::filesystem::path path;);
             EVENT(ClearScene, );
+            EVENT(SwitchToEditMode, );  // Keep trained model, discard dataset
             EVENT(ResetCamera, );
             EVENT(ShowWindow, std::string window_name; bool show;);
             EVENT(ExecuteConsole, std::string command;);

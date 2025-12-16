@@ -263,8 +263,9 @@ namespace lfs::vis {
         try {
             LOG_INFO("Loading checkpoint for training from: {}", path.string());
 
-            // Load through scene manager with checkpoint flag
-            scene_manager_->loadCheckpointForTraining(path, params_);
+            // Use default params - checkpoint's embedded paths take precedence
+            lfs::core::param::TrainingParameters default_params;
+            scene_manager_->loadCheckpointForTraining(path, default_params);
 
             return {};
         } catch (const std::exception& e) {

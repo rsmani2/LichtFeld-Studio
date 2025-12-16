@@ -17,7 +17,60 @@ namespace lfs::vis {
 
     TrainerManager::TrainerManager() {
         setupEventHandlers();
+        setupStateMachineCallbacks();
         LOG_DEBUG("TrainerManager created");
+    }
+
+    void TrainerManager::setupStateMachineCallbacks() {
+        state_machine_.setCleanupCallback([this](const TrainingResources& resources) {
+            cleanupTrainingResources(resources);
+        });
+
+        state_machine_.setStateChangeCallback([this](TrainingState old_state, TrainingState new_state) {
+            // Emit events on state changes
+            if (new_state == TrainingState::Idle) {
+                loss_buffer_.clear();
+                last_error_.clear();
+            }
+        });
+    }
+
+    void TrainerManager::cleanupTrainingResources(const TrainingResources& /*resources*/) {
+        LOG_DEBUG("Cleaning up training resources");
+
+        if (training_thread_ && training_thread_->joinable()) {
+            training_thread_->request_stop();
+            auto timeout = std::chrono::milliseconds(500);
+            {
+                std::unique_lock<std::mutex> lock(completion_mutex_);
+                if (completion_cv_.wait_for(lock, timeout, [this] { return training_complete_; })) {
+                    lock.unlock();
+                    training_thread_->join();
+                } else {
+                    lock.unlock();
+                    LOG_WARN("Thread didn't respond to stop request, detaching");
+                    training_thread_->detach();
+                }
+            }
+            training_thread_.reset();
+        }
+
+        if (trainer_) {
+            trainer_->shutdown();
+            trainer_.reset();
+        }
+    }
+
+    void TrainerManager::updateResourceTracking() {
+        TrainingResources resources;
+        resources.has_trainer = trainer_ != nullptr;
+        resources.has_training_thread = training_thread_ != nullptr && training_thread_->joinable();
+        resources.has_scene_data = scene_ != nullptr;
+        resources.has_gpu_tensors = trainer_ && trainer_->isInitialized();
+        if (scene_) {
+            resources.training_node_name = scene_->getTrainingModelNodeName();
+        }
+        state_machine_.setResources(resources);
     }
 
     TrainerManager::~TrainerManager() {
@@ -32,7 +85,6 @@ namespace lfs::vis {
     void TrainerManager::setTrainer(std::unique_ptr<lfs::training::Trainer> trainer) {
         LOG_TIMER_TRACE("TrainerManager::setTrainer");
 
-        // Clear any existing trainer first
         clearTrainer();
 
         if (trainer) {
@@ -40,7 +92,8 @@ namespace lfs::vis {
             pending_opt_params_ = params.optimization;
             pending_dataset_params_ = params.dataset;
             trainer_ = std::move(trainer);
-            setState(State::Ready);
+            updateResourceTracking();
+            state_machine_.transitionTo(TrainingState::Ready);
             internal::TrainerReady{}.emit();
             LOG_DEBUG("Trainer ready");
         }
@@ -49,7 +102,6 @@ namespace lfs::vis {
     void TrainerManager::setTrainerFromCheckpoint(std::unique_ptr<lfs::training::Trainer> trainer, int checkpoint_iteration) {
         LOG_TIMER_TRACE("TrainerManager::setTrainerFromCheckpoint");
 
-        // Clear any existing trainer first
         clearTrainer();
 
         if (trainer) {
@@ -57,9 +109,11 @@ namespace lfs::vis {
             pending_opt_params_ = params.optimization;
             pending_dataset_params_ = params.dataset;
             trainer_ = std::move(trainer);
-            setState(State::Ready);
-            internal::TrainerReady{}.emit();
-            LOG_DEBUG("Trainer ready from checkpoint (iteration {})", checkpoint_iteration);
+            updateResourceTracking();
+            // Checkpoint load goes to Paused - like resuming a previously stopped training
+            state_machine_.transitionTo(TrainingState::Paused);
+            state::TrainingPaused{.iteration = checkpoint_iteration}.emit();
+            LOG_DEBUG("Trainer paused from checkpoint (iteration {})", checkpoint_iteration);
         }
     }
 
@@ -70,45 +124,29 @@ namespace lfs::vis {
     void TrainerManager::clearTrainer() {
         LOG_DEBUG("Clearing trainer");
 
-        lfs::core::events::cmd::StopTraining{}.emit();
         // Stop any ongoing training first
-        if (isTrainingActive()) {
-            LOG_INFO("Stopping active training before clearing trainer");
+        const auto state = getState();
+        if (state == TrainingState::Running || state == TrainingState::Paused) {
+            LOG_INFO("Stopping active training before clearing");
+            // If paused, resume first so thread can process stop request
+            if (state == TrainingState::Paused && trainer_) {
+                trainer_->request_resume();
+            }
             stopTraining();
+            waitForCompletion();
+        } else if (state == TrainingState::Stopping) {
+            // Already stopping, just wait for completion
+            LOG_INFO("Waiting for training to finish stopping");
             waitForCompletion();
         }
 
-        // Additional safety: ensure thread is properly stopped even if not "active"
-        if (training_thread_ && training_thread_->joinable()) {
-            LOG_WARN("Force stopping training thread that wasn't marked as active");
-            training_thread_->request_stop();
-
-            // Try to wait for completion with a short timeout
-            auto timeout = std::chrono::milliseconds(500);
-            {
-                std::unique_lock<std::mutex> lock(completion_mutex_);
-                if (completion_cv_.wait_for(lock, timeout, [this] { return training_complete_; })) {
-                    lock.unlock();
-                    LOG_DEBUG("Thread completed gracefully, joining...");
-                    training_thread_->join();
-                } else {
-                    lock.unlock();
-                    LOG_WARN("Thread didn't respond to stop request within timeout, detaching...");
-                    training_thread_->detach();
-                }
-            }
-            training_thread_.reset();
-        }
-
-        if (trainer_) {
-            trainer_->shutdown();
-        }
+        // Destroy trainer - destructor handles cleanup
         trainer_.reset();
-        last_error_.clear();
-        setState(State::Idle);
 
-        // Reset loss buffer
-        loss_buffer_.clear();
+        // Transition to Idle
+        updateResourceTracking();
+        state_machine_.transitionTo(TrainingState::Idle);
+
         LOG_INFO("Trainer cleared");
     }
 
@@ -116,7 +154,7 @@ namespace lfs::vis {
         LOG_TIMER("TrainerManager::startTraining");
 
         if (!canStart()) {
-            LOG_WARN("Cannot start training in current state: {}", static_cast<int>(state_.load()));
+            LOG_WARN("Cannot start: {}", getActionBlockedReason(TrainingAction::Start));
             return false;
         }
 
@@ -135,37 +173,33 @@ namespace lfs::vis {
             if (scene_) {
                 if (auto result = lfs::training::initializeTrainingModel(params, *scene_); !result) {
                     LOG_ERROR("Failed to initialize model: {}", result.error());
-                    setState(State::Error);
                     last_error_ = result.error();
+                    state_machine_.transitionToFinished(FinishReason::Error);
                     return false;
                 }
             }
 
             if (auto result = trainer_->initialize(params); !result) {
                 LOG_ERROR("Failed to initialize trainer: {}", result.error());
-                setState(State::Error);
                 last_error_ = result.error();
+                state_machine_.transitionToFinished(FinishReason::Error);
                 return false;
             }
         }
 
-        // Reset completion state
         {
             std::lock_guard<std::mutex> lock(completion_mutex_);
             training_complete_ = false;
         }
 
-        setState(State::Running);
+        updateResourceTracking();
+        state_machine_.transitionTo(TrainingState::Running);
 
         training_start_time_ = std::chrono::steady_clock::now();
         accumulated_training_time_ = std::chrono::steady_clock::duration{0};
 
-        // Emit training started event
-        state::TrainingStarted{
-            .total_iterations = getTotalIterations()}
-            .emit();
+        state::TrainingStarted{.total_iterations = getTotalIterations()}.emit();
 
-        // Start training thread
         training_thread_ = std::make_unique<std::jthread>(
             [this](std::stop_token stop_token) {
                 trainingThreadFunc(stop_token);
@@ -177,89 +211,73 @@ namespace lfs::vis {
 
     void TrainerManager::pauseTraining() {
         if (!canPause()) {
-            LOG_TRACE("Cannot pause training in current state: {}", static_cast<int>(state_.load()));
+            LOG_TRACE("Cannot pause: {}", getActionBlockedReason(TrainingAction::Pause));
             return;
         }
 
         if (trainer_) {
             trainer_->request_pause();
             accumulated_training_time_ += std::chrono::steady_clock::now() - training_start_time_;
-            setState(State::Paused);
+            state_machine_.transitionTo(TrainingState::Paused);
 
-            state::TrainingPaused{
-                .iteration = getCurrentIteration()}
-                .emit();
-
-            LOG_INFO("Training paused at iteration {} (state: Paused)", getCurrentIteration());
+            state::TrainingPaused{.iteration = getCurrentIteration()}.emit();
+            LOG_INFO("Training paused at iteration {}", getCurrentIteration());
         }
     }
 
     void TrainerManager::resumeTraining() {
         if (!canResume()) {
-            LOG_TRACE("Cannot resume training in current state: {}", static_cast<int>(state_.load()));
+            LOG_TRACE("Cannot resume: {}", getActionBlockedReason(TrainingAction::Resume));
             return;
         }
 
         if (trainer_) {
             trainer_->request_resume();
             training_start_time_ = std::chrono::steady_clock::now();
-            setState(State::Running);
+            state_machine_.transitionTo(TrainingState::Running);
 
-            state::TrainingResumed{
-                .iteration = getCurrentIteration()}
-                .emit();
-
-            LOG_INFO("Training resumed from iteration {} (state: Running)", getCurrentIteration());
+            state::TrainingResumed{.iteration = getCurrentIteration()}.emit();
+            LOG_INFO("Training resumed from iteration {}", getCurrentIteration());
         }
     }
 
     void TrainerManager::pauseTrainingTemporary() {
-        // Temporary pause for camera movement - doesn't change state
-        if (state_ != State::Running) {
-            return;
-        }
+        if (!isRunning()) return;
 
         if (trainer_) {
             trainer_->request_pause();
-            LOG_TRACE("Training temporarily paused at iteration {} (state remains Running)", getCurrentIteration());
+            LOG_TRACE("Training temporarily paused at iteration {}", getCurrentIteration());
         }
     }
 
     void TrainerManager::resumeTrainingTemporary() {
-        // Resume from temporary pause - only if still in Running state
-        if (state_ != State::Running) {
-            return;
-        }
+        if (!isRunning()) return;
 
         if (trainer_) {
             trainer_->request_resume();
-            LOG_TRACE("Training resumed from temporary pause at iteration {} (state remains Running)", getCurrentIteration());
+            LOG_TRACE("Training resumed from temporary pause at iteration {}", getCurrentIteration());
         }
     }
 
     void TrainerManager::stopTraining() {
-        if (!isTrainingActive()) {
-            LOG_TRACE("Training not active, nothing to stop");
+        if (!canStop()) {
+            LOG_TRACE("Cannot stop: {}", getActionBlockedReason(TrainingAction::Stop));
             return;
         }
 
         LOG_DEBUG("Requesting training stop");
-        setState(State::Stopping);
+        updateResourceTracking();
+        state_machine_.transitionTo(TrainingState::Stopping);
 
         if (trainer_) {
             trainer_->request_stop();
         }
 
         if (training_thread_ && training_thread_->joinable()) {
-            LOG_DEBUG("Requesting training thread to stop...");
             training_thread_->request_stop();
         }
 
-        state::TrainingStopped{
-            .iteration = getCurrentIteration(),
-            .user_requested = true}
-            .emit();
-
+        state::TrainingStopped{.iteration = getCurrentIteration(), .user_requested = true}.emit();
         LOG_INFO("Training stop requested at iteration {}", getCurrentIteration());
     }
 
@@ -303,7 +321,7 @@ namespace lfs::vis {
             // Recreate trainer from Scene
             if (!scene_) {
                 LOG_ERROR("Cannot reset training: no scene set");
-                setState(State::Error);
+                state_machine_.transitionToFinished(FinishReason::Error);
                 return false;
             }
             trainer_ = std::make_unique<lfs::training::Trainer>(*scene_);
@@ -313,7 +331,7 @@ namespace lfs::vis {
         loss_buffer_.clear();
 
         // Set to Ready state
-        setState(State::Ready);
+        state_machine_.transitionTo(TrainingState::Ready);
 
         LOG_INFO("Training reset complete - GPU memory freed, ready to start with current parameters");
         return true;
@@ -386,12 +404,12 @@ namespace lfs::vis {
     }
 
     float TrainerManager::getElapsedSeconds() const {
-        const auto state = state_.load();
-        if (state == State::Running) {
+        const auto state = getState();
+        if (state == TrainingState::Running) {
             const auto current = std::chrono::steady_clock::now() - training_start_time_;
             return std::chrono::duration<float>(accumulated_training_time_ + current).count();
         }
-        if (state == State::Paused || state == State::Completed) {
+        if (state == TrainingState::Paused || state == TrainingState::Finished) {
             return std::chrono::duration<float>(accumulated_training_time_).count();
         }
         return 0.0f;
@@ -412,7 +430,7 @@ namespace lfs::vis {
     void TrainerManager::updateLoss(float loss) {
         std::lock_guard<std::mutex> lock(loss_buffer_mutex_);
         loss_buffer_.push_back(loss);
-        while (loss_buffer_.size() > static_cast<size_t>(max_loss_points_)) {
+        while (loss_buffer_.size() > static_cast<size_t>(MAX_LOSS_POINTS)) {
             loss_buffer_.pop_front();
         }
         LOG_TRACE("Loss updated: {:.6f} (buffer size: {})", loss, loss_buffer_.size());
@@ -449,53 +467,43 @@ namespace lfs::vis {
         LOG_INFO("Training thread finished");
     }
 
-    void TrainerManager::setState(State new_state) {
-        std::lock_guard<std::mutex> lock(state_mutex_);
-
-        State old_state = state_.load();
-        state_ = new_state;
-
-        const char* state_str = "";
-        switch (new_state) {
-        case State::Idle: state_str = "Idle"; break;
-        case State::Ready: state_str = "Ready"; break;
-        case State::Running: state_str = "Running"; break;
-        case State::Paused: state_str = "Paused"; break;
-        case State::Stopping: state_str = "Stopping"; break;
-        case State::Completed: state_str = "Completed"; break;
-        case State::Error: state_str = "Error"; break;
-        }
-
-        LOG_DEBUG("Training state changed from {} to {}",
-                  static_cast<int>(old_state), state_str);
-    }
-
     void TrainerManager::handleTrainingComplete(const bool success, const std::string& error) {
         if (!error.empty()) {
             last_error_ = error;
             LOG_ERROR("Training error: {}", error);
         }
 
-        // Capture elapsed time before state change (while still Running)
         const float elapsed = getElapsedSeconds();
-        setState(success ? State::Completed : State::Error);
-
-        const int final_iteration = getCurrentIteration();
+        const int final_iter = getCurrentIteration();
         const float final_loss = getCurrentLoss();
+        const bool user_stopped = (getState() == TrainingState::Stopping);
 
-        LOG_INFO("Training finished: iter={}, loss={:.6f}, elapsed={:.1f}s",
-                 final_iteration, final_loss, elapsed);
+        updateResourceTracking();
+        if (!user_stopped) {
+            state_machine_.transitionTo(TrainingState::Stopping);
+        }
 
-        state::TrainingCompleted{
-            .iteration = final_iteration,
-            .final_loss = final_loss,
-            .elapsed_seconds = elapsed,
-            .success = success,
-            .error = error.empty() ? std::nullopt : std::optional(error)}
-            .emit();
+        const FinishReason reason = !success ? FinishReason::Error
+                                  : user_stopped ? FinishReason::UserStopped
+                                  : FinishReason::Completed;
+        state_machine_.transitionToFinished(reason);
+
+        LOG_INFO("Training finished: iter={}, loss={:.6f}, time={:.1f}s",
+                 final_iter, final_loss, elapsed);
+
+        // Skip popup for user-stopped (user knows they stopped it)
+        if (!user_stopped) {
+            state::TrainingCompleted{
+                .iteration = final_iter,
+                .final_loss = final_loss,
+                .elapsed_seconds = elapsed,
+                .success = success,
+                .error = error.empty() ? std::nullopt : std::optional(error)}
+                .emit();
+        }
 
         {
-            std::lock_guard<std::mutex> lock(completion_mutex_);
+            std::lock_guard lock(completion_mutex_);
             training_complete_ = true;
         }
         completion_cv_.notify_all();

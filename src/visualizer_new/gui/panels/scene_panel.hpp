@@ -130,6 +130,9 @@ namespace lfs::vis {
             void startRenaming(const std::string& node_name);
             void finishRenaming(SceneManager* scene_manager);
             void cancelRenaming();
+
+            // Training protection
+            bool isNodeProtectedDuringTraining(const SceneNode& node, const Scene& scene) const;
         };
 
     } // namespace gui

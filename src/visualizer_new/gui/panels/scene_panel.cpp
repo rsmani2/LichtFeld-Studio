@@ -57,6 +57,14 @@ namespace lfs::vis::gui {
                 tex = 0;
             }
         }
+
+        constexpr const char* TRAINING_DELETE_TOOLTIP = "Cannot delete while training is in progress";
+
+        void showDisabledDeleteTooltip(const bool is_protected) {
+            if (is_protected && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("%s", TRAINING_DELETE_TOOLTIP);
+            }
+        }
     } // namespace
 
     ScenePanel::ScenePanel(std::shared_ptr<const TrainerManager> trainer_manager)
@@ -370,7 +378,8 @@ namespace lfs::vis::gui {
         const ImVec2 icon_sz{ICON_SIZE, ICON_SIZE};
 
         const bool can_drag = canReparent(node, nullptr, scene);
-        const bool is_deletable = !is_camera && !is_camera_group && !is_cropbox && !parent_is_dataset;
+        const bool is_training_protected = isNodeProtectedDuringTraining(node, scene);
+        const bool is_deletable = !is_camera && !is_camera_group && !is_cropbox && !parent_is_dataset && !is_training_protected;
 
         // Button style for all icon buttons
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
@@ -600,9 +609,10 @@ namespace lfs::vis::gui {
                 }
 
                 if (is_dataset) {
-                    if (ImGui::MenuItem("Delete")) {
+                    if (ImGui::MenuItem("Delete", nullptr, false, !is_training_protected)) {
                         cmd::RemovePLY{.name = node.name, .keep_children = false}.emit();
                     }
+                    showDisabledDeleteTooltip(is_training_protected);
                     finishNode();
                     return;
                 }
@@ -658,9 +668,10 @@ namespace lfs::vis::gui {
                 }
 
                 ImGui::Separator();
-                if (ImGui::MenuItem("Delete")) {
+                if (ImGui::MenuItem("Delete", nullptr, false, !is_training_protected)) {
                     cmd::RemovePLY{.name = node.name, .keep_children = false}.emit();
                 }
+                showDisabledDeleteTooltip(is_training_protected);
                 ImGui::EndPopup();
             }
             Theme::popContextMenuStyle();
@@ -787,6 +798,10 @@ namespace lfs::vis::gui {
         m_renameState.input_was_active = false;
         m_renameState.escape_pressed = false;
         memset(m_renameState.buffer, 0, sizeof(m_renameState.buffer));
+    }
+
+    bool ScenePanel::isNodeProtectedDuringTraining(const SceneNode& /*node*/, const Scene& /*scene*/) const {
+        return m_trainerManager && !m_trainerManager->canPerform(TrainingAction::DeleteTrainingNode);
     }
 
     void ScenePanel::renderImageList() {

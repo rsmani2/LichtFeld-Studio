@@ -49,4 +49,16 @@ namespace lfs::training {
     std::expected<void, std::string> initializeTrainingModel(
         const lfs::core::param::TrainingParameters& params,
         lfs::vis::Scene& scene);
+
+    /**
+     * @brief Validate dataset path without loading data
+     *
+     * Checks that the dataset path exists and has the required structure.
+     * Does not load any data into memory.
+     *
+     * @param params Training parameters (including data path)
+     * @return Error message on failure
+     */
+    std::expected<void, std::string> validateDatasetPath(
+        const lfs::core::param::TrainingParameters& params);
 } // namespace lfs::training
