@@ -248,7 +248,9 @@ namespace lfs::vis::gui::panels {
         }
 
         const auto trainer_state = trainer_manager->getState();
-        const bool can_edit = (trainer_state == TrainerManager::State::Ready);
+        const int current_iteration = trainer_manager->getCurrentIteration();
+        // Params editable only before training starts (not when resuming from checkpoint)
+        const bool can_edit = (trainer_state == TrainerManager::State::Ready) && (current_iteration == 0);
 
         lfs::core::param::OptimizationParameters opt_params;
         lfs::core::param::DatasetConfig dataset_params;
