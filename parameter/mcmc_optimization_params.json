@@ -39,7 +39,7 @@
   "pause_refine_after_reset": 0,
   "revised_opacity": false,
   "gut": false,
-  "steps_scaler": 0,
+  "steps_scaler": 1,
   "random": false,
   "init_num_pts": 100000,
   "init_extent": 3.0,
