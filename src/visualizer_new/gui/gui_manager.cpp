@@ -431,7 +431,10 @@ namespace lfs::vis::gui {
             const float panel_h = vp->WorkSize.y - STATUS_BAR_HEIGHT;
             const float min_w = vp->WorkSize.x * RIGHT_PANEL_MIN_RATIO;
             const float max_w = vp->WorkSize.x * RIGHT_PANEL_MAX_RATIO;
-            right_panel_width_ = std::clamp(right_panel_width_, min_w, max_w);
+
+            // on windows, when window is minimized, WorkSize can be zero
+            if (min_w != 0 || max_w != 0)
+                right_panel_width_ = std::clamp(right_panel_width_, min_w, max_w);
 
             const float panel_x = vp->WorkPos.x + vp->WorkSize.x - right_panel_width_;
             ImGui::SetNextWindowPos({panel_x, vp->WorkPos.y}, ImGuiCond_Always);
