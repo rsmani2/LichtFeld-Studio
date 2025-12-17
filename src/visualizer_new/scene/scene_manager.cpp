@@ -1256,6 +1256,7 @@ namespace lfs::vis {
 
         constexpr const char* MODEL_NAME = "Trained Model";
         scene_.addNode(MODEL_NAME, std::move(splat_data));
+        selectNode(MODEL_NAME);
 
         {
             std::lock_guard lock(state_mutex_);

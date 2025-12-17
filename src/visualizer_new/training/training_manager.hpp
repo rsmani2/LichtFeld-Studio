@@ -73,6 +73,7 @@ namespace lfs::vis {
         [[nodiscard]] TrainingState getState() const { return state_machine_.getState(); }
         [[nodiscard]] bool isRunning() const { return state_machine_.isInState(TrainingState::Running); }
         [[nodiscard]] bool isPaused() const { return state_machine_.isInState(TrainingState::Paused); }
+        [[nodiscard]] bool isFinished() const { return state_machine_.isInState(TrainingState::Finished); }
         [[nodiscard]] bool isTrainingActive() const { return state_machine_.isActive(); }
         [[nodiscard]] bool canStart() const { return canPerform(TrainingAction::Start); }
         [[nodiscard]] bool canPause() const { return canPerform(TrainingAction::Pause); }

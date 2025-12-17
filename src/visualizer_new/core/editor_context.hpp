@@ -18,7 +18,8 @@ enum class EditorMode : uint8_t {
     VIEWING_SPLATS,
     PRE_TRAINING,
     TRAINING,
-    PAUSED
+    PAUSED,
+    FINISHED
 };
 
 // Tool types for toolbar
@@ -47,6 +48,10 @@ public:
     [[nodiscard]] bool isTraining() const { return mode_ == EditorMode::TRAINING; }
     [[nodiscard]] bool isTrainingOrPaused() const {
         return mode_ == EditorMode::TRAINING || mode_ == EditorMode::PAUSED;
+    }
+    [[nodiscard]] bool isFinished() const { return mode_ == EditorMode::FINISHED; }
+    [[nodiscard]] bool isToolsDisabled() const {
+        return mode_ == EditorMode::TRAINING || mode_ == EditorMode::PAUSED || mode_ == EditorMode::FINISHED;
     }
     [[nodiscard]] bool isEmpty() const { return mode_ == EditorMode::EMPTY; }
 

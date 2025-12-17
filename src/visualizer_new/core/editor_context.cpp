@@ -23,6 +23,8 @@ void EditorContext::update(const SceneManager* scene_manager, const TrainerManag
             mode_ = EditorMode::TRAINING;
         } else if (trainer_manager->isPaused()) {
             mode_ = EditorMode::PAUSED;
+        } else if (trainer_manager->isFinished()) {
+            mode_ = EditorMode::FINISHED;
         } else if (scene_manager->hasDataset()) {
             const auto* model = scene_manager->getScene().getTrainingModel();
             mode_ = model ? EditorMode::VIEWING_SPLATS : EditorMode::PRE_TRAINING;
@@ -46,10 +48,10 @@ void EditorContext::update(const SceneManager* scene_manager, const TrainerManag
     has_selection_ = scene_manager->hasSelectedNode();
     selected_node_type_ = has_selection_ ? scene_manager->getSelectedNodeType() : NodeType::SPLAT;
 
-    // Gaussians available when viewing splats or during training
     has_gaussians_ = (mode_ == EditorMode::VIEWING_SPLATS ||
                       mode_ == EditorMode::TRAINING ||
-                      mode_ == EditorMode::PAUSED);
+                      mode_ == EditorMode::PAUSED ||
+                      mode_ == EditorMode::FINISHED);
 }
 
 bool EditorContext::isTransformableNodeType(const NodeType type) {
@@ -58,15 +60,15 @@ bool EditorContext::isTransformableNodeType(const NodeType type) {
 }
 
 bool EditorContext::canTransformSelectedNode() const {
-    return has_selection_ && !isTrainingOrPaused() && isTransformableNodeType(selected_node_type_);
+    return has_selection_ && !isToolsDisabled() && isTransformableNodeType(selected_node_type_);
 }
 
 bool EditorContext::canSelectGaussians() const {
-    return has_gaussians_ && !isTrainingOrPaused();
+    return has_gaussians_ && !isToolsDisabled();
 }
 
 bool EditorContext::isToolAvailable(const ToolType tool) const {
-    if (isTrainingOrPaused()) return false;
+    if (isToolsDisabled()) return false;
     if (!has_selection_ && tool != ToolType::None) return false;
 
     switch (tool) {
@@ -88,7 +90,7 @@ bool EditorContext::isToolAvailable(const ToolType tool) const {
 }
 
 const char* EditorContext::getToolUnavailableReason(const ToolType tool) const {
-    if (isTrainingOrPaused()) return "disabled during training";
+    if (isToolsDisabled()) return "switch to edit mode first";
     if (!has_selection_ && tool != ToolType::None) return "no node selected";
 
     switch (tool) {

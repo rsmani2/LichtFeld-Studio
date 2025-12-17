@@ -213,14 +213,8 @@ namespace lfs::vis::gui::panels {
             InitGizmoToolbar(state);
         }
 
-        // EditorContext is the single source of truth
-        auto* editor = ctx.editor;
-        if (!editor) return;
-
-        // During training, don't show toolbar
-        if (editor->isTrainingOrPaused()) {
-            return;
-        }
+        auto* const editor = ctx.editor;
+        if (!editor || editor->isToolsDisabled()) return;
 
         editor->validateActiveTool();
 
