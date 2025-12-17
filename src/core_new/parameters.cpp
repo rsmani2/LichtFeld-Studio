@@ -319,10 +319,10 @@ namespace lfs::core {
 
             if (json.contains("strategy")) {
                 std::string strategy = json["strategy"];
-                if (strategy == "mcmc" || strategy == "adc") {
+                if (strategy == "mcmc" || strategy == "default") {
                     params.strategy = strategy;
                 } else {
-                    std::println(stderr, "Warning: Invalid optimization strategy '{}' in JSON. Using 'adc'", strategy);
+                    std::println(stderr, "Warning: Invalid optimization strategy '{}' in JSON. Using default 'default'", strategy);
                 }
             }
 

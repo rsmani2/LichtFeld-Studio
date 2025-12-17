@@ -1,11 +1,11 @@
 /* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
-// Comparison tests for AdcStrategy against reference behavior
+// Comparison tests for DefaultStrategy against reference behavior
 // These tests verify that the LibTorch-free implementation produces
 // mathematically equivalent results to the reference implementation
 
-#include "training_new/strategies/adc_strategy.hpp"
+#include "training_new/strategies/default_strategy.hpp"
 #include "core_new/logger.hpp"
 #include "core_new/parameters.hpp"
 #include "core_new/point_cloud.hpp"
@@ -43,7 +43,7 @@ static SplatData create_test_splat_data(int n_gaussians = 100) {
 
 // Test split opacity calculation matches reference formula:
 // new_opacity = 1.0 - sqrt(1.0 - sigmoid(old_opacity))
-TEST(AdcStrategyComparisonTest, SplitOpacityFormula_RevisedMode) {
+TEST(DefaultStrategyComparisonTest, SplitOpacityFormula_RevisedMode) {
     auto splat_data = create_test_splat_data(10);
 
     // Set specific opacity values to test
@@ -54,7 +54,7 @@ TEST(AdcStrategyComparisonTest, SplitOpacityFormula_RevisedMode) {
             Tensor::from_vector(single_val, TensorShape({1, 1}), Device::CUDA);
     }
 
-    AdcStrategy strategy(splat_data);
+    DefaultStrategy strategy(splat_data);
 
     param::OptimizationParameters opt_params;
     opt_params.iterations = 100;
@@ -84,7 +84,7 @@ TEST(AdcStrategyComparisonTest, SplitOpacityFormula_RevisedMode) {
 }
 
 // Test scaling formula matches reference: log(scale / 1.6)
-TEST(AdcStrategyComparisonTest, SplitScalingFormula) {
+TEST(DefaultStrategyComparisonTest, SplitScalingFormula) {
     std::vector<float> test_scales = {0.01f, 0.1f, 1.0f, 10.0f};
 
     for (float scale : test_scales) {
@@ -96,7 +96,7 @@ TEST(AdcStrategyComparisonTest, SplitScalingFormula) {
 }
 
 // Test quaternion to rotation matrix conversion correctness
-TEST(AdcStrategyComparisonTest, QuaternionToRotationMatrix) {
+TEST(DefaultStrategyComparisonTest, QuaternionToRotationMatrix) {
     // Test identity quaternion [1, 0, 0, 0] -> identity matrix
     std::vector<float> quat_identity = {1.0f, 0.0f, 0.0f, 0.0f};
     auto quat = Tensor::from_vector(quat_identity, TensorShape({1, 4}), Device::CUDA);
@@ -122,7 +122,7 @@ TEST(AdcStrategyComparisonTest, QuaternionToRotationMatrix) {
 }
 
 // Test reset_opacity formula: clamp to logit(2 * prune_opacity)
-TEST(AdcStrategyComparisonTest, ResetOpacityFormula) {
+TEST(DefaultStrategyComparisonTest, ResetOpacityFormula) {
     float prune_opacity = 0.01f;
     float threshold = 2.0f * prune_opacity;  // 0.02
     float expected_logit = std::log(threshold / (1.0f - threshold));
@@ -132,9 +132,9 @@ TEST(AdcStrategyComparisonTest, ResetOpacityFormula) {
 }
 
 // Test grow_gs gradient threshold logic
-TEST(AdcStrategyComparisonTest, GrowGaussians_GradientThreshold) {
+TEST(DefaultStrategyComparisonTest, GrowGaussians_GradientThreshold) {
     auto splat_data = create_test_splat_data(20);
-    AdcStrategy strategy(splat_data);
+    DefaultStrategy strategy(splat_data);
 
     param::OptimizationParameters opt_params;
     opt_params.iterations = 1000;
@@ -155,7 +155,7 @@ TEST(AdcStrategyComparisonTest, GrowGaussians_GradientThreshold) {
 }
 
 // Test scale threshold for duplicate vs split decision
-TEST(AdcStrategyComparisonTest, GrowGaussians_ScaleThreshold) {
+TEST(DefaultStrategyComparisonTest, GrowGaussians_ScaleThreshold) {
     auto splat_data = create_test_splat_data(20);
 
     // Set different scales for testing
@@ -166,7 +166,7 @@ TEST(AdcStrategyComparisonTest, GrowGaussians_ScaleThreshold) {
         splat_data.scaling_raw().slice(0, i, i+1) = scale_tensor.log();
     }
 
-    AdcStrategy strategy(splat_data);
+    DefaultStrategy strategy(splat_data);
 
     param::OptimizationParameters opt_params;
     opt_params.iterations = 1000;
@@ -188,7 +188,7 @@ TEST(AdcStrategyComparisonTest, GrowGaussians_ScaleThreshold) {
 }
 
 // Test prune_gs low opacity check
-TEST(AdcStrategyComparisonTest, PruneGaussians_OpacityThreshold) {
+TEST(DefaultStrategyComparisonTest, PruneGaussians_OpacityThreshold) {
     auto splat_data = create_test_splat_data(10);
 
     // Set opacities below threshold
@@ -200,7 +200,7 @@ TEST(AdcStrategyComparisonTest, PruneGaussians_OpacityThreshold) {
             Tensor::from_vector(single_val, TensorShape({1, 1}), Device::CUDA);
     }
 
-    AdcStrategy strategy(splat_data);
+    DefaultStrategy strategy(splat_data);
 
     param::OptimizationParameters opt_params;
     opt_params.iterations = 100;
@@ -219,9 +219,9 @@ TEST(AdcStrategyComparisonTest, PruneGaussians_OpacityThreshold) {
 }
 
 // Test is_refining logic matches reference
-TEST(AdcStrategyComparisonTest, IsRefiningLogic) {
+TEST(DefaultStrategyComparisonTest, IsRefiningLogic) {
     auto splat_data = create_test_splat_data(10);
-    AdcStrategy strategy(splat_data);
+    DefaultStrategy strategy(splat_data);
 
     param::OptimizationParameters opt_params;
     opt_params.start_refine = 500;
@@ -242,9 +242,9 @@ TEST(AdcStrategyComparisonTest, IsRefiningLogic) {
 }
 
 // Test parameter count preservation through duplicate
-TEST(AdcStrategyComparisonTest, DuplicatePreservesOtherParams) {
+TEST(DefaultStrategyComparisonTest, DuplicatePreservesOtherParams) {
     auto splat_data = create_test_splat_data(10);
-    AdcStrategy strategy(splat_data);
+    DefaultStrategy strategy(splat_data);
 
     param::OptimizationParameters opt_params;
     opt_params.iterations = 100;

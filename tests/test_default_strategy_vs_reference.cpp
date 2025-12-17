@@ -1,10 +1,10 @@
 /* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
-// Head-to-head comparison tests: AdcStrategy (new) vs Reference (old)
+// Head-to-head comparison tests: DefaultStrategy (new) vs Reference (old)
 // These tests run BOTH implementations on identical inputs and compare outputs
 
-#include "training_new/strategies/adc_strategy.hpp"
+#include "training_new/strategies/default_strategy.hpp"
 #include "training/strategies/default_strategy.hpp"
 #include "training/rasterization/rasterizer.hpp"
 #include "training_new/optimizer/render_output.hpp"
@@ -137,10 +137,10 @@ std::pair<lfs::core::SplatData, gs::SplatData> create_matching_splat_data(int n_
 }
 
 // Test 1: Initialization comparison
-TEST(AdcStrategyVsReference, Initialization) {
+TEST(DefaultStrategyVsReference, Initialization) {
     auto [lfs_splat, gs_splat] = create_matching_splat_data(100);
 
-    lfs::training::AdcStrategy lfs_strategy(lfs_splat);
+    lfs::training::DefaultStrategy lfs_strategy(lfs_splat);
     gs::training::DefaultStrategy gs_strategy(std::move(gs_splat));
 
     lfs::core::param::OptimizationParameters lfs_params;
@@ -165,10 +165,10 @@ TEST(AdcStrategyVsReference, Initialization) {
 }
 
 // Test 2: RemoveGaussians comparison
-TEST(AdcStrategyVsReference, RemoveGaussians) {
+TEST(DefaultStrategyVsReference, RemoveGaussians) {
     auto [lfs_splat, gs_splat] = create_matching_splat_data(50);
 
-    lfs::training::AdcStrategy lfs_strategy(lfs_splat);
+    lfs::training::DefaultStrategy lfs_strategy(lfs_splat);
     gs::training::DefaultStrategy gs_strategy(std::move(gs_splat));
 
     lfs::core::param::OptimizationParameters lfs_params;
@@ -199,10 +199,10 @@ TEST(AdcStrategyVsReference, RemoveGaussians) {
 }
 
 // Test 3: Training step with gradient updates
-TEST(AdcStrategyVsReference, TrainingStepWithGradients) {
+TEST(DefaultStrategyVsReference, TrainingStepWithGradients) {
     auto [lfs_splat, gs_splat] = create_matching_splat_data(30);
 
-    lfs::training::AdcStrategy lfs_strategy(lfs_splat);
+    lfs::training::DefaultStrategy lfs_strategy(lfs_splat);
     gs::training::DefaultStrategy gs_strategy(std::move(gs_splat));
 
     lfs::core::param::OptimizationParameters lfs_params;
@@ -233,13 +233,13 @@ TEST(AdcStrategyVsReference, TrainingStepWithGradients) {
 }
 
 // Test 4: Full training loop with refinement
-TEST(AdcStrategyVsReference, FullTrainingLoopWithRefinement) {
+TEST(DefaultStrategyVsReference, FullTrainingLoopWithRefinement) {
     const int n_gaussians = 50;
     const int n_iterations = 50;
 
     auto [lfs_splat, gs_splat] = create_matching_splat_data(n_gaussians);
 
-    lfs::training::AdcStrategy lfs_strategy(lfs_splat);
+    lfs::training::DefaultStrategy lfs_strategy(lfs_splat);
     gs::training::DefaultStrategy gs_strategy(std::move(gs_splat));
 
     lfs::core::param::OptimizationParameters lfs_params;
@@ -337,14 +337,14 @@ TEST(AdcStrategyVsReference, FullTrainingLoopWithRefinement) {
 }
 
 // Test 5: Benchmark comparison
-TEST(AdcStrategyVsReference, BenchmarkComparison) {
+TEST(DefaultStrategyVsReference, BenchmarkComparison) {
     const int n_gaussians = 100000;
     const int n_warmup = 3;
     const int n_runs = 10;
 
     auto [lfs_splat, gs_splat] = create_matching_splat_data(n_gaussians);
 
-    lfs::training::AdcStrategy lfs_strategy(lfs_splat);
+    lfs::training::DefaultStrategy lfs_strategy(lfs_splat);
     gs::training::DefaultStrategy gs_strategy(std::move(gs_splat));
 
     lfs::core::param::OptimizationParameters lfs_params;
@@ -355,7 +355,7 @@ TEST(AdcStrategyVsReference, BenchmarkComparison) {
     // Benchmark initialization
     auto bench_init_lfs = [&]() {
         auto [splat, _] = create_matching_splat_data(n_gaussians);
-        lfs::training::AdcStrategy strategy(splat);
+        lfs::training::DefaultStrategy strategy(splat);
         lfs::core::param::OptimizationParameters params;
         params.iterations = 100;
         strategy.initialize(params);

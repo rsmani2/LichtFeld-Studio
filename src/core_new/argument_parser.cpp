@@ -57,7 +57,7 @@ namespace {
         Help
     };
 
-    const std::set<std::string> VALID_STRATEGIES = {"mcmc", "adc"};
+    const std::set<std::string> VALID_STRATEGIES = {"mcmc", "default"};
 
     void scale_steps_vector(std::vector<size_t>& steps, float scaler) {
         std::set<size_t> unique_steps;
