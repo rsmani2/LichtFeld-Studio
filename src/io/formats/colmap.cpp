@@ -596,7 +596,7 @@ namespace lfs::io {
     // -----------------------------------------------------------------------------
     namespace {
         constexpr std::array MASK_FOLDERS = {"masks", "mask", "segmentation"};
-        constexpr std::array MASK_EXTENSIONS = {".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".JPEG"};
+        constexpr std::array MASK_EXTENSIONS = {".png", ".jpg", ".jpeg", ".PNG", ".JPG", ".JPEG", ".mask.png"};
     } // namespace
 
     static std::filesystem::path find_mask_path(const std::filesystem::path& base_path,
@@ -615,6 +615,12 @@ namespace lfs::io {
 
             for (const auto& ext : MASK_EXTENSIONS) {
                 if (const auto path = mask_dir / (stem + ext); std::filesystem::exists(path)) {
+                    return path;
+                }
+            }
+
+            for (const auto& ext : MASK_EXTENSIONS) {
+                if (const auto path = mask_dir / (image_name + ext); std::filesystem::exists(path)) {
                     return path;
                 }
             }

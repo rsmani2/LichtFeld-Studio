@@ -415,7 +415,6 @@ namespace lfs::vis::gui {
 
         if (SUCCEEDED(utils::selectFileNative(filePath, rgSpec, 1, false))) {
             std::filesystem::path result(filePath);
-            CoTaskMemFree(filePath);
             return result;
         }
         return {};
@@ -435,7 +434,6 @@ namespace lfs::vis::gui {
         PWSTR filePath = nullptr;
         if (SUCCEEDED(utils::selectFileNative(filePath, nullptr, 0, true))) {
             std::filesystem::path result(filePath);
-            CoTaskMemFree(filePath);
             return result;
         }
         return {};
