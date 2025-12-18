@@ -301,21 +301,6 @@ namespace lfs::vis::gui::panels {
 
         ImGui::Separator();
 
-        // Use direct accessors from RenderingManager
-        float scaling_modifier = settings.scaling_modifier;
-        if (widgets::SliderWithReset("Scale", &scaling_modifier, 0.01f, 3.0f, 1.0f)) {
-            render_manager->setScalingModifier(scaling_modifier);
-
-            ui::RenderSettingsChanged{
-                .sh_degree = std::nullopt,
-                .fov = std::nullopt,
-                .scaling_modifier = scaling_modifier,
-                .antialiasing = std::nullopt,
-                .background_color = std::nullopt,
-                .equirectangular = std::nullopt}
-                .emit();
-        }
-
         float fov = settings.fov;
         if (widgets::SliderWithReset("FoV", &fov, 45.0f, 120.0f, 75.0f)) {
             render_manager->setFov(fov);
