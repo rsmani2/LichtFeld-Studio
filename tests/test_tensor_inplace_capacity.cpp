@@ -15,7 +15,7 @@
  */
 
 #include <gtest/gtest.h>
-#include <core_new/tensor.hpp>
+#include <core/tensor.hpp>
 #include <cmath>
 
 using namespace lfs::core;

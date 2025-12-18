@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "core_new/splat_data.hpp"
+#include "core/splat_data.hpp"
 #include "io/error.hpp"
 #include <expected>
 #include <filesystem>

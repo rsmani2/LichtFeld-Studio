@@ -3,13 +3,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "io/loaders/colmap_loader.hpp"
-#include "core_new/camera.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/point_cloud.hpp"
+#include "core/camera.hpp"
+#include "core/logger.hpp"
+#include "core/point_cloud.hpp"
 #include "formats/colmap.hpp"
 #include "io/error.hpp"
 #include "io/filesystem_utils.hpp"
-#include "training_new/dataset.hpp"
+#include "training/dataset.hpp"
 #include <algorithm>
 #include <cctype>
 #include <chrono>

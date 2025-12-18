@@ -15,9 +15,9 @@
 
 #include "io/formats/sogs.hpp"
 #include "io/formats/ply.hpp"
-#include "core_new/splat_data.hpp"
-#include "core_new/tensor.hpp"
-#include "core_new/sogs.hpp"  // for write_sog
+#include "core/splat_data.hpp"
+#include "core/tensor.hpp"
+#include "core/sogs.hpp"  // for write_sog
 
 namespace fs = std::filesystem;
 

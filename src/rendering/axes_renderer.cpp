@@ -8,7 +8,7 @@
 #include "shader_paths.hpp"
 #include <format>
 
-namespace gs::rendering {
+namespace lfs::rendering {
 
     // Standard coordinate axes colors (RGB convention)
     const glm::vec3 RenderCoordinateAxes::X_AXIS_COLOR = glm::vec3(1.0f, 0.0f, 0.0f); // Red
@@ -214,4 +214,4 @@ namespace gs::rendering {
         return {};
     }
 
-} // namespace gs::rendering
+} // namespace lfs::rendering

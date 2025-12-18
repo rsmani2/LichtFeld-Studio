@@ -11,23 +11,26 @@
 #include <string>
 #include <unordered_map>
 
-namespace gs {
+namespace lfs::core {
 
     // Forward declarations
     class Scene;
 
-// Clean event macro - uses gs::event::bus()
+    // Export format enum
+    enum class ExportFormat { PLY, SOG, SPZ, HTML_VIEWER };
+
+// Clean event macro - uses lfs::core::event::bus()
 #define EVENT(Name, ...)                                   \
     struct Name {                                          \
         using event_id = Name;                             \
         __VA_ARGS__                                        \
                                                            \
         void emit() const {                                \
-            ::gs::event::bus().emit(*this);                \
+            ::lfs::core::event::bus().emit(*this);         \
         }                                                  \
                                                            \
         static auto when(auto&& handler) {                 \
-            return ::gs::event::bus().when<Name>(          \
+            return ::lfs::core::event::bus().when<Name>(   \
                 std::forward<decltype(handler)>(handler)); \
         }                                                  \
     }
@@ -43,26 +46,44 @@ namespace gs {
             EVENT(ResumeTraining, );
             EVENT(StopTraining, );
             EVENT(ResetTraining, );
+            EVENT(SwitchToLatestCheckpoint, );
             EVENT(SaveCheckpoint, std::optional<int> iteration;);
-            EVENT(SaveProject, std::filesystem::path project_dir;);
             EVENT(LoadFile, std::filesystem::path path; bool is_dataset;);
-            EVENT(LoadProject, std::filesystem::path path;);
-            EVENT(ExportConfig, std::filesystem::path path;);
-            EVENT(ImportConfig, std::filesystem::path path;);
+            EVENT(LoadCheckpointForTraining, std::filesystem::path path;);
+            EVENT(ShowDatasetLoadPopup, std::filesystem::path dataset_path;);
             EVENT(ClearScene, );
+            EVENT(SwitchToEditMode, );  // Keep trained model, discard dataset
             EVENT(ResetCamera, );
             EVENT(ShowWindow, std::string window_name; bool show;);
             EVENT(ExecuteConsole, std::string command;);
             EVENT(GoToCamView, int cam_id;);
             EVENT(AddPLY, std::filesystem::path path; std::string name;);
-            EVENT(RemovePLY, std::string name;);
+            EVENT(RemovePLY, std::string name; bool keep_children = false;);
             EVENT(RenamePLY, std::string old_name; std::string new_name;);
             EVENT(SetPLYVisibility, std::string name; bool visible;);
-            EVENT(CropPLY, gs::geometry::BoundingBox crop_box;);
+            EVENT(ExportNodeAs, std::string name; ExportFormat format;);
+            EVENT(ExportAllMergedAs, ExportFormat format;);
+            EVENT(ReparentNode, std::string node_name; std::string new_parent_name;);  // Empty parent = root
+            EVENT(AddGroup, std::string name; std::string parent_name;);  // Create empty group node
+            EVENT(DuplicateNode, std::string name;);  // Duplicate node (and children if group)
+            EVENT(MergeGroup, std::string name;);  // Merge group children into single PLY
+            EVENT(SetNodeLocked, std::string name; bool locked;);  // Lock/unlock node for editing
+            EVENT(CropPLY, lfs::geometry::BoundingBox crop_box; bool inverse;);
+            EVENT(ApplyCropBox, );
+            EVENT(FitCropBoxToScene, bool use_percentile;);
+            EVENT(ToggleCropInverse, );
             EVENT(CyclePLY, );
+            EVENT(CycleSelectionVisualization, );
             EVENT(ToggleSplitView, );
             EVENT(ToggleGTComparison, );
-            EVENT(ToggleGimbalLock, bool locked;);
+            EVENT(Undo, );
+            EVENT(Redo, );
+            EVENT(DeleteSelected, );  // Delete selected Gaussians (soft delete)
+            EVENT(InvertSelection, );
+            EVENT(DeselectAll, );
+            EVENT(SelectAll, );
+            EVENT(CopySelection, );
+            EVENT(PasteSelection, );
         } // namespace cmd
 
         // ============================================================================
@@ -74,6 +95,7 @@ namespace gs {
             EVENT(CropBoxSettingsChanged, bool show_box; bool use_box;);
             EVENT(AxesSettingsChanged, bool show_axes;);
             EVENT(TranslationGizmoSettingsChanged, bool enabled; float scale;);
+            EVENT(SetToolbarTool, int tool_mode;);
         } // namespace tools
 
         // ============================================================================
@@ -85,21 +107,23 @@ namespace gs {
             EVENT(TrainingProgress, int iteration; float loss; int num_gaussians; bool is_refining = false;);
             EVENT(TrainingPaused, int iteration;);
             EVENT(TrainingResumed, int iteration;);
-            EVENT(TrainingCompleted, int iteration; float final_loss; bool success; std::optional<std::string> error;);
+            EVENT(TrainingCompleted, int iteration; float final_loss; float elapsed_seconds; bool success; std::optional<std::string> error;);
             EVENT(TrainingStopped, int iteration; bool user_requested;);
-            EVENT(GutAutoEnabled, );  // Notifies GUI that 3DGUT was auto-enabled due to camera distortion
 
             // Scene state
             EVENT(SceneLoaded,
                   Scene* scene;
                   std::filesystem::path path;
-                  enum class Type{PLY, Dataset, SOG} type;
-                  size_t num_gaussians;);
+                  enum class Type{PLY, Dataset, SOG, SPZ, Checkpoint} type;
+                  size_t num_gaussians;
+                  int checkpoint_iteration = 0;);
             EVENT(SceneCleared, );
             EVENT(ModelUpdated, int iteration; size_t num_gaussians;);
             EVENT(SceneChanged, );
-            EVENT(PLYAdded, std::string name; size_t node_gaussians; size_t total_gaussians; bool is_visible; std::string parent_name; bool is_group;);
-            EVENT(PLYRemoved, std::string name;);
+            // node_type: 0=SPLAT, 1=GROUP, 2=CROPBOX
+            EVENT(PLYAdded, std::string name; size_t node_gaussians; size_t total_gaussians; bool is_visible; std::string parent_name; bool is_group; int node_type;);
+            EVENT(PLYRemoved, std::string name; bool children_kept = false; std::string parent_of_removed;);
+            EVENT(NodeReparented, std::string name; std::string old_parent; std::string new_parent;);
 
             // Data loading
             EVENT(DatasetLoadStarted, std::filesystem::path path;);
@@ -141,6 +165,7 @@ namespace gs {
             EVENT(WindowResized, int width; int height;);
             EVENT(CameraMove, glm::mat3 rotation; glm::vec3 translation;);
             EVENT(SpeedChanged, float current_speed; float max_speed;);
+            EVENT(ZoomSpeedChanged, float zoom_speed; float max_zoom_speed;);
             EVENT(RenderSettingsChanged,
                   std::optional<int> sh_degree;
                   std::optional<float> fov;
@@ -158,6 +183,7 @@ namespace gs {
                   std::string path;
                   std::string type;
                   std::unordered_map<std::string, std::string> metadata;);
+            EVENT(NodeDeselected, );
             EVENT(CropBoxChanged,
                   glm::vec3 min_bounds;
                   glm::vec3 max_bounds;
@@ -165,8 +191,11 @@ namespace gs {
             EVENT(CropBoxVisibilityChanged, bool visible;);
             EVENT(ConsoleResult, std::string command; std::string result;);
             EVENT(SplitPositionChanged, float position;);
-            EVENT(GTComparisonModeChanged, bool enabled;); // NEW: GT comparison mode changed
-        } // namespace ui
+            EVENT(GTComparisonModeChanged, bool enabled;);
+            EVENT(FocusTrainingPanel, );
+            EVENT(ToggleUI, );
+            EVENT(ToggleFullscreen, );
+        }                                                  // namespace ui
 
         // ============================================================================
         // Internal - System coordination events (minimal)
@@ -176,7 +205,7 @@ namespace gs {
             EVENT(TrainingReadyToStart, );
             EVENT(WindowFocusLost, );
         } // namespace internal
-    } // namespace events
+    }     // namespace events
 
     // ============================================================================
     // Convenience functions
@@ -191,4 +220,4 @@ namespace gs {
         return E::when(std::forward<decltype(handler)>(handler));
     }
 
-} // namespace gs
+} // namespace lfs::core

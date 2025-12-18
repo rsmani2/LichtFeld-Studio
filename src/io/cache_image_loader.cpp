@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "io/cache_image_loader.hpp"
-#include "core_new/image_io.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/tensor.hpp"
+#include "core/image_io.hpp"
+#include "core/logger.hpp"
+#include "core/tensor.hpp"
 #include "io/nvcodec_image_loader.hpp"
 
 #include <algorithm>

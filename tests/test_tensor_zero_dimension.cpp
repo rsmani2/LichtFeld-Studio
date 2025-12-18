@@ -9,7 +9,7 @@
  * Original bug: index_put_ crashed with cudaErrorInvalidDevice.
  */
 
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <gtest/gtest.h>
 
 using namespace lfs::core;

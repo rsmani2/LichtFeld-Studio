@@ -3,20 +3,32 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "gui/panels/training_panel.hpp"
+#include "core/parameter_manager.hpp"
+#include "core/services.hpp"
 #include "core/events.hpp"
 #include "core/logger.hpp"
+#include "core/parameters.hpp"
 #include "gui/ui_widgets.hpp"
 #include "gui/utils/windows_utils.hpp"
+#include "theme/theme.hpp"
 #include "visualizer_impl.hpp"
 
 #include <chrono>
+#include <cstring>
 #include <deque>
+#include <filesystem>
 #include <imgui.h>
-#include <torch/cuda.h>
 
-namespace gs::gui::panels {
+#ifdef _WIN32
+#include <Windows.h>
+#endif
 
-    // Iteration rate tracking
+namespace lfs::vis::gui::panels {
+
+    namespace {
+        constexpr float RATE_WINDOW_SECONDS = 5.0f;
+    }
+
     struct IterationRateTracker {
         struct Sample {
             int iteration;
@@ -24,107 +36,102 @@ namespace gs::gui::panels {
         };
 
         std::deque<Sample> samples;
-        float window_seconds = 5.0f; // Configurable averaging window
 
-        void addSample(int iteration) {
-            auto now = std::chrono::steady_clock::now();
+        void addSample(const int iteration) {
+            const auto now = std::chrono::steady_clock::now();
             samples.push_back({iteration, now});
 
-            // Remove old samples outside the window
             while (!samples.empty()) {
-                auto age = std::chrono::duration_cast<std::chrono::milliseconds>(now - samples.front().timestamp).count() / 1000.0f;
-                if (age <= window_seconds) {
-                    break;
-                }
+                const auto age = std::chrono::duration<float>(now - samples.front().timestamp).count();
+                if (age <= RATE_WINDOW_SECONDS) break;
                 samples.pop_front();
             }
         }
 
-        float getIterationsPerSecond() const {
-            if (samples.size() < 2) {
-                return 0.0f;
-            }
+        [[nodiscard]] float getIterationsPerSecond() const {
+            if (samples.size() < 2) return 0.0f;
 
             const auto& oldest = samples.front();
             const auto& newest = samples.back();
+            const int iter_diff = newest.iteration - oldest.iteration;
+            const auto time_diff = std::chrono::duration<float>(newest.timestamp - oldest.timestamp).count();
 
-            int iter_diff = newest.iteration - oldest.iteration;
-            auto time_diff = std::chrono::duration_cast<std::chrono::milliseconds>(newest.timestamp - oldest.timestamp).count() / 1000.0f;
-
-            if (time_diff <= 0.0f) {
-                return 0.0f;
-            }
-
-            return iter_diff / time_diff;
+            return (time_diff > 0.0f) ? static_cast<float>(iter_diff) / time_diff : 0.0f;
         }
 
-        void clear() {
-            samples.clear();
-        }
-
-        void setWindowSeconds(float seconds) {
-            window_seconds = seconds;
-        }
+        void clear() { samples.clear(); }
     };
 
-#ifdef WIN32
-    void SaveProjectFileDialog(bool* p_open) {
-        // show native windows file dialog for project directory selection
-        PWSTR filePath = nullptr;
-        if (SUCCEEDED(gs::gui::utils::selectFileNative(filePath, nullptr, 0, true))) {
-            std::filesystem::path project_path(filePath);
-            events::cmd::SaveProject{project_path}.emit();
-            LOG_INFO("Saving project file into : {}", std::filesystem::path(project_path).string());
-            *p_open = false;
-        }
-    }
-#endif // WIN32
-
     void DrawTrainingParameters(const UIContext& ctx) {
-        auto* trainer_manager = ctx.viewer->getTrainerManager();
+        auto* const trainer_manager = ctx.viewer->getTrainerManager();
         if (!trainer_manager || !trainer_manager->hasTrainer()) {
             return;
         }
 
-        // Get current state to determine if we can edit
-        auto trainer_state = trainer_manager->getState();
-        bool can_edit = (trainer_state == TrainerManager::State::Ready);
-
-        // Get project to modify parameters if we're in edit mode
-        auto project = ctx.viewer->getProject();
-        if (!project) {
+        auto* const param_manager = services().paramsOrNull();
+        if (!param_manager) {
+            ImGui::TextColored(ImVec4(1, 0, 0, 1), "ParameterManager not available");
             return;
         }
 
-        // Get parameters - either from project (if Ready) or from trainer (if training/completed)
-        param::OptimizationParameters opt_params;
-        param::DatasetConfig dataset_params;
-
-        if (trainer_state == TrainerManager::State::Ready) {
-            // Before training - get from project (editable)
-            opt_params = project->getOptimizationParams();
-            dataset_params = project->getProjectData().data_set_info;
-        } else {
-            // During/after training - get from trainer (read-only)
-            const auto* trainer = trainer_manager->getTrainer();
-            if (!trainer) {
-                return;
-            }
-            const auto& params = trainer->getParams();
-            opt_params = params.optimization;
-            dataset_params = params.dataset;
+        if (const auto result = param_manager->ensureLoaded(); !result) {
+            ImGui::TextColored(ImVec4(1, 0.5f, 0, 1), "Failed to load params: %s", result.error().c_str());
+            return;
         }
 
-        // Track changes separately for optimization and dataset parameters
-        bool opt_params_changed = false;
+        const auto trainer_state = trainer_manager->getState();
+        const int current_iteration = trainer_manager->getCurrentIteration();
+        const bool can_edit = (trainer_state == TrainerManager::State::Ready) && (current_iteration == 0);
+
+        auto& opt_params = param_manager->getActiveParams();
+
+        lfs::core::param::DatasetConfig dataset_params;
+        if (can_edit) {
+            dataset_params = trainer_manager->getEditableDatasetParams();
+        } else {
+            const auto* const trainer = trainer_manager->getTrainer();
+            if (!trainer) return;
+            dataset_params = trainer->getParams().dataset;
+        }
+
         bool dataset_params_changed = false;
+
+        bool has_masks = false;
+        if (!dataset_params.data_path.empty()) {
+            static constexpr std::array<const char*, 3> MASK_FOLDERS = {"masks", "mask", "segmentation"};
+            for (const auto* const folder : MASK_FOLDERS) {
+                if (std::filesystem::exists(dataset_params.data_path / folder)) {
+                    has_masks = true;
+                    break;
+                }
+            }
+        }
 
         ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 12.0f);
         if (ImGui::BeginTable("DatasetTable", 2, ImGuiTableFlags_SizingStretchProp)) {
             ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 120.0f);
             ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
-            // Iterations - EDITABLE
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Strategy:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::PushItemWidth(-1);
+                static constexpr const char* const STRATEGY_LABELS[] = {"MCMC", "Default"};
+                int current_strategy = (opt_params.strategy == "mcmc") ? 0 : 1;
+                if (ImGui::Combo("##strategy", &current_strategy, STRATEGY_LABELS, 2)) {
+                    const auto new_strategy = (current_strategy == 0) ? "mcmc" : "default";
+                    if (new_strategy != opt_params.strategy) {
+                        param_manager->setActiveStrategy(new_strategy);
+                    }
+                }
+                ImGui::PopItemWidth();
+            } else {
+                ImGui::Text("%s", opt_params.strategy == "mcmc" ? "MCMC" : "Default");
+            }
+
+            // Iterations
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
             ImGui::Text("Iterations:");
@@ -135,7 +142,6 @@ namespace gs::gui::panels {
                 if (ImGui::InputInt("##iterations", &iterations, 1000, 5000)) {
                     if (iterations > 0 && iterations <= 1000000) {
                         opt_params.iterations = static_cast<size_t>(iterations);
-                        opt_params_changed = true;
                     }
                 }
                 ImGui::PopItemWidth();
@@ -143,25 +149,233 @@ namespace gs::gui::panels {
                 ImGui::Text("%zu", opt_params.iterations);
             }
 
-            if (opt_params.strategy == "mcmc") {
+            // Max Gaussians
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Max Gaussians:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::PushItemWidth(-1);
+                if (ImGui::InputInt("##max_cap", &opt_params.max_cap, 10000, 100000)) {
+                    opt_params.max_cap = std::max(1, opt_params.max_cap);
+                }
+                ImGui::PopItemWidth();
+            } else {
+                ImGui::Text("%d", opt_params.max_cap);
+            }
+
+            // SH Degree
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("SH Degree:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::PushItemWidth(-1);
+                static constexpr const char* const SH_DEGREE_LABELS[] = {"0", "1", "2", "3"};
+                ImGui::Combo("##sh_degree", &opt_params.sh_degree, SH_DEGREE_LABELS, 4);
+                ImGui::PopItemWidth();
+            } else {
+                ImGui::Text("%d", opt_params.sh_degree);
+            }
+
+            // Tile Mode
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Tile Mode:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::PushItemWidth(-1);
+                static constexpr int TILE_OPTIONS[] = {1, 2, 4};
+                static constexpr const char* const TILE_LABELS[] = {"1 (Full)", "2 (Half)", "4 (Quarter)"};
+                int current_tile_index = 0;
+                for (int i = 0; i < 3; ++i) {
+                    if (opt_params.tile_mode == TILE_OPTIONS[i]) current_tile_index = i;
+                }
+                if (ImGui::Combo("##tile_mode", &current_tile_index, TILE_LABELS, 3)) {
+                    opt_params.tile_mode = TILE_OPTIONS[current_tile_index];
+                }
+                ImGui::PopItemWidth();
+            } else {
+                ImGui::Text("%d", opt_params.tile_mode);
+            }
+
+            // Num Workers
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Num Workers:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::PushItemWidth(-1);
+                if (ImGui::InputInt("##num_workers", &opt_params.num_workers, 1, 4)) {
+                    opt_params.num_workers = std::clamp(opt_params.num_workers, 1, 64);
+                }
+                ImGui::PopItemWidth();
+            } else {
+                ImGui::Text("%d", opt_params.num_workers);
+            }
+
+            // Steps Scaler
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Steps Scaler:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::PushItemWidth(-1);
+                if (ImGui::InputFloat("##steps_scaler", &opt_params.steps_scaler, 0.1f, 0.5f, "%.2f")) {
+                    opt_params.steps_scaler = std::max(0.0f, opt_params.steps_scaler);
+                }
+                ImGui::PopItemWidth();
+                if (opt_params.steps_scaler > 0) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(scaling active)");
+                }
+            } else {
+                ImGui::Text("%.2f", opt_params.steps_scaler);
+            }
+
+            // Bilateral Grid Enable
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Bilateral Grid:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::Checkbox("##use_bilateral_grid", &opt_params.use_bilateral_grid);
+            } else {
+                ImGui::Text("%s", opt_params.use_bilateral_grid ? "Enabled" : "Disabled");
+            }
+
+            // Mask Mode
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Mask Mode:");
+            ImGui::TableNextColumn();
+            static constexpr const char* const MASK_MODE_LABELS[] = {"None", "Segment", "Ignore", "Alpha Consistent"};
+            if (can_edit && has_masks) {
+                ImGui::PushItemWidth(-1);
+                int current_mask_mode = static_cast<int>(opt_params.mask_mode);
+                if (ImGui::Combo("##mask_mode", &current_mask_mode, MASK_MODE_LABELS, IM_ARRAYSIZE(MASK_MODE_LABELS))) {
+                    opt_params.mask_mode = static_cast<lfs::core::param::MaskMode>(current_mask_mode);
+                }
+                ImGui::PopItemWidth();
+            } else {
+                ImGui::Text("%s", MASK_MODE_LABELS[static_cast<int>(opt_params.mask_mode)]);
+                if (!has_masks && can_edit) {
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "(no masks)");
+                }
+            }
+
+            if (opt_params.mask_mode != lfs::core::param::MaskMode::None && has_masks) {
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Text("Max Gaussians:");
+                ImGui::Text("  Invert Masks:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::Checkbox("##invert_masks", &opt_params.invert_masks);
+                } else {
+                    ImGui::Text("%s", opt_params.invert_masks ? "Yes" : "No");
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Swap object/background in masks");
+                }
+            }
+
+            if (opt_params.mask_mode == lfs::core::param::MaskMode::Segment) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("  Opacity Penalty Weight:");
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::InputInt("##max_cap", &opt_params.max_cap, 10000, 100000)) {
-                        if (opt_params.max_cap > 0) {
-                            opt_params_changed = true;
-                        }
-                    }
+                    ImGui::InputFloat("##mask_penalty_weight", &opt_params.mask_opacity_penalty_weight, 0.1f, 1.0f, "%.1f");
                     ImGui::PopItemWidth();
                 } else {
-                    ImGui::Text("%d", opt_params.max_cap);
+                    ImGui::Text("%.1f", opt_params.mask_opacity_penalty_weight);
                 }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Weight for opacity penalty in background regions");
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("  Opacity Penalty Power:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::SliderFloat("##mask_penalty_power", &opt_params.mask_opacity_penalty_power, 0.5f, 4.0f, "%.1f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.1f", opt_params.mask_opacity_penalty_power);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Penalty falloff: 1=linear, 2=quadratic, >2=gentler");
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("  Mask Threshold:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::SliderFloat("##mask_threshold", &opt_params.mask_threshold, 0.0f, 1.0f, "%.2f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.2f", opt_params.mask_threshold);
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Values >= threshold become 1.0 (object)");
+                }
+            }
+
+            // Enable Sparsity
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Sparsity:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::Checkbox("##enable_sparsity", &opt_params.enable_sparsity);
+            } else {
+                ImGui::Text("%s", opt_params.enable_sparsity ? "Enabled" : "Disabled");
+            }
+
+            // GUT
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("GUT:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::Checkbox("##gut", &opt_params.gut);
+            } else {
+                ImGui::Text("%s", opt_params.gut ? "Enabled" : "Disabled");
+            }
+
+            // BG Modulation
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("BG Modulation:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::Checkbox("##bg_modulation", &opt_params.bg_modulation);
+            } else {
+                ImGui::Text("%s", opt_params.bg_modulation ? "Enabled" : "Disabled");
+            }
+
+            // Evaluation
+            ImGui::TableNextRow();
+            ImGui::TableNextColumn();
+            ImGui::Text("Evaluation:");
+            ImGui::TableNextColumn();
+            if (can_edit) {
+                ImGui::Checkbox("##enable_eval", &opt_params.enable_eval);
+            } else {
+                ImGui::Text("%s", opt_params.enable_eval ? "Enabled" : "Disabled");
             }
         }
         ImGui::EndTable();
+
+        // Advanced Training Parameters section
+        ImGui::Spacing();
+        if (ImGui::TreeNode("Advanced Training Params")) {
 
         // Dataset Parameters
         if (ImGui::TreeNode("Dataset")) {
@@ -181,28 +395,21 @@ namespace gs::gui::panels {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", dataset_params.images.c_str());
 
-                // Resize Factor - EDITABLE
+                // Resize Factor
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Text("Resize Factor:");
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    // Available options
-                    static const int resize_options[] = {1, 2, 4, 8};
-                    static const char* resize_labels[] = {"1", "2", "4", "8"};
-                    static int current_index = 0; // default is 1
-                    int array_size = IM_ARRAYSIZE(resize_labels);
-                    // Set current_index to current value, if needed
-                    for (int i = 0; i < array_size; ++i) {
-                        if (dataset_params.resize_factor == resize_options[i]) {
-                            current_index = i;
-                        }
+                    static constexpr int RESIZE_OPTIONS[] = {1, 2, 4, 8};
+                    static constexpr const char* const RESIZE_LABELS[] = {"1", "2", "4", "8"};
+                    static int current_index = 0;
+                    for (int i = 0; i < IM_ARRAYSIZE(RESIZE_LABELS); ++i) {
+                        if (dataset_params.resize_factor == RESIZE_OPTIONS[i]) current_index = i;
                     }
-
-                    // Draw combo
-                    if (ImGui::Combo("##resize_factor", &current_index, resize_labels, array_size)) {
-                        dataset_params.resize_factor = resize_options[current_index];
+                    if (ImGui::Combo("##resize_factor", &current_index, RESIZE_LABELS, IM_ARRAYSIZE(RESIZE_LABELS))) {
+                        dataset_params.resize_factor = RESIZE_OPTIONS[current_index];
                         dataset_params_changed = true;
                     }
                     ImGui::PopItemWidth();
@@ -250,7 +457,6 @@ namespace gs::gui::panels {
                     ImGui::Text("%s", dataset_params.loading_params.use_fs_cache ? "Enabled" : "Disabled");
                 }
 
-                // Test Every - EDITABLE (only shown if evaluation is enabled)
                 if (opt_params.enable_eval) {
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
@@ -269,12 +475,18 @@ namespace gs::gui::panels {
                     }
                 }
 
-                if (!dataset_params.output_path.empty()) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::Text("Output:");
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%s", dataset_params.output_path.filename().string().c_str());
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Output:");
+                ImGui::TableNextColumn();
+                {
+                    const std::string output_display = dataset_params.output_path.empty()
+                        ? "(not set)"
+                        : dataset_params.output_path.filename().string();
+                    ImGui::Text("%s", output_display.c_str());
+                    if (!dataset_params.output_path.empty() && ImGui::IsItemHovered()) {
+                        ImGui::SetTooltip("%s", dataset_params.output_path.string().c_str());
+                    }
                 }
 
                 ImGui::EndTable();
@@ -294,10 +506,10 @@ namespace gs::gui::panels {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", opt_params.strategy.c_str());
 
-                // Learning Rates section - ALL EDITABLE
+                // Learning Rates section
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Learning Rates:");
+                ImGui::TextColored(theme().palette.text_dim, "Learning Rates:");
                 ImGui::TableNextColumn();
 
                 // Position LR
@@ -307,9 +519,7 @@ namespace gs::gui::panels {
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::InputFloat("##means_lr", &opt_params.means_lr, 0.000001f, 0.00001f, "%.6f")) {
-                        opt_params_changed = true;
-                    }
+                    ImGui::InputFloat("##means_lr", &opt_params.means_lr, 0.000001f, 0.00001f, "%.6f");
                     ImGui::PopItemWidth();
                 } else {
                     ImGui::Text("%.6f", opt_params.means_lr);
@@ -322,9 +532,7 @@ namespace gs::gui::panels {
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::InputFloat("##shs_lr", &opt_params.shs_lr, 0.0001f, 0.001f, "%.4f")) {
-                        opt_params_changed = true;
-                    }
+                    ImGui::InputFloat("##shs_lr", &opt_params.shs_lr, 0.0001f, 0.001f, "%.4f");
                     ImGui::PopItemWidth();
                 } else {
                     ImGui::Text("%.4f", opt_params.shs_lr);
@@ -337,9 +545,7 @@ namespace gs::gui::panels {
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::InputFloat("##opacity_lr", &opt_params.opacity_lr, 0.001f, 0.01f, "%.4f")) {
-                        opt_params_changed = true;
-                    }
+                    ImGui::InputFloat("##opacity_lr", &opt_params.opacity_lr, 0.001f, 0.01f, "%.4f");
                     ImGui::PopItemWidth();
                 } else {
                     ImGui::Text("%.4f", opt_params.opacity_lr);
@@ -352,9 +558,7 @@ namespace gs::gui::panels {
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::InputFloat("##scaling_lr", &opt_params.scaling_lr, 0.0001f, 0.001f, "%.4f")) {
-                        opt_params_changed = true;
-                    }
+                    ImGui::InputFloat("##scaling_lr", &opt_params.scaling_lr, 0.0001f, 0.001f, "%.4f");
                     ImGui::PopItemWidth();
                 } else {
                     ImGui::Text("%.4f", opt_params.scaling_lr);
@@ -367,36 +571,16 @@ namespace gs::gui::panels {
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::InputFloat("##rotation_lr", &opt_params.rotation_lr, 0.0001f, 0.001f, "%.4f")) {
-                        opt_params_changed = true;
-                    }
+                    ImGui::InputFloat("##rotation_lr", &opt_params.rotation_lr, 0.0001f, 0.001f, "%.4f");
                     ImGui::PopItemWidth();
                 } else {
                     ImGui::Text("%.4f", opt_params.rotation_lr);
                 }
 
-                // LR Decay Ratio
+                // Refinement section
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Text("  LR Decay Ratio:");
-                ImGui::TableNextColumn();
-                if (can_edit) {
-                    ImGui::PushItemWidth(-1);
-                    if (ImGui::InputFloat("##final_lr_fraction", &opt_params.final_lr_fraction, 0.01f, 0.1f, "%.3f")) {
-                        opt_params_changed = true;
-                    }
-                    ImGui::PopItemWidth();
-                } else {
-                    ImGui::Text("%.3f", opt_params.final_lr_fraction);
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Final LR as fraction of initial (0.01 = decay to 1%%, 0.1 = decay to 10%%, 1.0 = no decay)");
-                }
-
-                // Refinement section - ALL EDITABLE
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Refinement:");
+                ImGui::TextColored(theme().palette.text_dim, "Refinement:");
                 ImGui::TableNextColumn();
 
                 // Refine Every
@@ -410,7 +594,6 @@ namespace gs::gui::panels {
                     if (ImGui::InputInt("##refine_every", &refine_every, 10, 100)) {
                         if (refine_every > 0) {
                             opt_params.refine_every = static_cast<size_t>(refine_every);
-                            opt_params_changed = true;
                         }
                     }
                     ImGui::PopItemWidth();
@@ -429,7 +612,6 @@ namespace gs::gui::panels {
                     if (ImGui::InputInt("##start_refine", &start_refine, 100, 500)) {
                         if (start_refine >= 0) {
                             opt_params.start_refine = static_cast<size_t>(start_refine);
-                            opt_params_changed = true;
                         }
                     }
                     ImGui::PopItemWidth();
@@ -448,7 +630,6 @@ namespace gs::gui::panels {
                     if (ImGui::InputInt("##stop_refine", &stop_refine, 1000, 5000)) {
                         if (stop_refine >= 0) {
                             opt_params.stop_refine = static_cast<size_t>(stop_refine);
-                            opt_params_changed = true;
                         }
                     }
                     ImGui::PopItemWidth();
@@ -463,9 +644,7 @@ namespace gs::gui::panels {
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    if (ImGui::InputFloat("##grad_threshold", &opt_params.grad_threshold, 0.000001f, 0.00001f, "%.6f")) {
-                        opt_params_changed = true;
-                    }
+                    ImGui::InputFloat("##grad_threshold", &opt_params.grad_threshold, 0.000001f, 0.00001f, "%.6f");
                     ImGui::PopItemWidth();
                 } else {
                     ImGui::Text("%.6f", opt_params.grad_threshold);
@@ -482,7 +661,6 @@ namespace gs::gui::panels {
                     if (ImGui::InputInt("##reset_every", &reset_every, 100, 1000)) {
                         if (reset_every >= 0) {
                             opt_params.reset_every = static_cast<size_t>(reset_every);
-                            opt_params_changed = true;
                         }
                     }
                     ImGui::PopItemWidth();
@@ -492,17 +670,32 @@ namespace gs::gui::panels {
                     ImGui::Text("Disabled");
                 }
 
-                // Strategy-specific parameters
+                // SH Degree Interval
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("  SH Upgrade Every:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    int sh_deg_interval = static_cast<int>(opt_params.sh_degree_interval);
+                    if (ImGui::InputInt("##sh_degree_interval", &sh_deg_interval, 100, 500)) {
+                        if (sh_deg_interval > 0) {
+                            opt_params.sh_degree_interval = static_cast<size_t>(sh_deg_interval);
+                        }
+                    }
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%zu", opt_params.sh_degree_interval);
+                }
 
                 ImGui::EndTable();
             }
             ImGui::TreePop();
         }
 
-        // Save Steps - FULLY EDITABLE
+        // Save Steps
         if (ImGui::TreeNode("Save Steps")) {
             if (can_edit) {
-                // Add new save step
                 static int new_step = 1000;
                 ImGui::InputInt("New Step", &new_step, 100, 1000);
                 ImGui::SameLine();
@@ -512,13 +705,11 @@ namespace gs::gui::panels {
                                                   new_step) == opt_params.save_steps.end()) {
                         opt_params.save_steps.push_back(new_step);
                         std::sort(opt_params.save_steps.begin(), opt_params.save_steps.end());
-                        opt_params_changed = true;
                     }
                 }
 
                 ImGui::Separator();
 
-                // List existing save steps with remove buttons
                 for (size_t i = 0; i < opt_params.save_steps.size(); ++i) {
                     ImGui::PushID(static_cast<int>(i));
 
@@ -528,24 +719,21 @@ namespace gs::gui::panels {
                         if (step > 0) {
                             opt_params.save_steps[i] = static_cast<size_t>(step);
                             std::sort(opt_params.save_steps.begin(), opt_params.save_steps.end());
-                            opt_params_changed = true;
                         }
                     }
 
                     ImGui::SameLine();
                     if (ImGui::Button("Remove")) {
                         opt_params.save_steps.erase(opt_params.save_steps.begin() + i);
-                        opt_params_changed = true;
                     }
 
                     ImGui::PopID();
                 }
 
                 if (opt_params.save_steps.empty()) {
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No save steps configured");
+                    ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No save steps configured");
                 }
             } else {
-                // Read-only display
                 if (!opt_params.save_steps.empty()) {
                     std::string steps_str;
                     for (size_t i = 0; i < opt_params.save_steps.size(); ++i) {
@@ -555,166 +743,198 @@ namespace gs::gui::panels {
                     }
                     ImGui::Text("%s", steps_str.c_str());
                 } else {
-                    ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No save steps");
+                    ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No save steps");
                 }
             }
             ImGui::TreePop();
         }
 
-        // Active Features - only show if any are enabled
-        bool has_active_features = opt_params.use_bilateral_grid ||
-                                   opt_params.pose_optimization != "none" ||
-                                   opt_params.enable_eval ||
-                                   opt_params.antialiasing ||
-                                   opt_params.gut;
-
-        has_active_features = true; // force show for now
-
-        if (has_active_features && ImGui::TreeNode("Active Features")) {
-            if (ImGui::BeginTable("FeaturesTable", 2, ImGuiTableFlags_SizingStretchProp)) {
-                ImGui::TableSetupColumn("Feature", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableSetupColumn("Configuration", ImGuiTableColumnFlags_WidthStretch);
+        // Bilateral Grid Settings
+        if (opt_params.use_bilateral_grid && ImGui::TreeNode("Bilateral Grid Settings")) {
+            if (ImGui::BeginTable("BilateralTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                bool use_bilateral_grid_enabled = opt_params.use_bilateral_grid;
-                if (!can_edit) {
-                    ImGui::BeginDisabled();
-                }
-                if (ImGui::Checkbox("Bilateral Grid", &use_bilateral_grid_enabled)) {
-                    opt_params.use_bilateral_grid = use_bilateral_grid_enabled;
-                    opt_params_changed = true;
-                }
-                if (!can_edit) {
-                    ImGui::EndDisabled();
-                }
-
+                ImGui::Text("Grid X:");
                 ImGui::TableNextColumn();
-                ImGui::Text("%dx%dx%d (LR: %.4f)",
-                            opt_params.bilateral_grid_X,
-                            opt_params.bilateral_grid_Y,
-                            opt_params.bilateral_grid_W,
-                            opt_params.bilateral_grid_lr);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-
-                if (!can_edit) {
-                    ImGui::BeginDisabled();
-                }
-                bool gut_enabled = opt_params.gut;
-                if (ImGui::Checkbox("GUT", &gut_enabled)) {
-                    opt_params.gut = gut_enabled;
-                    opt_params_changed = true;
-                }
-                if (!can_edit) {
-                    ImGui::EndDisabled();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    if (ImGui::InputInt("##bilateral_grid_X", &opt_params.bilateral_grid_X, 1, 4)) {
+                        opt_params.bilateral_grid_X = std::max(1, opt_params.bilateral_grid_X);
+                    }
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%d", opt_params.bilateral_grid_X);
                 }
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-
-                // Mask Mode selection
-                ImGui::Text("Mask Mode:");
-                if (!can_edit) {
-                    ImGui::BeginDisabled();
-                }
-
+                ImGui::Text("Grid Y:");
                 ImGui::TableNextColumn();
-                const char* mask_mode_items[] = { "None", "Segment", "Ignore", "Alpha Consistent" };
-                int current_mask_mode = static_cast<int>(opt_params.mask_mode);
-                if (ImGui::Combo("##MaskMode", &current_mask_mode, mask_mode_items, IM_ARRAYSIZE(mask_mode_items))) {
-                    opt_params.mask_mode = static_cast<param::MaskMode>(current_mask_mode);
-                    opt_params_changed = true;
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    if (ImGui::InputInt("##bilateral_grid_Y", &opt_params.bilateral_grid_Y, 1, 4)) {
+                        opt_params.bilateral_grid_Y = std::max(1, opt_params.bilateral_grid_Y);
+                    }
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%d", opt_params.bilateral_grid_Y);
                 }
 
-                if (!can_edit) {
-                    ImGui::EndDisabled();
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Grid W:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    if (ImGui::InputInt("##bilateral_grid_W", &opt_params.bilateral_grid_W, 1, 2)) {
+                        opt_params.bilateral_grid_W = std::max(1, opt_params.bilateral_grid_W);
+                    }
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%d", opt_params.bilateral_grid_W);
                 }
 
-                // Show mask parameters only when Segment mode is active
-                if (opt_params.mask_mode == param::MaskMode::Segment) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Learning Rate:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##bilateral_grid_lr", &opt_params.bilateral_grid_lr, 0.0001f, 0.001f, "%.5f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.5f", opt_params.bilateral_grid_lr);
+                }
+
+                ImGui::EndTable();
+            }
+            ImGui::TreePop();
+        }
+
+        // Mask Settings
+        if (opt_params.mask_mode != lfs::core::param::MaskMode::None && ImGui::TreeNode("Mask Settings")) {
+            if (ImGui::BeginTable("MaskTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Invert Masks:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::Checkbox("##invert_masks", &opt_params.invert_masks);
+                } else {
+                    ImGui::Text("%s", opt_params.invert_masks ? "Yes" : "No");
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Threshold:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::SliderFloat("##mask_threshold", &opt_params.mask_threshold, 0.0f, 1.0f, "%.2f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.2f", opt_params.mask_threshold);
+                }
+
+                if (opt_params.mask_mode == lfs::core::param::MaskMode::Segment) {
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    ImGui::Text("  Mask Opacity Penalty Weight:");
+                    ImGui::Text("Penalty Weight:");
                     ImGui::TableNextColumn();
                     if (can_edit) {
                         ImGui::PushItemWidth(-1);
-                        if (ImGui::InputFloat("##mask_opacity_penalty_weight", &opt_params.mask_opacity_penalty_weight, 1.0f, 10.0f, "%.1f")) {
-                            opt_params_changed = true;
-                        }
+                        ImGui::InputFloat("##mask_penalty_weight", &opt_params.mask_opacity_penalty_weight, 0.1f, 0.5f, "%.2f");
                         ImGui::PopItemWidth();
                     } else {
-                        ImGui::Text("%.1f", opt_params.mask_opacity_penalty_weight);
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Weight for opacity penalty in background regions (higher = stronger penalty)");
+                        ImGui::Text("%.2f", opt_params.mask_opacity_penalty_weight);
                     }
 
                     ImGui::TableNextRow();
                     ImGui::TableNextColumn();
-                    ImGui::Text("  Mask Opacity Penalty Power:");
+                    ImGui::Text("Penalty Power:");
                     ImGui::TableNextColumn();
                     if (can_edit) {
                         ImGui::PushItemWidth(-1);
-                        if (ImGui::SliderFloat("##mask_opacity_penalty_power", &opt_params.mask_opacity_penalty_power, 0.5f, 4.0f, "%.1f")) {
-                            opt_params_changed = true;
-                        }
+                        ImGui::InputFloat("##mask_penalty_power", &opt_params.mask_opacity_penalty_power, 0.5f, 1.0f, "%.1f");
                         ImGui::PopItemWidth();
                     } else {
                         ImGui::Text("%.1f", opt_params.mask_opacity_penalty_power);
                     }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Penalty falloff curve: 1.0=linear, 2.0=quadratic (default), >2.0=gentler on uncertain regions");
-                    }
-
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::Text("  Mask Threshold:");
-                    ImGui::TableNextColumn();
-                    if (can_edit) {
-                        ImGui::PushItemWidth(-1);
-                        if (ImGui::SliderFloat("##mask_threshold", &opt_params.mask_threshold, 0.0f, 1.0f, "%.2f")) {
-                            opt_params_changed = true;
-                        }
-                        ImGui::PopItemWidth();
-                    } else {
-                        ImGui::Text("%.2f", opt_params.mask_threshold);
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        ImGui::SetTooltip("Mask threshold: values >= threshold become 1.0 (definite object), < threshold keep original value (soft falloff for opacity penalty)");
-                    }
                 }
+
+                ImGui::EndTable();
+            }
+            ImGui::TreePop();
+        }
+
+        // Evaluation Settings
+        if (opt_params.enable_eval && ImGui::TreeNode("Evaluation Settings")) {
+            if (ImGui::BeginTable("EvalTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                bool bg_modulation_enabled = opt_params.bg_modulation;
-                if (!can_edit) {
-                    ImGui::BeginDisabled();
-                }
-                if (ImGui::Checkbox("BG Modulation", &bg_modulation_enabled)) {
-                    opt_params.bg_modulation = bg_modulation_enabled;
-                    opt_params_changed = true;
-                }
-                if (!can_edit) {
-                    ImGui::EndDisabled();
+                ImGui::Text("Save Images:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::Checkbox("##enable_save_eval_images", &opt_params.enable_save_eval_images);
+                } else {
+                    ImGui::Text("%s", opt_params.enable_save_eval_images ? "Yes" : "No");
                 }
 
-                if (opt_params.pose_optimization != "none") {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::Text("Pose Optimization:");
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%s", opt_params.pose_optimization.c_str());
-                }
+                ImGui::EndTable();
+            }
 
-                if (opt_params.enable_eval) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::Text("Evaluation:");
-                    ImGui::TableNextColumn();
+            // Eval Steps
+            {
+                ImGui::Separator();
+                ImGui::Text("Evaluation Steps:");
+                if (can_edit) {
+                    static int new_eval_step = 7000;
+                    ImGui::InputInt("New Eval Step", &new_eval_step, 1000, 5000);
+                    ImGui::SameLine();
+                    if (ImGui::Button("Add##eval")) {
+                        if (new_eval_step > 0 && std::find(opt_params.eval_steps.begin(),
+                                                          opt_params.eval_steps.end(),
+                                                          new_eval_step) == opt_params.eval_steps.end()) {
+                            opt_params.eval_steps.push_back(new_eval_step);
+                            std::sort(opt_params.eval_steps.begin(), opt_params.eval_steps.end());
+                        }
+                    }
+
+                    for (size_t i = 0; i < opt_params.eval_steps.size(); ++i) {
+                        ImGui::PushID(static_cast<int>(i + 1000));
+
+                        int step = static_cast<int>(opt_params.eval_steps[i]);
+                        ImGui::SetNextItemWidth(100);
+                        if (ImGui::InputInt("##eval_step", &step, 0, 0)) {
+                            if (step > 0) {
+                                opt_params.eval_steps[i] = static_cast<size_t>(step);
+                                std::sort(opt_params.eval_steps.begin(), opt_params.eval_steps.end());
+                            }
+                        }
+
+                        ImGui::SameLine();
+                        if (ImGui::Button("Remove##eval")) {
+                            opt_params.eval_steps.erase(opt_params.eval_steps.begin() + i);
+                        }
+
+                        ImGui::PopID();
+                    }
+
+                    if (opt_params.eval_steps.empty()) {
+                        ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No eval steps configured");
+                    }
+                } else {
                     if (!opt_params.eval_steps.empty()) {
-                        std::string steps_str = "Steps: ";
+                        std::string steps_str;
                         for (size_t i = 0; i < opt_params.eval_steps.size(); ++i) {
                             if (i > 0)
                                 steps_str += ", ";
@@ -722,8 +942,65 @@ namespace gs::gui::panels {
                         }
                         ImGui::Text("%s", steps_str.c_str());
                     } else {
-                        ImGui::Text("Enabled");
+                        ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No eval steps");
                     }
+                }
+            }
+            ImGui::TreePop();
+        }
+
+        // Loss Parameters
+        if (ImGui::TreeNode("Loss Parameters")) {
+            if (ImGui::BeginTable("LossTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Lambda DSSIM:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::SliderFloat("##lambda_dssim", &opt_params.lambda_dssim, 0.0f, 1.0f, "%.2f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.2f", opt_params.lambda_dssim);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Opacity Reg:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##opacity_reg", &opt_params.opacity_reg, 0.001f, 0.01f, "%.4f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.4f", opt_params.opacity_reg);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Scale Reg:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##scale_reg", &opt_params.scale_reg, 0.001f, 0.01f, "%.4f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.4f", opt_params.scale_reg);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("TV Loss Weight:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##tv_loss_weight", &opt_params.tv_loss_weight, 1.0f, 5.0f, "%.1f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.1f", opt_params.tv_loss_weight);
                 }
 
                 ImGui::EndTable();
@@ -731,103 +1008,74 @@ namespace gs::gui::panels {
             ImGui::TreePop();
         }
 
-        // Render Settings
-        if (ImGui::TreeNode("Render Settings")) {
-            if (ImGui::BeginTable("RenderTable", 2, ImGuiTableFlags_SizingStretchProp)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 120.0f);
+        // Initialization Parameters
+        if (ImGui::TreeNode("Initialization")) {
+            if (ImGui::BeginTable("InitTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
-                ImGui::Text("Render Mode:");
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", opt_params.render_mode.c_str());
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("SH Degree:");
-                ImGui::TableNextColumn();
-                ImGui::Text("%d", opt_params.sh_degree);
-
-                ImGui::EndTable();
-            }
-            ImGui::TreePop();
-        }
-
-        // Dataloader Settings
-        if (ImGui::TreeNode("Dataloader Settings")) {
-            if (ImGui::BeginTable("DataloaderTable", 2, ImGuiTableFlags_SizingStretchProp)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 120.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-
-                // Number of Workers
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("Num Workers:");
+                ImGui::Text("Init Opacity:");
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    int num_workers = opt_params.num_workers;
-                    if (ImGui::InputInt("##num_workers", &num_workers, 1, 4)) {
-                        if (num_workers >= 1 && num_workers <= 64) {
-                            opt_params.num_workers = num_workers;
-                            opt_params_changed = true;
+                    ImGui::SliderFloat("##init_opacity", &opt_params.init_opacity, 0.01f, 1.0f, "%.2f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.2f", opt_params.init_opacity);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Init Scaling:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##init_scaling", &opt_params.init_scaling, 0.01f, 0.1f, "%.3f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.3f", opt_params.init_scaling);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Random Init:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::Checkbox("##random", &opt_params.random);
+                } else {
+                    ImGui::Text("%s", opt_params.random ? "Yes" : "No");
+                }
+
+                if (opt_params.random) {
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("  Num Points:");
+                    ImGui::TableNextColumn();
+                    if (can_edit) {
+                        ImGui::PushItemWidth(-1);
+                        if (ImGui::InputInt("##init_num_pts", &opt_params.init_num_pts, 10000, 50000)) {
+                            opt_params.init_num_pts = std::max(1, opt_params.init_num_pts);
                         }
-                    }
-                    ImGui::PopItemWidth();
-                } else {
-                    ImGui::Text("%d", opt_params.num_workers);
-                }
-                if (ImGui::IsItemHovered()) {
-                    ImGui::SetTooltip("Number of parallel threads for loading images (1-64)");
-                }
-
-                // GPU Selection
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("GPU:");
-                ImGui::TableNextColumn();
-                if (can_edit) {
-                    ImGui::PushItemWidth(-1);
-
-                    // Get available GPU count
-                    int gpu_count = torch::cuda::is_available() ? torch::cuda::device_count() : 0;
-
-                    // Build GPU dropdown items: "Auto (Default)", "GPU 0", "GPU 1", ...
-                    std::vector<std::string> gpu_items;
-                    gpu_items.push_back("Auto (Default)");
-                    for (int i = 0; i < gpu_count; ++i) {
-                        gpu_items.push_back("GPU " + std::to_string(i));
-                    }
-
-                    // Convert to const char* array for ImGui
-                    std::vector<const char*> gpu_items_cstr;
-                    for (const auto& item : gpu_items) {
-                        gpu_items_cstr.push_back(item.c_str());
-                    }
-
-                    // Current selection: -1 maps to index 0 (Auto), 0+ maps to index 1+
-                    int current_selection = opt_params.gpu_id + 1;
-                    if (current_selection < 0) current_selection = 0;
-                    if (current_selection > gpu_count) current_selection = 0;
-
-                    if (ImGui::Combo("##gpu_selection", &current_selection, gpu_items_cstr.data(), static_cast<int>(gpu_items_cstr.size()))) {
-                        // Convert back: index 0 -> gpu_id=-1, index 1+ -> gpu_id=0+
-                        opt_params.gpu_id = current_selection - 1;
-                        opt_params_changed = true;
-                    }
-
-                    ImGui::PopItemWidth();
-                } else {
-                    if (opt_params.gpu_id == -1) {
-                        ImGui::Text("Auto (Default)");
+                        ImGui::PopItemWidth();
                     } else {
-                        ImGui::Text("GPU %d", opt_params.gpu_id);
+                        ImGui::Text("%d", opt_params.init_num_pts);
                     }
-                }
-                if (ImGui::IsItemHovered()) {
-                    int gpu_count = torch::cuda::is_available() ? torch::cuda::device_count() : 0;
-                    ImGui::SetTooltip("Select CUDA device (%d GPU%s available)", gpu_count, gpu_count == 1 ? "" : "s");
+
+                    ImGui::TableNextRow();
+                    ImGui::TableNextColumn();
+                    ImGui::Text("  Extent:");
+                    ImGui::TableNextColumn();
+                    if (can_edit) {
+                        ImGui::PushItemWidth(-1);
+                        if (ImGui::InputFloat("##init_extent", &opt_params.init_extent, 0.5f, 1.0f, "%.1f")) {
+                            opt_params.init_extent = std::max(0.1f, opt_params.init_extent);
+                        }
+                        ImGui::PopItemWidth();
+                    } else {
+                        ImGui::Text("%.1f", opt_params.init_extent);
+                    }
                 }
 
                 ImGui::EndTable();
@@ -835,32 +1083,168 @@ namespace gs::gui::panels {
             ImGui::TreePop();
         }
 
-        // Apply changes if any were made and we can edit
-        if ((opt_params_changed || dataset_params_changed) && can_edit) {
-            // Update optimization parameters if they changed
-            if (opt_params_changed) {
-                project->setOptimizationParams(opt_params);
+        // Pruning/Growing Thresholds (for default strategy)
+        if (opt_params.strategy == "default" && ImGui::TreeNode("Pruning/Growing")) {
+            if (ImGui::BeginTable("PruneTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Min Opacity:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##min_opacity", &opt_params.min_opacity, 0.001f, 0.01f, "%.4f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.4f", opt_params.min_opacity);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Prune Opacity:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##prune_opacity", &opt_params.prune_opacity, 0.001f, 0.01f, "%.4f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.4f", opt_params.prune_opacity);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Grow Scale 3D:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##grow_scale3d", &opt_params.grow_scale3d, 0.001f, 0.01f, "%.4f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.4f", opt_params.grow_scale3d);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Grow Scale 2D:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##grow_scale2d", &opt_params.grow_scale2d, 0.001f, 0.01f, "%.4f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.4f", opt_params.grow_scale2d);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Prune Scale 3D:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##prune_scale3d", &opt_params.prune_scale3d, 0.01f, 0.05f, "%.3f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.3f", opt_params.prune_scale3d);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Prune Scale 2D:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##prune_scale2d", &opt_params.prune_scale2d, 0.01f, 0.05f, "%.3f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.3f", opt_params.prune_scale2d);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Pause After Reset:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    int pause_refine = static_cast<int>(opt_params.pause_refine_after_reset);
+                    if (ImGui::InputInt("##pause_refine_after_reset", &pause_refine, 10, 100) && pause_refine >= 0) {
+                        opt_params.pause_refine_after_reset = static_cast<size_t>(pause_refine);
+                    }
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%zu", opt_params.pause_refine_after_reset);
+                }
+
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Revised Opacity:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::Checkbox("##revised_opacity", &opt_params.revised_opacity);
+                } else {
+                    ImGui::Text("%s", opt_params.revised_opacity ? "Yes" : "No");
+                }
+
+                ImGui::EndTable();
             }
+            ImGui::TreePop();
+        }
 
-            // Update dataset parameters if they changed
-            if (dataset_params_changed) {
-                auto project_data = project->getProjectData();
+        // Sparsity Settings
+        if (opt_params.enable_sparsity && ImGui::TreeNode("Sparsity Settings")) {
+            if (ImGui::BeginTable("SparsityTable", 2, ImGuiTableFlags_SizingStretchProp)) {
+                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
+                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
 
-                // Only update the fields from DatasetConfig that we allow editing
-                project_data.data_set_info.resize_factor = dataset_params.resize_factor;
-                project_data.data_set_info.max_width = dataset_params.max_width;
-                project_data.data_set_info.test_every = dataset_params.test_every;
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Sparsify Steps:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    if (ImGui::InputInt("##sparsify_steps", &opt_params.sparsify_steps, 1000, 5000)) {
+                        opt_params.sparsify_steps = std::max(1, opt_params.sparsify_steps);
+                    }
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%d", opt_params.sparsify_steps);
+                }
 
-                project_data.data_set_info.loading_params.use_cpu_memory = dataset_params.loading_params.use_cpu_memory;
-                project_data.data_set_info.loading_params.use_fs_cache = dataset_params.loading_params.use_fs_cache;
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Init Rho:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::InputFloat("##init_rho", &opt_params.init_rho, 0.0001f, 0.001f, "%.5f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.5f", opt_params.init_rho);
+                }
 
-                // Set the updated project data back
-                project->setProjectData(project_data);
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("Prune Ratio:");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::PushItemWidth(-1);
+                    ImGui::SliderFloat("##prune_ratio", &opt_params.prune_ratio, 0.0f, 1.0f, "%.2f");
+                    ImGui::PopItemWidth();
+                } else {
+                    ImGui::Text("%.2f", opt_params.prune_ratio);
+                }
+
+                ImGui::EndTable();
             }
+            ImGui::TreePop();
+        }
 
-            ImGui::Separator();
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.0f, 1.0f),
-                               "Parameters updated - will be applied when training starts");
+        ImGui::TreePop();
+        }
+
+        if (can_edit && dataset_params_changed) {
+            trainer_manager->getEditableDatasetParams() = dataset_params;
         }
 
         ImGui::PopStyleVar();
@@ -872,119 +1256,107 @@ namespace gs::gui::panels {
 
         auto& state = TrainingPanelState::getInstance();
 
-        // Direct call to TrainerManager - no state duplication
         auto* trainer_manager = ctx.viewer->getTrainerManager();
         if (!trainer_manager || !trainer_manager->hasTrainer()) {
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No trainer loaded");
+            ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No trainer loaded");
             return;
         }
 
-        // Get state directly from the single source of truth
         auto trainer_state = trainer_manager->getState();
         int current_iteration = trainer_manager->getCurrentIteration();
 
-        // Render controls based on trainer state
+        using widgets::ColoredButton;
+        using widgets::ButtonStyle;
+
+        const auto& t = theme();
+        constexpr ImVec2 FULL_WIDTH = {-1, 0};
+
         switch (trainer_state) {
         case TrainerManager::State::Idle:
-            ImGui::TextColored(ImVec4(0.5f, 0.5f, 0.5f, 1.0f), "No trainer loaded");
+            ImGui::TextColored(darken(t.palette.text_dim, 0.15f), "No trainer loaded");
             break;
 
-        case TrainerManager::State::Ready:
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-            if (ImGui::Button("Start Training", ImVec2(-1, 0))) {
-                events::cmd::StartTraining{}.emit();
+        case TrainerManager::State::Ready: {
+            const char* const label = current_iteration > 0 ? "Resume Training" : "Start Training";
+            if (ColoredButton(label, ButtonStyle::Success, FULL_WIDTH)) {
+                lfs::core::events::cmd::StartTraining{}.emit();
             }
-            ImGui::PopStyleColor(2);
-
             if (current_iteration > 0) {
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.7f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.8f, 1.0f));
-                if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
-                    trainer_manager->resetTraining();
+                if (ColoredButton("Reset Training", ButtonStyle::Secondary, FULL_WIDTH)) {
+                    lfs::core::events::cmd::ResetTraining{}.emit();
                 }
-                ImGui::PopStyleColor(2);
             }
-
             break;
+        }
 
         case TrainerManager::State::Running:
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.5f, 0.1f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.6f, 0.2f, 1.0f));
-            if (ImGui::Button("Pause", ImVec2(-1, 0))) {
-                events::cmd::PauseTraining{}.emit();
+            if (ColoredButton("Pause", ButtonStyle::Warning, FULL_WIDTH)) {
+                lfs::core::events::cmd::PauseTraining{}.emit();
             }
-            ImGui::PopStyleColor(2);
             break;
 
         case TrainerManager::State::Paused:
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.6f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
-            if (ImGui::Button("Resume", ImVec2(-1, 0))) {
-                events::cmd::ResumeTraining{}.emit();
+            if (ColoredButton("Resume", ButtonStyle::Success, FULL_WIDTH)) {
+                lfs::core::events::cmd::ResumeTraining{}.emit();
             }
-            ImGui::PopStyleColor(2);
-
-            // Reset button
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.3f, 0.3f, 1.0f));
-            if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
-                trainer_manager->resetTraining();
+            if (ColoredButton("Reset Training", ButtonStyle::Secondary, FULL_WIDTH)) {
+                lfs::core::events::cmd::ResetTraining{}.emit();
             }
-            ImGui::PopStyleColor(2);
+            if (ColoredButton("Clear", ButtonStyle::Error, FULL_WIDTH)) {
+                lfs::core::events::cmd::ClearScene{}.emit();
+            }
             break;
 
-        case TrainerManager::State::Completed:
-            ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Training Complete!");
-
-            // Reset button for completed state
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.7f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.8f, 1.0f));
-            if (ImGui::Button("Reset for New Training", ImVec2(-1, 0))) {
-                trainer_manager->resetTraining();
-            }
-            ImGui::PopStyleColor(2);
-
-            break;
-
-        case TrainerManager::State::Error:
-            ImGui::TextColored(ImVec4(1.0f, 0.3f, 0.3f, 1.0f), "Training Error!");
-            {
-                auto error_msg = trainer_manager->getLastError();
-                if (!error_msg.empty()) {
+        case TrainerManager::State::Finished: {
+            const auto reason = trainer_manager->getStateMachine().getFinishReason();
+            switch (reason) {
+            case FinishReason::Completed:
+                ImGui::TextColored(t.palette.success, "Training Complete!");
+                break;
+            case FinishReason::UserStopped:
+                ImGui::TextColored(t.palette.text_dim, "Training Stopped");
+                break;
+            case FinishReason::Error:
+                ImGui::TextColored(t.palette.error, "Training Error!");
+                if (const auto error_msg = trainer_manager->getLastError(); !error_msg.empty()) {
                     ImGui::TextWrapped("%s", error_msg.c_str());
                 }
-                // Reset button
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.7f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.8f, 1.0f));
-                if (ImGui::Button("Reset Training", ImVec2(-1, 0))) {
-                    trainer_manager->resetTraining();
-                }
-                ImGui::PopStyleColor(2);
+                break;
+            default:
+                ImGui::TextColored(t.palette.text_dim, "Training Finished");
             }
-            break;
 
-        case TrainerManager::State::Stopping:
-            ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "Stopping...");
+            if (reason == FinishReason::Completed || reason == FinishReason::UserStopped) {
+                if (ColoredButton("Switch to Edit Mode", ButtonStyle::Success, FULL_WIDTH)) {
+                    lfs::core::events::cmd::SwitchToEditMode{}.emit();
+                }
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("Keep trained model, discard dataset");
+                }
+            }
+            if (ColoredButton("Reset Training", ButtonStyle::Secondary, FULL_WIDTH)) {
+                lfs::core::events::cmd::ResetTraining{}.emit();
+            }
             break;
         }
 
-        // Save checkpoint button (available during training)
+        case TrainerManager::State::Stopping:
+            ImGui::TextColored(t.palette.text_dim, "Stopping...");
+            break;
+        }
+
+        // Save checkpoint button
         if (trainer_state == TrainerManager::State::Running ||
             trainer_state == TrainerManager::State::Paused) {
-
-            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.1f, 0.4f, 0.7f, 1.0f));
-            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.2f, 0.5f, 0.8f, 1.0f));
-            if (ImGui::Button("Save Checkpoint", ImVec2(-1, 0))) {
-                events::cmd::SaveCheckpoint{}.emit();
+            if (ColoredButton("Save Checkpoint", ButtonStyle::Primary, FULL_WIDTH)) {
+                lfs::core::events::cmd::SaveCheckpoint{}.emit();
                 state.save_in_progress = true;
                 state.save_start_time = std::chrono::steady_clock::now();
             }
-            ImGui::PopStyleColor(2);
         }
 
         ImGui::Separator();
-        if (ImGui::CollapsingHeader("Training Parameters", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::CollapsingHeader("Basic Training Params", ImGuiTreeNodeFlags_DefaultOpen)) {
             DrawTrainingParameters(ctx);
         }
 
@@ -995,7 +1367,7 @@ namespace gs::gui::panels {
                                now - state.save_start_time)
                                .count();
             if (elapsed < 2000) {
-                ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Checkpoint saved!");
+                ImGui::TextColored(t.palette.success, "Checkpoint saved!");
             } else {
                 state.save_in_progress = false;
             }
@@ -1004,45 +1376,36 @@ namespace gs::gui::panels {
         // Status display
         ImGui::Separator();
 
-        // Helper to convert state to string
         const char* state_str = "Unknown";
         switch (trainer_state) {
         case TrainerManager::State::Idle: state_str = "Idle"; break;
-        case TrainerManager::State::Ready: state_str = "Ready"; break;
+        case TrainerManager::State::Ready: state_str = (current_iteration > 0) ? "Resume" : "Ready"; break;
         case TrainerManager::State::Running: state_str = "Running"; break;
         case TrainerManager::State::Paused: state_str = "Paused"; break;
         case TrainerManager::State::Stopping: state_str = "Stopping"; break;
-        case TrainerManager::State::Completed: state_str = "Completed"; break;
-        case TrainerManager::State::Error: state_str = "Error"; break;
+        case TrainerManager::State::Finished: {
+            const auto reason = trainer_manager->getStateMachine().getFinishReason();
+            switch (reason) {
+            case FinishReason::Completed: state_str = "Completed"; break;
+            case FinishReason::UserStopped: state_str = "Stopped"; break;
+            case FinishReason::Error: state_str = "Error"; break;
+            default: state_str = "Finished";
+            }
+            break;
+        }
         }
 
-        // Static tracker instance
         static IterationRateTracker g_iter_rate_tracker;
 
         ImGui::Text("Status: %s", state_str);
-        // Update iteration rate tracker
         g_iter_rate_tracker.addSample(current_iteration);
-        // Get iteration rate
         float iters_per_sec = g_iter_rate_tracker.getIterationsPerSecond();
-        // Display iteration with rate
+        iters_per_sec = iters_per_sec > 0.0f ? iters_per_sec : 0.0f;
+
         ImGui::Text("Iteration: %d (%.1f iters/sec)", current_iteration, iters_per_sec);
 
         int num_splats = trainer_manager->getNumSplats();
         ImGui::Text("num Splats: %d", num_splats);
-
-        // display memory usage
-        size_t free_t, total_t;
-        cudaMemGetInfo(&free_t, &total_t);
-        size_t used_t = total_t - free_t;
-
-        ImVec4 memColor = ImVec4(0.0f, 0.0f, 0.0f, 1.0f);
-        float pctUsed = (used_t / 1e9f) / (total_t / 1e9f) * 100;
-
-        if (pctUsed > 75) {
-            memColor = ImVec4(0.9f, 0.2f, 0.2f, 1.0f); // red
-        }
-
-        ImGui::TextColored(memColor, "Used GPU Memory: %.1f%% (%.1f/%.1f GB)", pctUsed, used_t / 1e9f, total_t / 1e9f);
     }
 
-} // namespace gs::gui::panels
+} // namespace lfs::vis::gui::panels

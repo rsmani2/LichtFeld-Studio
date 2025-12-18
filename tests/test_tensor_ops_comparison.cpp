@@ -8,7 +8,7 @@
 #include <torch/torch.h>
 #include <vector>
 
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 
 namespace {
 

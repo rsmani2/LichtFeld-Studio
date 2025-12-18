@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/tensor.hpp"
 #include <condition_variable>
 #include <filesystem>
 #include <future>
@@ -11,20 +12,23 @@
 #include <mutex>
 #include <queue>
 #include <thread>
-#include <torch/torch.h>
 #include <vector>
+
+namespace lfs::core {
 
 std::tuple<int, int, int>
 get_image_info(std::filesystem::path p);
 std::tuple<unsigned char*, int, int, int>
 load_image_with_alpha(std::filesystem::path p);
+std::tuple<unsigned char*, int, int, int>
+load_image_from_memory(const uint8_t* data, size_t size);
 
 // Existing functions
 std::tuple<unsigned char*, int, int, int>
 load_image(std::filesystem::path p, int res_div = -1, int max_width = 3840);
-void save_image(const std::filesystem::path& path, torch::Tensor image);
+void save_image(const std::filesystem::path& path, Tensor image);
 void save_image(const std::filesystem::path& path,
-                const std::vector<torch::Tensor>& images,
+                const std::vector<Tensor>& images,
                 bool horizontal = true,
                 int separator_width = 2);
 
@@ -32,8 +36,10 @@ bool save_img_data(const std::filesystem::path& p, const std::tuple<unsigned cha
 
 void free_image(unsigned char* image);
 
+} // namespace lfs::core
+
 // Batch image saving functionality
-namespace image_io {
+namespace lfs::core::image_io {
 
     class BatchImageSaver {
     public:
@@ -50,11 +56,11 @@ namespace image_io {
         BatchImageSaver& operator=(BatchImageSaver&&) = delete;
 
         // Queue image for asynchronous saving
-        void queue_save(const std::filesystem::path& path, torch::Tensor image);
+        void queue_save(const std::filesystem::path& path, lfs::core::Tensor image);
 
         // Queue multiple images for side-by-side saving
         void queue_save_multiple(const std::filesystem::path& path,
-                                 const std::vector<torch::Tensor>& images,
+                                 const std::vector<lfs::core::Tensor>& images,
                                  bool horizontal = true,
                                  int separator_width = 2);
 
@@ -77,8 +83,8 @@ namespace image_io {
 
         struct SaveTask {
             std::filesystem::path path;
-            torch::Tensor image;
-            std::vector<torch::Tensor> images;
+            lfs::core::Tensor image;
+            std::vector<lfs::core::Tensor> images;
             bool is_multi;
             bool horizontal;
             int separator_width;
@@ -99,12 +105,12 @@ namespace image_io {
     };
 
     // Convenience functions that use the singleton
-    inline void save_image_async(const std::filesystem::path& path, torch::Tensor image) {
+    inline void save_image_async(const std::filesystem::path& path, lfs::core::Tensor image) {
         BatchImageSaver::instance().queue_save(path, image);
     }
 
     inline void save_images_async(const std::filesystem::path& path,
-                                  const std::vector<torch::Tensor>& images,
+                                  const std::vector<lfs::core::Tensor>& images,
                                   bool horizontal = true,
                                   int separator_width = 2) {
         BatchImageSaver::instance().queue_save_multiple(path, images, horizontal, separator_width);
@@ -114,4 +120,4 @@ namespace image_io {
         BatchImageSaver::instance().wait_all();
     }
 
-} // namespace image_io
+} // namespace lfs::core::image_io

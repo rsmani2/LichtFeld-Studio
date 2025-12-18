@@ -5,7 +5,7 @@
 #pragma once
 
 #include "io/loader_interface.hpp"
-#include "training_new/checkpoint.hpp"
+#include "training/checkpoint.hpp"
 
 namespace lfs::io {
 

@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <torch/torch.h>
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 

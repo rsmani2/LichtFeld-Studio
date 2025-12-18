@@ -23,9 +23,9 @@
 
 #include <gtest/gtest.h>
 #include "optimizer/adam_optimizer.hpp"
-#include "core_new/splat_data.hpp"
-#include "core_new/tensor.hpp"
-#include "core_new/logger.hpp"
+#include "core/splat_data.hpp"
+#include "core/tensor.hpp"
+#include "core/logger.hpp"
 
 using namespace lfs::training;
 using namespace lfs::core;

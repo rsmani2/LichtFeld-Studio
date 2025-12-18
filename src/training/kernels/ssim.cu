@@ -2,14 +2,42 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "kernels/ssim.cuh"
+#include "lfs/kernels/ssim.cuh"
+#include "lfs/kernels/ssim_reduction.cuh"
 #include <algorithm>
-#include <c10/cuda/CUDAGuard.h>
 #include <cooperative_groups.h>
-#include <iostream>
-#include <torch/torch.h>
+#include <cuda_runtime.h>
 
 namespace cg = cooperative_groups;
+
+namespace {
+
+// ------------------------------------------
+// Utility: Copy rectangular crop from src to dst
+// ------------------------------------------
+__global__ void copy_crop_kernel(
+    const float* __restrict__ src,
+    float* __restrict__ dst,
+    int N, int C, int H, int W,
+    int crop_h, int crop_w,
+    int start_h, int start_w) {
+
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = N * C * crop_h * crop_w;
+
+    if (idx < total) {
+        int w = idx % crop_w;
+        int h = (idx / crop_w) % crop_h;
+        int c = (idx / (crop_w * crop_h)) % C;
+        int n = idx / (crop_w * crop_h * C);
+
+        int src_h = h + start_h;
+        int src_w = w + start_w;
+
+        int src_idx = n * (C * H * W) + c * (H * W) + src_h * W + src_w;
+        dst[idx] = src[src_idx];
+    }
+}
 
 // ------------------------------------------
 // Constant Memory for Gaussian Coefficients
@@ -424,184 +452,368 @@ __global__ void fusedssim_backwardCUDA(
     }
 }
 
-// ------------------------------------------
-// PyTorch Interface (Forward)
-//   Returns (ssim_map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12).
-//   If train=false, derivative Tensors are empty.
-// ------------------------------------------
-std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
-fusedssim(
-    float C1,
-    float C2,
-    torch::Tensor& img1,
-    torch::Tensor& img2,
-    bool train) {
-    const at::cuda::OptionalCUDAGuard device_guard(device_of(img1));
-    int B = img1.size(0);
-    int CH = img1.size(1);
-    int H = img1.size(2);
-    int W = img1.size(3);
+} // anonymous namespace
+
+// LibTorch-Free API
+namespace lfs::training::kernels {
+
+std::pair<lfs::core::Tensor, SSIMContext> ssim_forward(
+    const lfs::core::Tensor& img1_input,
+    const lfs::core::Tensor& img2_input,
+    bool apply_valid_padding) {
+
+    const float C1 = 0.01f * 0.01f;
+    const float C2 = 0.03f * 0.03f;
+
+    // Make tensors contiguous and ensure 4D [N, C, H, W]
+    auto img1 = img1_input.contiguous();
+    auto img2 = img2_input.contiguous();
+
+    if (img1.ndim() == 3) {
+        img1 = img1.unsqueeze(0);
+    }
+    if (img2.ndim() == 3) {
+        img2 = img2.unsqueeze(0);
+    }
+
+    int N = static_cast<int>(img1.shape()[0]);
+    int C = static_cast<int>(img1.shape()[1]);
+    int H = static_cast<int>(img1.shape()[2]);
+    int W = static_cast<int>(img1.shape()[3]);
 
     // Launch config
     dim3 grid((W + BLOCK_X - 1) / BLOCK_X,
               (H + BLOCK_Y - 1) / BLOCK_Y,
-              B);
+              N);
     dim3 block(BLOCK_X, BLOCK_Y);
 
     // Output SSIM map
-    auto ssim_map = torch::zeros_like(img1, img1.options()).contiguous();
+    auto ssim_map = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
 
-    // Optionally allocate derivative Tensors
-    auto dm_dmu1 = train ? torch::zeros_like(img1) : torch::empty({0}, img1.options());
-    auto dm_dsigma1_sq = train ? torch::zeros_like(img1) : torch::empty({0}, img1.options());
-    auto dm_dsigma12 = train ? torch::zeros_like(img1) : torch::empty({0}, img1.options());
+    // Allocate derivative Tensors
+    auto dm_dmu1 = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
+    auto dm_dsigma1_sq = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
+    auto dm_dsigma12 = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
 
     fusedssimCUDA<<<grid, block>>>(
-        H, W, CH, C1, C2,
-        img1.contiguous().data_ptr<float>(),
-        img2.contiguous().data_ptr<float>(),
-        ssim_map.data_ptr<float>(),
-        train ? dm_dmu1.data_ptr<float>() : nullptr,
-        train ? dm_dsigma1_sq.data_ptr<float>() : nullptr,
-        train ? dm_dsigma12.data_ptr<float>() : nullptr);
+        H, W, C, C1, C2,
+        img1.ptr<float>(),
+        img2.ptr<float>(),
+        ssim_map.ptr<float>(),
+        dm_dmu1.ptr<float>(),
+        dm_dsigma1_sq.ptr<float>(),
+        dm_dsigma12.ptr<float>());
 
-    return std::make_tuple(ssim_map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12);
+    // Store original dimensions
+    int h = H;
+    int w = W;
+
+    // Apply valid padding (crop 5 pixels from each side) using efficient view slicing
+    // Then compute mean using optimized tensor reduction (matches PyTorch speed!)
+    lfs::core::Tensor ssim_map_cropped = ssim_map;
+    if (apply_valid_padding && H > 10 && W > 10) {
+        ssim_map_cropped = ssim_map.slice(2, 5, H - 5).slice(3, 5, W - 5);
+    }
+
+    // Use tensor library's optimized mean (warp reductions + vectorized loads)
+    // CRITICAL FIX: Return Tensor (on GPU) instead of syncing to CPU with .item<float>()!
+    lfs::core::Tensor ssim_value_tensor = ssim_map_cropped.mean();  // Keep on GPU!
+
+    // Save context for backward
+    SSIMContext ctx;
+    ctx.img1 = img1;
+    ctx.img2 = img2;
+    ctx.dm_dmu1 = dm_dmu1;
+    ctx.dm_dsigma1_sq = dm_dsigma1_sq;
+    ctx.dm_dsigma12 = dm_dsigma12;
+    ctx.original_h = h;
+    ctx.original_w = w;
+    ctx.apply_valid_padding = apply_valid_padding;
+
+    return {ssim_value_tensor, ctx};
 }
 
-// ------------------------------------------
-// PyTorch Interface (Backward)
-//   Takes the gradient wrt the SSIM map and
-//   the partial derivatives from forward;
-//   returns dL/d(img1).
-// ------------------------------------------
-torch::Tensor
-fusedssim_backward(
-    float C1,
-    float C2,
-    torch::Tensor& img1,
-    torch::Tensor& img2,
-    torch::Tensor& dL_dmap,
-    torch::Tensor& dm_dmu1,
-    torch::Tensor& dm_dsigma1_sq,
-    torch::Tensor& dm_dsigma12) {
-    const at::cuda::OptionalCUDAGuard device_guard(device_of(img1));
-    int B = img1.size(0);
-    int CH = img1.size(1);
-    int H = img1.size(2);
-    int W = img1.size(3);
+SSIMMapResult ssim_forward_map(
+    const lfs::core::Tensor& img1_input,
+    const lfs::core::Tensor& img2_input,
+    const bool apply_valid_padding) {
 
-    auto dL_dimg1 = torch::zeros_like(img1);
+    constexpr float C1 = 0.01f * 0.01f;
+    constexpr float C2 = 0.03f * 0.03f;
 
-    dim3 grid((W + BLOCK_X - 1) / BLOCK_X,
-              (H + BLOCK_Y - 1) / BLOCK_Y,
-              B);
+    auto img1 = img1_input.contiguous();
+    auto img2 = img2_input.contiguous();
+    if (img1.ndim() == 3) img1 = img1.unsqueeze(0);
+    if (img2.ndim() == 3) img2 = img2.unsqueeze(0);
+
+    const int N = static_cast<int>(img1.shape()[0]);
+    const int C = static_cast<int>(img1.shape()[1]);
+    const int H = static_cast<int>(img1.shape()[2]);
+    const int W = static_cast<int>(img1.shape()[3]);
+
+    const dim3 grid((W + BLOCK_X - 1) / BLOCK_X, (H + BLOCK_Y - 1) / BLOCK_Y, N);
+    const dim3 block(BLOCK_X, BLOCK_Y);
+
+    auto ssim_map = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
+    auto dm_dmu1 = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
+    auto dm_dsigma1_sq = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
+    auto dm_dsigma12 = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
+
+    fusedssimCUDA<<<grid, block>>>(
+        H, W, C, C1, C2,
+        img1.ptr<float>(), img2.ptr<float>(),
+        ssim_map.ptr<float>(), dm_dmu1.ptr<float>(),
+        dm_dsigma1_sq.ptr<float>(), dm_dsigma12.ptr<float>());
+
+    lfs::core::Tensor ssim_map_for_mean = ssim_map;
+    if (apply_valid_padding && H > 10 && W > 10) {
+        ssim_map_for_mean = ssim_map.slice(2, 5, H - 5).slice(3, 5, W - 5);
+    }
+
+    return SSIMMapResult{
+        .ssim_map = ssim_map,
+        .ssim_value = ssim_map_for_mean.mean(),
+        .ctx = SSIMContext{
+            .img1 = img1,
+            .img2 = img2,
+            .dm_dmu1 = dm_dmu1,
+            .dm_dsigma1_sq = dm_dsigma1_sq,
+            .dm_dsigma12 = dm_dsigma12,
+            .original_h = H,
+            .original_w = W,
+            .apply_valid_padding = apply_valid_padding
+        }
+    };
+}
+
+lfs::core::Tensor ssim_backward(
+    const SSIMContext& ctx,
+    float grad_loss) {
+
+    const float C1 = 0.01f * 0.01f;
+    const float C2 = 0.03f * 0.03f;
+
+    // Compute gradient map size (after cropping if applicable)
+    int grad_h = ctx.original_h;
+    int grad_w = ctx.original_w;
+    size_t N = ctx.img1.shape()[0];
+    size_t C = ctx.img1.shape()[1];
+    size_t numel = N * C * grad_h * grad_w;
+
+    if (ctx.apply_valid_padding && grad_h > 10 && grad_w > 10) {
+        grad_h -= 10;  // Remove 5 pixels from each side
+        grad_w -= 10;
+        numel = N * C * grad_h * grad_w;
+    }
+
+    // Create gradient map: d(loss)/d(ssim_scalar) = grad_loss
+    // d(ssim_scalar)/d(ssim_map[i]) = 1/numel
+    // So: d(loss)/d(ssim_map[i]) = grad_loss / numel
+    float grad_per_pixel = grad_loss / static_cast<float>(numel);
+
+    // Create gradient tensor for cropped region
+    auto dL_dmap = lfs::core::Tensor::zeros(ctx.img1.shape(), lfs::core::Device::CUDA);
+
+    if (ctx.apply_valid_padding && ctx.original_h > 10 && ctx.original_w > 10) {
+        // Fill cropped region with gradient (use stream-aware version to avoid sync)
+        auto cropped_view = dL_dmap.slice(2, 5, ctx.original_h - 5).slice(3, 5, ctx.original_w - 5);
+        cropped_view.fill_(grad_per_pixel, nullptr);  // stream-aware version, no sync
+    } else {
+        // No cropping - fill entire map (use stream-aware version to avoid sync)
+        dL_dmap.fill_(grad_per_pixel, nullptr);
+    }
+
+    // Allocate output gradient
+    auto dL_dimg1 = lfs::core::Tensor::zeros(ctx.img1.shape(), lfs::core::Device::CUDA);
+
+    // Launch backward kernel
+    dim3 grid((ctx.original_w + BLOCK_X - 1) / BLOCK_X,
+              (ctx.original_h + BLOCK_Y - 1) / BLOCK_Y,
+              N);
     dim3 block(BLOCK_X, BLOCK_Y);
 
     fusedssim_backwardCUDA<<<grid, block>>>(
-        H, W, CH, C1, C2,
-        img1.contiguous().data_ptr<float>(),
-        img2.contiguous().data_ptr<float>(),
-        dL_dmap.contiguous().data_ptr<float>(),
-        dL_dimg1.data_ptr<float>(),
-        dm_dmu1.contiguous().data_ptr<float>(),
-        dm_dsigma1_sq.contiguous().data_ptr<float>(),
-        dm_dsigma12.contiguous().data_ptr<float>());
+        ctx.original_h, ctx.original_w, static_cast<int>(C), C1, C2,
+        ctx.img1.ptr<float>(),
+        ctx.img2.ptr<float>(),
+        dL_dmap.ptr<float>(),
+        dL_dimg1.ptr<float>(),
+        ctx.dm_dmu1.ptr<float>(),
+        ctx.dm_dsigma1_sq.ptr<float>(),
+        ctx.dm_dsigma12.ptr<float>());
 
     return dL_dimg1;
 }
 
-// ------------------------------------------
-// Manual SSIM forward (no autograd) - returns (loss_value, context)
-// Matches the interface in include/kernels/ssim.cuh
-// ------------------------------------------
-std::pair<float, SSIMContext> ssim_forward(
-    const torch::Tensor& img1,
-    const torch::Tensor& img2,
+lfs::core::Tensor ssim_backward_with_grad_map(
+    const SSIMContext& ctx,
+    const lfs::core::Tensor& dL_dmap) {
+
+    constexpr float C1 = 0.01f * 0.01f;
+    constexpr float C2 = 0.03f * 0.03f;
+    const size_t N = ctx.img1.shape()[0];
+    const size_t C = ctx.img1.shape()[1];
+
+    auto dL_dimg1 = lfs::core::Tensor::zeros(ctx.img1.shape(), lfs::core::Device::CUDA);
+    const dim3 grid((ctx.original_w + BLOCK_X - 1) / BLOCK_X,
+                    (ctx.original_h + BLOCK_Y - 1) / BLOCK_Y, N);
+    const dim3 block(BLOCK_X, BLOCK_Y);
+
+    fusedssim_backwardCUDA<<<grid, block>>>(
+        ctx.original_h, ctx.original_w, static_cast<int>(C), C1, C2,
+        ctx.img1.ptr<float>(), ctx.img2.ptr<float>(), dL_dmap.ptr<float>(),
+        dL_dimg1.ptr<float>(), ctx.dm_dmu1.ptr<float>(),
+        ctx.dm_dsigma1_sq.ptr<float>(), ctx.dm_dsigma12.ptr<float>());
+
+    return dL_dimg1;
+}
+
+// Optimized version with pre-allocated workspace (eliminates allocation churn)
+std::pair<lfs::core::Tensor, SSIMContext> ssim_forward(
+    const lfs::core::Tensor& img1_input,
+    const lfs::core::Tensor& img2_input,
+    SSIMWorkspace& workspace,
     bool apply_valid_padding) {
 
-    // Constants matching NEW's SSIM kernel
-    constexpr float C1 = 0.01f * 0.01f;
-    constexpr float C2 = 0.03f * 0.03f;
+    const float C1 = 0.01f * 0.01f;
+    const float C2 = 0.03f * 0.03f;
 
-    // Call fused SSIM kernel
-    auto img1_copy = img1.clone();
-    auto img2_copy = img2.clone();
-    auto [ssim_map, dm_dmu1, dm_dsigma1_sq, dm_dsigma12] = fusedssim(C1, C2, img1_copy, img2_copy, true);
+    // Make tensors contiguous and ensure 4D [N, C, H, W]
+    auto img1 = img1_input.contiguous();
+    auto img2 = img2_input.contiguous();
+
+    if (img1.ndim() == 3) {
+        img1 = img1.unsqueeze(0);
+    }
+    if (img2.ndim() == 3) {
+        img2 = img2.unsqueeze(0);
+    }
+
+    int N = static_cast<int>(img1.shape()[0]);
+    int C = static_cast<int>(img1.shape()[1]);
+    int H = static_cast<int>(img1.shape()[2]);
+    int W = static_cast<int>(img1.shape()[3]);
+
+    // Ensure workspace is sized correctly (only reallocates if shape changed)
+    workspace.ensure_size(img1.shape().dims());
+
+    // Launch config
+    dim3 grid((W + BLOCK_X - 1) / BLOCK_X,
+              (H + BLOCK_Y - 1) / BLOCK_Y,
+              N);
+    dim3 block(BLOCK_X, BLOCK_Y);
+
+    // Use pre-allocated workspace buffers (zero them out)
+    workspace.ssim_map.zero_();
+    workspace.dm_dmu1.zero_();
+    workspace.dm_dsigma1_sq.zero_();
+    workspace.dm_dsigma12.zero_();
+
+    fusedssimCUDA<<<grid, block>>>(
+        H, W, C, C1, C2,
+        img1.ptr<float>(),
+        img2.ptr<float>(),
+        workspace.ssim_map.ptr<float>(),
+        workspace.dm_dmu1.ptr<float>(),
+        workspace.dm_dsigma1_sq.ptr<float>(),
+        workspace.dm_dsigma12.ptr<float>());
 
     // Store original dimensions
-    int64_t original_h = ssim_map.size(2);
-    int64_t original_w = ssim_map.size(3);
+    int h = H;
+    int w = W;
 
-    // Optionally crop borders (5 pixels from each side)
-    torch::Tensor ssim_map_final = ssim_map;
-    if (apply_valid_padding && original_h > 10 && original_w > 10) {
-        ssim_map_final = ssim_map.index({
-            torch::indexing::Slice(),
-            torch::indexing::Slice(),
-            torch::indexing::Slice(5, original_h - 5),
-            torch::indexing::Slice(5, original_w - 5)
-        });
+    // Compute mean efficiently without .contiguous() allocation
+    lfs::core::Tensor ssim_value_tensor;
+    if (apply_valid_padding && H > 10 && W > 10) {
+        // Use custom kernel to copy cropped region directly to pre-allocated buffer
+        // This avoids the 8.6GB .contiguous() allocation that .slice().mean() causes!
+        int crop_h = H - 10;
+        int crop_w = W - 10;
+        int total = N * C * crop_h * crop_w;
+        int threads = 256;
+        int blocks = (total + threads - 1) / threads;
+
+        copy_crop_kernel<<<blocks, threads>>>(
+            workspace.ssim_map.ptr<float>(),
+            workspace.ssim_map_cropped.ptr<float>(),
+            N, C, H, W,
+            crop_h, crop_w,
+            5, 5);  // start_h=5, start_w=5
+
+        ssim_value_tensor = workspace.ssim_map_cropped.mean();
+    } else {
+        // No cropping needed
+        ssim_value_tensor = workspace.ssim_map.mean();
     }
 
-    // Compute mean SSIM value
-    float ssim_value = ssim_map_final.mean().item<float>();
-
-    // Create context for backward pass
+    // Save context for backward (reference workspace buffers, not copies!)
     SSIMContext ctx;
-    ctx.img1 = img1_copy;
-    ctx.img2 = img2_copy;
-    ctx.dm_dmu1 = dm_dmu1;
-    ctx.dm_dsigma1_sq = dm_dsigma1_sq;
-    ctx.dm_dsigma12 = dm_dsigma12;
-    ctx.original_h = original_h;
-    ctx.original_w = original_w;
+    ctx.img1 = img1;
+    ctx.img2 = img2;
+    ctx.dm_dmu1 = workspace.dm_dmu1;       // Reference to workspace
+    ctx.dm_dsigma1_sq = workspace.dm_dsigma1_sq;
+    ctx.dm_dsigma12 = workspace.dm_dsigma12;
+    ctx.original_h = h;
+    ctx.original_w = w;
     ctx.apply_valid_padding = apply_valid_padding;
 
-    return {ssim_value, ctx};
+    return {ssim_value_tensor, ctx};
 }
 
-// ------------------------------------------
-// Manual SSIM backward (no autograd) - computes gradient w.r.t. img1
-// Matches the interface in include/kernels/ssim.cuh
-// ------------------------------------------
-torch::Tensor ssim_backward(
+// Optimized version with pre-allocated workspace
+lfs::core::Tensor ssim_backward(
     const SSIMContext& ctx,
+    SSIMWorkspace& workspace,
     float grad_loss) {
 
-    // Constants matching NEW's SSIM kernel
-    constexpr float C1 = 0.01f * 0.01f;
-    constexpr float C2 = 0.03f * 0.03f;
+    const float C1 = 0.01f * 0.01f;
+    const float C2 = 0.03f * 0.03f;
 
-    // Create gradient tensor for SSIM map
-    // If valid padding was applied, we need to account for cropped region
-    auto dL_dmap = torch::ones_like(ctx.img1);
+    // Compute gradient map size (after cropping if applicable)
+    int grad_h = ctx.original_h;
+    int grad_w = ctx.original_w;
+    size_t N = ctx.img1.shape()[0];
+    size_t C = ctx.img1.shape()[1];
+    size_t numel = N * C * grad_h * grad_w;
 
-    if (ctx.apply_valid_padding && ctx.original_h > 10 && ctx.original_w > 10) {
-        // Zero out the border regions that were cropped
-        dL_dmap.zero_();
-        dL_dmap.index_put_({
-            torch::indexing::Slice(),
-            torch::indexing::Slice(),
-            torch::indexing::Slice(5, ctx.original_h - 5),
-            torch::indexing::Slice(5, ctx.original_w - 5)
-        }, torch::ones({dL_dmap.size(0), dL_dmap.size(1),
-                        ctx.original_h - 10, ctx.original_w - 10}, dL_dmap.options()));
+    if (ctx.apply_valid_padding && grad_h > 10 && grad_w > 10) {
+        grad_h -= 10;
+        grad_w -= 10;
+        numel = N * C * grad_h * grad_w;
     }
 
-    // Scale by mean reduction factor and input grad_loss
-    int64_t num_elements = ctx.apply_valid_padding && ctx.original_h > 10 && ctx.original_w > 10
-                               ? (ctx.original_h - 10) * (ctx.original_w - 10)
-                               : ctx.original_h * ctx.original_w;
-    float scale = grad_loss / static_cast<float>(num_elements * dL_dmap.size(0) * dL_dmap.size(1));
-    dL_dmap = dL_dmap * scale;
+    float grad_per_pixel = grad_loss / static_cast<float>(numel);
 
-    // Call backward kernel
-    auto img1_copy = ctx.img1.clone();
-    auto img2_copy = ctx.img2.clone();
-    auto dm_dmu1_copy = ctx.dm_dmu1.clone();
-    auto dm_dsigma1_sq_copy = ctx.dm_dsigma1_sq.clone();
-    auto dm_dsigma12_copy = ctx.dm_dsigma12.clone();
+    // Use pre-allocated workspace buffer
+    workspace.dL_dmap.zero_();
 
-    return fusedssim_backward(C1, C2, img1_copy, img2_copy, dL_dmap,
-                              dm_dmu1_copy, dm_dsigma1_sq_copy, dm_dsigma12_copy);
+    if (ctx.apply_valid_padding && ctx.original_h > 10 && ctx.original_w > 10) {
+        auto cropped_view = workspace.dL_dmap.slice(2, 5, ctx.original_h - 5).slice(3, 5, ctx.original_w - 5);
+        cropped_view.fill_(grad_per_pixel, nullptr);  // stream-aware version, no sync
+    } else {
+        workspace.dL_dmap.fill_(grad_per_pixel, nullptr);
+    }
+
+    // Use pre-allocated output buffer
+    workspace.dL_dimg1.zero_();
+
+    // Launch backward kernel
+    dim3 grid((ctx.original_w + BLOCK_X - 1) / BLOCK_X,
+              (ctx.original_h + BLOCK_Y - 1) / BLOCK_Y,
+              N);
+    dim3 block(BLOCK_X, BLOCK_Y);
+
+    fusedssim_backwardCUDA<<<grid, block>>>(
+        ctx.original_h, ctx.original_w, static_cast<int>(C), C1, C2,
+        ctx.img1.ptr<float>(),
+        ctx.img2.ptr<float>(),
+        workspace.dL_dmap.ptr<float>(),
+        workspace.dL_dimg1.ptr<float>(),
+        ctx.dm_dmu1.ptr<float>(),
+        ctx.dm_dsigma1_sq.ptr<float>(),
+        ctx.dm_dsigma12.ptr<float>());
+
+    return workspace.dL_dimg1;
 }
+
+} // namespace lfs::training::kernels

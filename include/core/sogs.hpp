@@ -7,20 +7,23 @@
 #include "core/splat_data.hpp"
 #include <expected>
 #include <filesystem>
+#include <functional>
 #include <string>
 
-namespace gs {
-    namespace core {
+namespace lfs::core {
 
-        struct SogWriteOptions {
-            int iterations = 10;
-            bool use_gpu = true;
-            std::filesystem::path output_path;
-        };
+    // Progress callback: (progress 0.0-1.0, stage_name) -> return false to cancel
+    using SogProgressCallback = std::function<bool(float progress, const std::string& stage)>;
 
-        std::expected<void, std::string> write_sog(
-            const SplatData& splat_data,
-            const SogWriteOptions& options);
+    struct SogWriteOptions {
+        int iterations = 10;
+        bool use_gpu = true;
+        std::filesystem::path output_path;
+        SogProgressCallback progress_callback = nullptr;
+    };
 
-    } // namespace core
-} // namespace gs
+    std::expected<void, std::string> write_sog(
+        const SplatData& splat_data,
+        const SogWriteOptions& options);
+
+} // namespace lfs::core

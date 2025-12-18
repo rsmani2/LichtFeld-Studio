@@ -4,33 +4,54 @@
 
 #pragma once
 
+#include "core/tensor.hpp"
 #include "geometry/euclidean_transform.hpp"
+#include "render_constants.hpp"
 #include <array>
 #include <expected>
 #include <glm/glm.hpp>
 #include <memory>
 #include <optional>
 #include <string>
-#include <torch/types.h>
 #include <vector>
 
-namespace gs {
+namespace lfs::core {
     class SplatData;
+    struct PointCloud;
     class Camera;
-} // namespace gs
+    class Tensor;
+} // namespace lfs::core
 
-namespace gs::rendering {
+namespace lfs::rendering {
+
+    // Import Tensor into this namespace for convenience
+    using lfs::core::Tensor;
 
     // Error handling with std::expected (C++23)
     template <typename T>
     using Result = std::expected<T, std::string>;
+
+    enum class SelectionMode {
+        Centers,
+        Rectangle,
+        Polygon,
+        Lasso,
+        Rings
+    };
 
     // Public types
     struct ViewportData {
         glm::mat3 rotation;
         glm::vec3 translation;
         glm::ivec2 size;
-        float fov = 60.0f;
+        float fov = DEFAULT_FOV;
+        bool orthographic = false;
+        float ortho_scale = DEFAULT_ORTHO_SCALE;
+
+        [[nodiscard]] glm::mat4 getProjectionMatrix(const float near_plane = DEFAULT_NEAR_PLANE,
+                                                    const float far_plane = DEFAULT_FAR_PLANE) const {
+            return createProjectionMatrix(size, fov, orthographic, ortho_scale, near_plane, far_plane);
+        }
     };
 
     struct BoundingBox {
@@ -43,18 +64,52 @@ namespace gs::rendering {
         ViewportData viewport;
         float scaling_modifier = 1.0f;
         bool antialiasing = false;
+        int sh_degree = 3;
         glm::vec3 background_color{0.0f, 0.0f, 0.0f};
         std::optional<BoundingBox> crop_box;
         bool point_cloud_mode = false;
         float voxel_size = 0.01f;
         bool gut = false;
-        bool equirectangular = false;
-        int sh_degree = 3;
+        bool show_rings = false;
+        float ring_width = 0.002f;
+        bool show_center_markers = false;
+        // Per-node transforms: array of 4x4 matrices and per-Gaussian indices
+        std::vector<glm::mat4> model_transforms;          // Array of transforms, one per node
+        std::shared_ptr<lfs::core::Tensor> transform_indices;  // Per-Gaussian index [N], nullable
+        // Selection mask for highlighting selected Gaussians
+        std::shared_ptr<lfs::core::Tensor> selection_mask;  // Per-Gaussian uint8 [N], nullable (1 = selected, 0 = not)
+        // Request screen positions output for brush tool
+        bool output_screen_positions = false;
+        // Brush selection (computed in preprocess for coordinate consistency)
+        bool brush_active = false;              // Whether brush selection is active this frame
+        float brush_x = 0.0f;                   // Brush center X in screen coords
+        float brush_y = 0.0f;                   // Brush center Y in screen coords
+        float brush_radius = 0.0f;              // Brush radius in pixels
+        bool brush_add_mode = true;             // true = add to selection, false = remove from selection
+        lfs::core::Tensor* brush_selection_tensor = nullptr;
+        bool brush_saturation_mode = false;
+        float brush_saturation_amount = 0.0f;
+        bool selection_mode_rings = false;
+        bool crop_inverse = false;
+        bool crop_desaturate = false;
+        // Depth filter for selection tool (separate from crop box, always desaturates outside)
+        std::optional<BoundingBox> depth_filter;
+        // Per-node selection mask: true = selected. Empty = no selection effects.
+        std::vector<bool> selected_node_mask;
+        bool desaturate_unselected = false;
+        float selection_flash_intensity = 0.0f;
+        unsigned long long* hovered_depth_id = nullptr;
+        int highlight_gaussian_id = -1;
+        float far_plane = 1e10f;
+        bool orthographic = false;  // Use orthographic projection instead of perspective
+        float ortho_scale = 100.0f; // Pixels per world unit for orthographic projection
     };
 
     struct RenderResult {
-        std::shared_ptr<torch::Tensor> image;
-        std::shared_ptr<torch::Tensor> depth;
+        std::shared_ptr<lfs::core::Tensor> image;
+        std::shared_ptr<lfs::core::Tensor> depth;
+        std::shared_ptr<lfs::core::Tensor> screen_positions;  // Optional: screen positions [N, 2] for brush tool
+        bool valid = false;
     };
 
     // Split view support
@@ -68,7 +123,7 @@ namespace gs::rendering {
         PanelContentType content_type = PanelContentType::Model3D;
 
         // For Model3D
-        const SplatData* model = nullptr;
+        const lfs::core::SplatData* model = nullptr;
 
         // For Image2D or CachedRender
         unsigned int texture_id = 0;
@@ -86,17 +141,19 @@ namespace gs::rendering {
         // Common render settings
         float scaling_modifier = 1.0f;
         bool antialiasing = false;
+        int sh_degree = 3;
         glm::vec3 background_color{0.0f, 0.0f, 0.0f};
         std::optional<BoundingBox> crop_box;
         bool point_cloud_mode = false;
         float voxel_size = 0.01f;
         bool gut = false;
+        bool show_rings = false;
+        float ring_width = 0.002f;
 
         // UI settings
         bool show_dividers = true;
         glm::vec4 divider_color{1.0f, 0.85f, 0.0f, 1.0f};
         bool show_labels = true;
-        int sh_degree = 3;
     };
 
     enum class GridPlane {
@@ -156,17 +213,18 @@ namespace gs::rendering {
         float scaling_modifier = 1.0f;
         bool antialiasing = false;
         RenderMode render_mode = RenderMode::RGB;
-        const void* crop_box = nullptr; // Actually geometry::BoundingBox*
+        const void* crop_box = nullptr; // Actually lfs::geometry::BoundingBox*
         glm::vec3 background_color = glm::vec3(0.0f, 0.0f, 0.0f);
         bool point_cloud_mode = false;
         float voxel_size = 0.01f;
         bool gut = false;
-        int sh_degree = 0;
+        bool show_rings = false;
+        float ring_width = 0.002f;
     };
 
     struct RenderingPipelineResult {
-        torch::Tensor image;
-        torch::Tensor depth;
+        Tensor image;
+        Tensor depth;
         bool valid = false;
     };
 
@@ -186,8 +244,8 @@ namespace gs::rendering {
         virtual void setLineWidth(float width) = 0;
         virtual bool isInitialized() const = 0;
 
-        virtual void setworld2BBox(const geometry::EuclideanTransform& transform) = 0;
-        virtual geometry::EuclideanTransform getworld2BBox() const = 0;
+        virtual void setworld2BBox(const lfs::geometry::EuclideanTransform& transform) = 0;
+        virtual lfs::geometry::EuclideanTransform getworld2BBox() const = 0;
 
         virtual glm::vec3 getColor() const = 0;
         virtual float getLineWidth() const = 0;
@@ -217,7 +275,12 @@ namespace gs::rendering {
 
         // Core rendering with error handling
         virtual Result<RenderResult> renderGaussians(
-            const SplatData& splat_data,
+            const lfs::core::SplatData& splat_data,
+            const RenderRequest& request) = 0;
+
+        // Point cloud rendering (for pre-training visualization)
+        virtual Result<RenderResult> renderPointCloud(
+            const lfs::core::PointCloud& point_cloud,
             const RenderRequest& request) = 0;
 
         // Split view rendering
@@ -247,11 +310,29 @@ namespace gs::rendering {
             float size = 2.0f,
             const std::array<bool, 3>& visible = {true, true, true}) = 0;
 
+        virtual Result<void> renderPivot(
+            const ViewportData& viewport,
+            const glm::vec3& pivot_position,
+            float size = 50.0f,
+            float opacity = 1.0f) = 0;
+
         // Viewport gizmo rendering
         virtual Result<void> renderViewportGizmo(
             const glm::mat3& camera_rotation,
             const glm::vec2& viewport_pos,
             const glm::vec2& viewport_size) = 0;
+
+        // Hit-test viewport gizmo (returns 0-2=+X/Y/Z, 3-5=-X/Y/Z, or -1 for none)
+        virtual int hitTestViewportGizmo(
+            const glm::vec2& click_pos,
+            const glm::vec2& viewport_pos,
+            const glm::vec2& viewport_size) const = 0;
+
+        // Set hovered axis for highlighting (0-2=+X/Y/Z, 3-5=-X/Y/Z, -1 for none)
+        virtual void setViewportGizmoHover(int axis) = 0;
+
+        // Get camera rotation matrix to view along axis
+        [[nodiscard]] static glm::mat3 getAxisViewRotation(int axis, bool negative = false);
 
         // Translation gizmo rendering
         virtual Result<void> renderTranslationGizmo(
@@ -261,39 +342,41 @@ namespace gs::rendering {
 
         // Camera frustum rendering
         virtual Result<void> renderCameraFrustums(
-            const std::vector<std::shared_ptr<const Camera>>& cameras,
+            const std::vector<std::shared_ptr<const lfs::core::Camera>>& cameras,
             const ViewportData& viewport,
             float scale = 0.1f,
             const glm::vec3& train_color = glm::vec3(0.0f, 1.0f, 0.0f),
             const glm::vec3& eval_color = glm::vec3(1.0f, 0.0f, 0.0f),
-            const glm::mat4& world_transform = glm::mat4(1.0f)) = 0;
+            const glm::mat4& scene_transform = glm::mat4(1.0f)) = 0;
 
         // Camera frustum rendering with highlighting
         virtual Result<void> renderCameraFrustumsWithHighlight(
-            const std::vector<std::shared_ptr<const Camera>>& cameras,
+            const std::vector<std::shared_ptr<const lfs::core::Camera>>& cameras,
             const ViewportData& viewport,
             float scale = 0.1f,
             const glm::vec3& train_color = glm::vec3(0.0f, 1.0f, 0.0f),
             const glm::vec3& eval_color = glm::vec3(1.0f, 0.0f, 0.0f),
             int highlight_index = -1,
-            const glm::mat4& world_transform = glm::mat4(1.0f)) = 0;
+            const glm::mat4& scene_transform = glm::mat4(1.0f)) = 0;
 
         // Camera frustum picking
         virtual Result<int> pickCameraFrustum(
-            const std::vector<std::shared_ptr<const Camera>>& cameras,
+            const std::vector<std::shared_ptr<const lfs::core::Camera>>& cameras,
             const glm::vec2& mouse_pos,
             const glm::vec2& viewport_pos,
             const glm::vec2& viewport_size,
             const ViewportData& viewport,
             float scale = 0.1f,
-            const glm::mat4& world_transform = glm::mat4(1.0f)) = 0;
+            const glm::mat4& scene_transform = glm::mat4(1.0f)) = 0;
+
+        virtual void clearFrustumCache() = 0;
 
         // Get gizmo interaction interface
         virtual std::shared_ptr<GizmoInteraction> getGizmoInteraction() = 0;
 
         // Pipeline rendering (for visualizer compatibility)
         virtual RenderingPipelineResult renderWithPipeline(
-            const SplatData& model,
+            const lfs::core::SplatData& model,
             const RenderingPipelineRequest& request) = 0;
 
         // Factory methods - now return Result
@@ -301,4 +384,4 @@ namespace gs::rendering {
         virtual Result<std::shared_ptr<ICoordinateAxes>> createCoordinateAxes() = 0;
     };
 
-} // namespace gs::rendering
+} // namespace lfs::rendering

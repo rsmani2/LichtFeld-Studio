@@ -5,11 +5,11 @@
 // These tests verify that the LibTorch-free implementation produces
 // mathematically equivalent results to the reference implementation
 
-#include "training_new/strategies/default_strategy.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/parameters.hpp"
-#include "core_new/point_cloud.hpp"
-#include "core_new/splat_data.hpp"
+#include "training/strategies/default_strategy.hpp"
+#include "core/logger.hpp"
+#include "core/parameters.hpp"
+#include "core/point_cloud.hpp"
+#include "core/splat_data.hpp"
 #include <gtest/gtest.h>
 #include <cmath>
 

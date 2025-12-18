@@ -4,8 +4,8 @@
 
 #pragma once
 #include "colmap.hpp"
-#include "core_new/camera.hpp"
-#include "core_new/point_cloud.hpp"
+#include "core/camera.hpp"
+#include "core/point_cloud.hpp"
 
 #include <filesystem>
 #include <vector>

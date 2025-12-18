@@ -11,8 +11,8 @@
 
 #include <gtest/gtest.h>
 #include <spdlog/spdlog.h>
-#include "core_new/tensor.hpp"
-#include "training_new/losses/regularization.hpp"
+#include "core/tensor.hpp"
+#include "training/losses/regularization.hpp"
 
 using namespace lfs::core;
 using namespace lfs::training::losses;

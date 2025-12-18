@@ -11,7 +11,7 @@
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
 #include <torch/torch.h>
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 
 using namespace lfs::core;
 

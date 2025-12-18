@@ -10,11 +10,11 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
-#include "core_new/tensor.hpp"
-#include "core_new/tensor/internal/tensor_serialization.hpp"
-#include "core_new/logger.hpp"
+#include "core/tensor.hpp"
+#include "core/tensor/internal/tensor_serialization.hpp"
+#include "core/logger.hpp"
 #include "rasterization/fastgs/rasterization/include/rasterization_api.h"
-#include "core_new/cuda/memory_arena.hpp"
+#include "core/cuda/memory_arena.hpp"
 
 using namespace lfs::core;
 

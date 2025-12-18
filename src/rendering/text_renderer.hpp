@@ -12,7 +12,7 @@
 #include <map>
 #include <string>
 
-namespace gs::rendering {
+namespace lfs::rendering {
 
     struct Character {
         GLuint textureID;
@@ -31,6 +31,10 @@ namespace gs::rendering {
                                 const glm::vec3& color = glm::vec3(1.0f));
         void updateScreenSize(unsigned int width, unsigned int height);
 
+        // Get character dimensions for centering calculations
+        [[nodiscard]] glm::vec2 getCharacterSize(char c, float scale) const;
+        [[nodiscard]] glm::vec2 getCharacterBearing(char c, float scale) const;
+
     private:
         unsigned int screenWidth, screenHeight;
         VAO vao_;
@@ -41,4 +45,4 @@ namespace gs::rendering {
         Result<void> initRenderData();
     };
 
-} // namespace gs::rendering
+} // namespace lfs::rendering

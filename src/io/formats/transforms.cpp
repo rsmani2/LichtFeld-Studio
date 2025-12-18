@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "transforms.hpp"
-#include "core_new/image_io.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/tensor.hpp"
+#include "core/image_io.hpp"
+#include "core/logger.hpp"
+#include "core/tensor.hpp"
 #include "external/tinyply.hpp"
 #include "formats/colmap.hpp"
 #include <filesystem>

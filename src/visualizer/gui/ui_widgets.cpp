@@ -4,12 +4,15 @@
 
 #include "gui/ui_widgets.hpp"
 #include "scene/scene_manager.hpp"
+#include "theme/theme.hpp"
 #include "training/training_manager.hpp"
 #include "visualizer_impl.hpp"
 #include <cstdarg>
 #include <imgui.h>
 
-namespace gs::gui::widgets {
+namespace lfs::vis::gui::widgets {
+
+    using namespace lfs::core::events;
 
     bool SliderWithReset(const char* label, float* v, float min, float max, float reset_value) {
         bool changed = ImGui::SliderFloat(label, v, min, max);
@@ -90,8 +93,9 @@ namespace gs::gui::widgets {
             return;
         }
 
+        const auto& t = theme();
         const char* mode_str = "Unknown";
-        ImVec4 mode_color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+        ImVec4 mode_color = t.palette.text_dim;
 
         // Content determines base mode
         SceneManager::ContentType content = scene_manager->getContentType();
@@ -99,12 +103,12 @@ namespace gs::gui::widgets {
         switch (content) {
         case SceneManager::ContentType::Empty:
             mode_str = "Empty";
-            mode_color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+            mode_color = t.palette.text_dim;
             break;
 
         case SceneManager::ContentType::SplatFiles:
-            mode_str = "Splat Viewer";
-            mode_color = ImVec4(0.2f, 0.6f, 1.0f, 1.0f);
+            mode_str = "Edit Mode";
+            mode_color = t.palette.info;
             break;
 
         case SceneManager::ContentType::Dataset: {
@@ -112,38 +116,51 @@ namespace gs::gui::widgets {
             auto* trainer_manager = scene_manager->getTrainerManager();
             if (!trainer_manager || !trainer_manager->hasTrainer()) {
                 mode_str = "Dataset (No Trainer)";
-                mode_color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+                mode_color = t.palette.text_dim;
             } else {
                 // Use trainer state for specific mode
                 auto state = trainer_manager->getState();
                 switch (state) {
                 case TrainerManager::State::Ready:
                     mode_str = "Dataset (Ready)";
-                    mode_color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+                    mode_color = t.palette.success;
                     break;
                 case TrainerManager::State::Running:
                     mode_str = "Training";
-                    mode_color = ImVec4(1.0f, 0.6f, 0.2f, 1.0f);
+                    mode_color = t.palette.warning;
                     break;
                 case TrainerManager::State::Paused:
                     mode_str = "Training (Paused)";
-                    mode_color = ImVec4(0.7f, 0.7f, 0.2f, 1.0f);
+                    mode_color = lighten(t.palette.warning, -0.3f);
                     break;
-                case TrainerManager::State::Completed:
-                    mode_str = "Training Complete";
-                    mode_color = ImVec4(0.2f, 0.8f, 0.2f, 1.0f);
+                case TrainerManager::State::Finished: {
+                    const auto reason = trainer_manager->getStateMachine().getFinishReason();
+                    switch (reason) {
+                    case FinishReason::Completed:
+                        mode_str = "Training Complete";
+                        mode_color = t.palette.success;
+                        break;
+                    case FinishReason::UserStopped:
+                        mode_str = "Training Stopped";
+                        mode_color = t.palette.text_dim;
+                        break;
+                    case FinishReason::Error:
+                        mode_str = "Training Error";
+                        mode_color = t.palette.error;
+                        break;
+                    default:
+                        mode_str = "Training Finished";
+                        mode_color = t.palette.text_dim;
+                    }
                     break;
-                case TrainerManager::State::Error:
-                    mode_str = "Training Error";
-                    mode_color = ImVec4(1.0f, 0.3f, 0.3f, 1.0f);
-                    break;
+                }
                 case TrainerManager::State::Stopping:
                     mode_str = "Stopping...";
-                    mode_color = ImVec4(0.7f, 0.5f, 0.5f, 1.0f);
+                    mode_color = darken(t.palette.error, 0.3f);
                     break;
                 default:
                     mode_str = "Dataset";
-                    mode_color = ImVec4(0.5f, 0.5f, 0.5f, 1.0f);
+                    mode_color = t.palette.text_dim;
                 }
             }
             break;
@@ -177,4 +194,126 @@ namespace gs::gui::widgets {
     void DrawModeStatusWithContentSwitch(const UIContext& ctx) {
         DrawModeStatus(ctx);
     }
-} // namespace gs::gui::widgets
+
+    void DrawWindowShadow(const ImVec2& pos, const ImVec2& size, const float rounding) {
+        const auto& t = theme();
+        if (!t.shadows.enabled) return;
+
+        constexpr int LAYER_COUNT = 8;
+        constexpr float FALLOFF_SCALE = 0.18f;
+        constexpr float ROUNDING_SCALE = 0.3f;
+
+        auto* const draw_list = ImGui::GetBackgroundDrawList();
+        const ImVec2& off = t.shadows.offset;
+        const float blur = t.shadows.blur;
+        const float base_alpha = t.shadows.alpha * 255.0f;
+
+        for (int i = 0; i < LAYER_COUNT; ++i) {
+            const float t_val = static_cast<float>(i) / (LAYER_COUNT - 1);
+            const float inv_t = 1.0f - t_val;
+            const float falloff = inv_t * inv_t * inv_t;
+            const int alpha = static_cast<int>(base_alpha * falloff * FALLOFF_SCALE);
+            if (alpha < 1) continue;
+
+            const float expand = blur * t_val;
+            const ImVec2 p1 = {pos.x + off.x - expand, pos.y + off.y - expand};
+            const ImVec2 p2 = {pos.x + size.x + off.x + expand, pos.y + size.y + off.y + expand};
+            draw_list->AddRectFilled(p1, p2, IM_COL32(0, 0, 0, alpha), rounding + expand * ROUNDING_SCALE);
+        }
+    }
+
+    void DrawViewportVignette(const ImVec2& pos, const ImVec2& size) {
+        const auto& t = theme();
+        if (!t.vignette.enabled) return;
+
+        constexpr float EDGE_SCALE = 0.5f;
+        constexpr ImU32 CLEAR_COLOR = IM_COL32(0, 0, 0, 0);
+
+        auto* const draw_list = ImGui::GetForegroundDrawList();
+        const float edge_mult = (1.0f - t.vignette.radius) * EDGE_SCALE * (1.0f + t.vignette.softness);
+        const float edge_w = size.x * edge_mult;
+        const float edge_h = size.y * edge_mult;
+        const ImU32 dark = IM_COL32(0, 0, 0, static_cast<int>(t.vignette.intensity * 255.0f));
+
+        const float x1 = pos.x, y1 = pos.y;
+        const float x2 = pos.x + size.x, y2 = pos.y + size.y;
+
+        draw_list->AddRectFilledMultiColor({x1, y1}, {x1 + edge_w, y2}, dark, CLEAR_COLOR, CLEAR_COLOR, dark);
+        draw_list->AddRectFilledMultiColor({x2 - edge_w, y1}, {x2, y2}, CLEAR_COLOR, dark, dark, CLEAR_COLOR);
+        draw_list->AddRectFilledMultiColor({x1, y1}, {x2, y1 + edge_h}, dark, dark, CLEAR_COLOR, CLEAR_COLOR);
+        draw_list->AddRectFilledMultiColor({x1, y2 - edge_h}, {x2, y2}, CLEAR_COLOR, CLEAR_COLOR, dark, dark);
+    }
+
+    bool IconButton(const char* id, const unsigned int texture, const ImVec2& size,
+                    const bool selected, const char* fallback_label) {
+        constexpr float ACTIVE_DARKEN = 0.1f;
+        constexpr float TINT_BASE = 0.7f;
+        constexpr float TINT_ACCENT = 0.3f;
+        constexpr float FALLBACK_PADDING = 8.0f;
+        constexpr ImVec4 TINT_NORMAL = {1.0f, 1.0f, 1.0f, 0.9f};
+
+        const auto& t = theme();
+        const ImVec4 bg_normal = selected ? t.button_selected() : t.button_normal();
+        const ImVec4 bg_hovered = selected ? t.button_selected_hovered() : t.button_hovered();
+        const ImVec4 bg_active = selected ? darken(t.button_selected(), ACTIVE_DARKEN) : t.button_active();
+        const ImVec4 tint = selected
+            ? ImVec4{TINT_BASE + t.palette.primary.x * TINT_ACCENT,
+                     TINT_BASE + t.palette.primary.y * TINT_ACCENT,
+                     TINT_BASE + t.palette.primary.z * TINT_ACCENT, 1.0f}
+            : TINT_NORMAL;
+
+        ImGui::PushStyleColor(ImGuiCol_Button, bg_normal);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, bg_hovered);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, bg_active);
+
+        const bool clicked = texture
+            ? ImGui::ImageButton(id, static_cast<ImTextureID>(texture), size, {0, 0}, {1, 1}, {0, 0, 0, 0}, tint)
+            : ImGui::Button(fallback_label, {size.x + FALLBACK_PADDING, size.y + FALLBACK_PADDING});
+
+        ImGui::PopStyleColor(3);
+        return clicked;
+    }
+
+    void SectionHeader(const char* text, const FontSet& fonts) {
+        const auto& t = theme();
+        if (fonts.section) ImGui::PushFont(fonts.section);
+        ImGui::TextColored(t.palette.text_dim, "%s", text);
+        if (fonts.section) ImGui::PopFont();
+        ImGui::Separator();
+    }
+
+    bool ColoredButton(const char* label, const ButtonStyle style, const ImVec2& size) {
+        constexpr float TINT_NORMAL = 0.15f;
+        constexpr float TINT_HOVER = 0.25f;
+        constexpr float TINT_ACTIVE = 0.35f;
+
+        const auto& t = theme();
+        const ImVec4& base = t.palette.surface;
+
+        const ImVec4 accent = [&]() {
+            switch (style) {
+            case ButtonStyle::Primary: return t.palette.primary;
+            case ButtonStyle::Success: return t.palette.success;
+            case ButtonStyle::Warning: return t.palette.warning;
+            case ButtonStyle::Error:   return t.palette.error;
+            default:                   return t.palette.text_dim;
+            }
+        }();
+
+        const auto blend = [&](const float f) {
+            return ImVec4{base.x + (accent.x - base.x) * f,
+                          base.y + (accent.y - base.y) * f,
+                          base.z + (accent.z - base.z) * f, 1.0f};
+        };
+
+        ImGui::PushStyleColor(ImGuiCol_Button, blend(TINT_NORMAL));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, blend(TINT_HOVER));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, blend(TINT_ACTIVE));
+
+        const bool clicked = ImGui::Button(label, size);
+
+        ImGui::PopStyleColor(3);
+        return clicked;
+    }
+
+} // namespace lfs::vis::gui::widgets

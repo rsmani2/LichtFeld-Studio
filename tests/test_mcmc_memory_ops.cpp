@@ -12,8 +12,8 @@
  */
 
 #include <gtest/gtest.h>
-#include "core_new/tensor.hpp"
-#include "../src/core_new/tensor/internal/memory_pool.hpp"
+#include "core/tensor.hpp"
+#include "../src/core/tensor/internal/memory_pool.hpp"
 #include <cuda_runtime.h>
 #include <iostream>
 #include <vector>

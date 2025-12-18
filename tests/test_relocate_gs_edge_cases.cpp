@@ -20,7 +20,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <torch/torch.h>
 #include <cmath>
 #include <limits>

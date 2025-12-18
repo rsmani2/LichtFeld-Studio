@@ -1,8 +1,8 @@
 /* Binary search to find what corrupts CUDA state */
-#include "core_new/tensor.hpp"
-#include "core_new/splat_data.hpp"
-#include "core_new/parameters.hpp"
-#include "training_new/strategies/default_strategy.hpp"
+#include "core/tensor.hpp"
+#include "core/splat_data.hpp"
+#include "core/parameters.hpp"
+#include "training/strategies/default_strategy.hpp"
 #include "optimizer/render_output.hpp"
 #include <gtest/gtest.h>
 #include <iostream>
@@ -194,7 +194,7 @@ TEST(BinarySearchBug, Step4_CallPostBackward) {
 
 // Dedicated tests to isolate the index_select bug that occurs at ~100K elements
 
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <gtest/gtest.h>
 #include <iostream>
 
@@ -396,7 +396,7 @@ TEST(TensorIndexSelectBug, FindBreakingPoint) {
     }
 }
 /* Minimal test using ONLY lfs_tensor library to isolate the bug */
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <gtest/gtest.h>
 #include <iostream>
 

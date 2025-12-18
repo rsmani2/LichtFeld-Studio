@@ -1,7 +1,7 @@
 /* Test to isolate tensor struct initialization bug */
 
-#include "core_new/logger.hpp"
-#include "core_new/tensor.hpp"
+#include "core/logger.hpp"
+#include "core/tensor.hpp"
 #include <gtest/gtest.h>
 
 using lfs::core::DataType;

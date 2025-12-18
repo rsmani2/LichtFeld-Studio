@@ -4,48 +4,51 @@
 
 #pragma once
 
-#include "Common.h"
-#include <c10/cuda/CUDAStream.h>
+#include "core/camera_types.h"
+#include "core/tensor.hpp"
+#include <cuda_runtime.h>
 #include <filesystem>
 #include <future>
 #include <string>
-#include <torch/torch.h>
 
-namespace gs {
+namespace lfs::core {
 
     class Camera {
     public:
         Camera() = default;
 
-        Camera(const torch::Tensor& R,
-               const torch::Tensor& T,
+        Camera(const Tensor& R,
+               const Tensor& T,
                float focal_x, float focal_y,
                float center_x, float center_y,
-               torch::Tensor radial_distortion,
-               torch::Tensor tangential_distortion,
-               gsplat::CameraModelType camera_model_type,
+               Tensor radial_distortion,
+               Tensor tangential_distortion,
+               CameraModelType camera_model_type,
                const std::string& image_name,
                const std::filesystem::path& image_path,
                const std::filesystem::path& mask_path,
                int camera_width, int camera_height,
                int uid);
-        Camera(const Camera&, const torch::Tensor& transform);
+        Camera(const Camera&, const Tensor& transform);
 
-        // Delete copy, allow move
+        // Destructor to clean up CUDA stream
+        ~Camera();
+
+        // Delete copy, define proper move semantics
         Camera(const Camera&) = delete;
         Camera& operator=(const Camera&) = delete;
-        Camera(Camera&&) = default;
-        Camera& operator=(Camera&&) = default;
+        Camera(Camera&& other) noexcept;
+        Camera& operator=(Camera&& other) noexcept;
 
         // Initialize GPU tensors on demand
         void initialize_cuda_tensors();
 
         // Load image from disk and return it
-        torch::Tensor load_and_get_image(int resize_factor = -1, int max_width = 3840);
+        Tensor load_and_get_image(int resize_factor = -1, int max_width = 3840);
 
-        // Load mask from disk, process it, cache it, and return it
-        torch::Tensor load_and_get_mask(int resize_factor = -1, int max_width = 3840,
-                                        bool invert_mask = false, float mask_threshold = 0.5f);
+        // Load mask from disk, process it, and return it (cached)
+        Tensor load_and_get_mask(int resize_factor = -1, int max_width = 3840,
+                                 bool invert_mask = false, float mask_threshold = 0.5f);
 
         // Load image from disk just to populate _image_width/_image_height
         void load_image_size(int resize_factor = -1, int max_width = 3840);
@@ -55,17 +58,25 @@ namespace gs {
         size_t get_num_bytes_from_file() const;
 
         // Accessors - now return const references to avoid copies
-        const torch::Tensor& world_view_transform() const {
+        const Tensor& world_view_transform() const {
             return _world_view_transform;
         }
-        const torch::Tensor& cam_position() const {
+        const Tensor& cam_position() const {
             return _cam_position;
         }
 
-        const torch::Tensor& R() const { return _R; }
-        const torch::Tensor& T() const { return _T; }
+        // Direct GPU pointer access (tensors are already contiguous on CUDA)
+        const float* world_view_transform_ptr() const {
+            return _world_view_transform.ptr<float>();
+        }
+        const float* cam_position_ptr() const {
+            return _cam_position.ptr<float>();
+        }
 
-        torch::Tensor K() const;
+        const Tensor& R() const { return _R; }
+        const Tensor& T() const { return _T; }
+
+        Tensor K() const;
 
         std::tuple<float, float, float, float> get_intrinsics() const;
 
@@ -75,12 +86,15 @@ namespace gs {
         int camera_width() const noexcept { return _camera_width; }
         float focal_x() const noexcept { return _focal_x; }
         float focal_y() const noexcept { return _focal_y; }
-        torch::Tensor radial_distortion() const noexcept { return _radial_distortion; }
-        torch::Tensor tangential_distortion() const noexcept { return _tangential_distortion; }
-        gsplat::CameraModelType camera_model_type() const noexcept { return _camera_model_type; }
+        float center_x() const noexcept { return _center_x; }
+        float center_y() const noexcept { return _center_y; }
+        Tensor radial_distortion() const noexcept { return _radial_distortion; }
+        Tensor tangential_distortion() const noexcept { return _tangential_distortion; }
+        CameraModelType camera_model_type() const noexcept { return _camera_model_type; }
         const std::string& image_name() const noexcept { return _image_name; }
         const std::filesystem::path& image_path() const noexcept { return _image_path; }
         const std::filesystem::path& mask_path() const noexcept { return _mask_path; }
+        bool has_mask() const noexcept { return !_mask_path.empty() && std::filesystem::exists(_mask_path); }
         int uid() const noexcept { return _uid; }
 
         float FoVx() const noexcept { return _FoVx; }
@@ -97,12 +111,12 @@ namespace gs {
         float _center_y = 0.f;
 
         // redundancy with _world_view_transform, but save calculation and passing from GPU 2 CPU
-        torch::Tensor _R;
-        torch::Tensor _T;
+        Tensor _R;
+        Tensor _T;
 
-        torch::Tensor _radial_distortion = torch::empty({0}, torch::kFloat32);
-        torch::Tensor _tangential_distortion = torch::empty({0}, torch::kFloat32);
-        gsplat::CameraModelType _camera_model_type = gsplat::CameraModelType::PINHOLE;
+        Tensor _radial_distortion;
+        Tensor _tangential_distortion;
+        CameraModelType _camera_model_type = CameraModelType::PINHOLE;
 
         // Image info
         std::string _image_name;
@@ -114,15 +128,15 @@ namespace gs {
         int _image_height = 0;
 
         // GPU tensors (computed on demand)
-        torch::Tensor _world_view_transform;
-        torch::Tensor _cam_position;
+        Tensor _world_view_transform;
+        Tensor _cam_position;
 
         // Mask caching (processed mask stored on GPU)
-        torch::Tensor _cached_mask;
+        Tensor _cached_mask;
         bool _mask_loaded = false;
 
         // CUDA stream for async operations
-        at::cuda::CUDAStream _stream = at::cuda::getStreamFromPool(false);
+        cudaStream_t _stream = nullptr;
     };
     inline float focal2fov(float focal, int pixels) {
         return 2.0f * std::atan(pixels / (2.0f * focal));
@@ -133,4 +147,4 @@ namespace gs {
         return pixels / (2.0f * tan_fov);
     }
 
-} // namespace gs
+} // namespace lfs::core

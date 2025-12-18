@@ -1,7 +1,7 @@
 /* Test slice assignment on reserved tensors as an alternative to in-place cat() */
 
 #include <gtest/gtest.h>
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 
 using namespace lfs::core;
 

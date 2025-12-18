@@ -1,11 +1,11 @@
 /* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "training_new/strategies/default_strategy.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/parameters.hpp"
-#include "core_new/point_cloud.hpp"
-#include "core_new/splat_data.hpp"
+#include "training/strategies/default_strategy.hpp"
+#include "core/logger.hpp"
+#include "core/parameters.hpp"
+#include "core/point_cloud.hpp"
+#include "core/splat_data.hpp"
 #include <gtest/gtest.h>
 
 using namespace lfs::training;

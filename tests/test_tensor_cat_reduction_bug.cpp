@@ -12,7 +12,7 @@
  * - Different slice patterns (row, column, range)
  */
 
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <gtest/gtest.h>
 #include <torch/torch.h>
 #include <vector>

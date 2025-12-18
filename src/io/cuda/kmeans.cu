@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "core_new/logger.hpp"
+#include "core/logger.hpp"
 #include "kmeans.hpp"
 #include <algorithm>
 #include <cmath>

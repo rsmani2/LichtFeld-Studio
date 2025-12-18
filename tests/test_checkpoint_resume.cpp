@@ -4,12 +4,12 @@
 #include <gtest/gtest.h>
 #include <filesystem>
 
-#include "core_new/parameters.hpp"
-#include "core_new/logger.hpp"
-#include "training_new/trainer.hpp"
-#include "training_new/training_setup.hpp"
-#include "training_new/checkpoint.hpp"
-#include "visualizer_new/scene/scene.hpp"
+#include "core/parameters.hpp"
+#include "core/logger.hpp"
+#include "training/trainer.hpp"
+#include "training/training_setup.hpp"
+#include "training/checkpoint.hpp"
+#include "visualizer/scene/scene.hpp"
 
 namespace {
 

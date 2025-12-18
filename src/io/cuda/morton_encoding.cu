@@ -2,7 +2,7 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "core_new/logger.hpp"
+#include "core/logger.hpp"
 #include "morton_encoding.hpp"
 #include <cstdint>
 #include <cuda_runtime.h>

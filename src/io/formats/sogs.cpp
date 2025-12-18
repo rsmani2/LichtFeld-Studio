@@ -7,8 +7,8 @@
 #endif
 
 #include "sogs.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/tensor.hpp"
+#include "core/logger.hpp"
+#include "core/tensor.hpp"
 #include "cuda/kmeans.hpp"
 #include "cuda/morton_encoding.hpp"
 #include "io/error.hpp"

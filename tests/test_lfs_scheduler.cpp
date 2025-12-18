@@ -4,8 +4,8 @@
 
 #include "optimizer/adam_optimizer.hpp"
 #include "optimizer/scheduler.hpp"
-#include "core_new/splat_data.hpp"
-#include "core_new/tensor.hpp"
+#include "core/splat_data.hpp"
+#include "core/tensor.hpp"
 #include <gtest/gtest.h>
 #include <cmath>
 

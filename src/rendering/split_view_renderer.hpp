@@ -11,7 +11,7 @@
 #include "shader_manager.hpp"
 #include <memory>
 
-namespace gs::rendering {
+namespace lfs::rendering {
 
     class SplitViewRenderer {
     public:
@@ -65,4 +65,4 @@ namespace gs::rendering {
         Result<void> blitTextureToFramebuffer(GLuint texture_id);
     };
 
-} // namespace gs::rendering
+} // namespace lfs::rendering

@@ -4,7 +4,7 @@
 // Exhaustive tests for tensor operations used in default_strategy.cpp
 // Verified against LibTorch reference implementations
 
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <gtest/gtest.h>
 #include <torch/torch.h>
 #include <random>

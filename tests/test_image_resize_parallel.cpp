@@ -2,8 +2,8 @@
 
 #include <gtest/gtest.h>
 #include "io/cache_image_loader.hpp"
-#include "core_new/tensor.hpp"
-#include "core_new/logger.hpp"
+#include "core/tensor.hpp"
+#include "core/logger.hpp"
 #include <cuda_runtime.h>
 #include <vector>
 #include <thread>

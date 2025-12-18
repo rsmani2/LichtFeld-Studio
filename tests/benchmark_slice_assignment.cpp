@@ -4,8 +4,8 @@
  * and LibTorch, using identical data and operations.
  */
 
-#include "core_new/logger.hpp"
-#include "core_new/tensor.hpp"
+#include "core/logger.hpp"
+#include "core/tensor.hpp"
 #include <chrono>
 #include <gtest/gtest.h>
 #include <iomanip>

@@ -63,7 +63,6 @@ get_filename_component(PROJ_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
 option(ENABLE_CUDA_GL_INTEROP "Enable CUDA-OpenGL interoperability" ON)
 option(BUILD_TESTS "Build tests" OFF)
 option(ENABLE_ALLOCATION_PROFILING "Enable tensor allocation profiling" OFF)
-option(BUILD_LEGACY "Build legacy LibTorch-based binary (LichtFeld-Studio-legacy)" OFF)
 
 # Debug options
 option(ENABLE_TENSOR_VALIDATION "Enable runtime tensor NaN/Inf validation" OFF)
@@ -105,53 +104,6 @@ endif()
 # Examples: 75, 80, 86, 89, 90, 100...
 # Only has effect if BUILD_CUDA_ALL_SM is ON.
 set(BUILD_CUDA_ALL_MIN_SM "86" CACHE STRING "Minimum SM (compute capability) used when BUILD_CUDA_ALL_SM=ON Examples: 75, 80, 86, 89...")
-
-# Set Torch_DIR based on platform and build type
-if(BUILD_LEGACY)
-    if(WIN32)
-        if(CMAKE_CONFIGURATION_TYPES AND "${CMAKE_BUILD_TYPE}" STREQUAL "")
-            # https://github.com/pytorch/pytorch/issues/155667
-            set(Torch_DIR "${PROJ_ROOT_DIR}/external/release/libtorch/share/cmake/Torch")
-            message(STATUS "[${PROJECT_NAME}] User didn't specify -DCMAKE_BUILD_TYPE so use this path for searching libtorch -> ${PROJ_ROOT_DIR}/external/release/libtorch/share/cmake/Torch")
-
-            if(NOT EXISTS "${PROJ_ROOT_DIR}/external/release/")
-                message(FATAL_ERROR "you don't have a such path ${PROJ_ROOT_DIR}/external/release/ on your disk")
-            endif()
-
-            if(NOT EXISTS "${PROJ_ROOT_DIR}/external/release/libtorch/")
-                message(FATAL_ERROR "you don't have an extracted pre-installed libtorch (${PROJ_ROOT_DIR}/external/release/libtorch)!")
-            endif()
-        else()
-            if(CMAKE_BUILD_TYPE STREQUAL "Release")
-                set(Torch_DIR "${PROJ_ROOT_DIR}/external/release/libtorch/share/cmake/Torch")
-                message(STATUS "[${PROJECT_NAME}] User specified -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} so let's search libtorch by this path -> ${PROJ_ROOT_DIR}/external/release/libtorch/share/cmake/Torch")
-
-                if(NOT EXISTS "${PROJ_ROOT_DIR}/external/release/")
-                    message(FATAL_ERROR "you don't have a such path ${PROJ_ROOT_DIR}/external/release/ on your disk")
-                endif()
-
-                if(NOT EXISTS "${PROJ_ROOT_DIR}/external/release/libtorch")
-                    message(FATAL_ERROR "you don't have an extracted pre-installed libtorch (${PROJ_ROOT_DIR}/external/release/libtorch)!")
-                endif()
-            elseif(CMAKE_BUILD_TYPE STREQUAL "Debug")
-                set(Torch_DIR "${PROJ_ROOT_DIR}/external/debug/libtorch/share/cmake/Torch")
-                message(STATUS "[${PROJECT_NAME}] User specified -DCMAKE_BUILD_TYPE=${CMAKE_BUILD_TYPE} so let's search libtorch by this path -> ${PROJ_ROOT_DIR}/external/debug/libtorch/share/cmake/Torch")
-
-                if(NOT EXISTS "${PROJ_ROOT_DIR}/external/debug/")
-                    message(FATAL_ERROR "you don't have a such path ${PROJ_ROOT_DIR}/external/debug/ on your disk")
-                endif()
-
-                if(NOT EXISTS "${PROJ_ROOT_DIR}/external/debug/libtorch")
-                    message(FATAL_ERROR "you don't have an extracted pre-installed libtorch (${PROJ_ROOT_DIR}/external/debug/libtorch)!")
-                endif()
-            else()
-                message(FATAL_ERROR "libtorch binaries only available for Debug and Release on Windows. Current build type: '${CMAKE_BUILD_TYPE}'")
-            endif()
-        endif()
-    else()
-        set(Torch_DIR "${PROJ_ROOT_DIR}/external/libtorch/share/cmake/Torch")
-    endif()
-endif()
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CUDA_STANDARD 20)
@@ -336,12 +288,6 @@ endif()
 message(STATUS "CUDA Toolkit ${CUDAToolkit_VERSION} found at ${CUDAToolkit_TARGET_DIR}")
 
 # Find packages
-if(BUILD_LEGACY)
-    find_package(Torch REQUIRED)
-    message(STATUS "✓ LibTorch found - legacy binary will be built")
-else()
-    message(STATUS "✗ Skipping LibTorch - BUILD_LEGACY=OFF")
-endif()
 find_package(TBB REQUIRED)
 find_package(Threads REQUIRED)
 find_package(OpenGL REQUIRED)
@@ -421,105 +367,21 @@ endif()
 add_subdirectory(external)
 
 # =============================================================================
-# Kernel libs (Legacy - require LibTorch, only built when BUILD_LEGACY=ON)
-# =============================================================================
-if(BUILD_LEGACY)
-    add_subdirectory(gsplat)
-    add_subdirectory(src/training/fastgs)
-    set_target_properties(gsplat_backend PROPERTIES CUDA_ARCHITECTURES "${LichtFeld-Studio_CUDA_ARCH}")
-    set_target_properties(fastgs_backend PROPERTIES CUDA_ARCHITECTURES "${LichtFeld-Studio_CUDA_ARCH}")
-endif()
-
-# =============================================================================
-# SHARED CUDA KERNELS (Legacy - only built when BUILD_LEGACY=ON)
-# =============================================================================
-if(BUILD_LEGACY)
-    set(KERNEL_SOURCES)
-    if(CUDA_GL_INTEROP_FOUND)
-        list(APPEND KERNEL_SOURCES kernels/cuda_gl_interop.cu)
-    endif()
-
-    # Add SOG-related kernels
-    list(APPEND KERNEL_SOURCES
-            kernels/morton_encoding.cu
-            kernels/kmeans.cu
-    )
-
-    # Only create gaussian_kernels if there are kernels
-    if(KERNEL_SOURCES)
-        add_library(gs_kernels STATIC ${KERNEL_SOURCES})
-
-        set_target_properties(gs_kernels PROPERTIES
-                CUDA_ARCHITECTURES "${LichtFeld-Studio_CUDA_ARCH}"
-                CUDA_SEPARABLE_COMPILATION ON
-                POSITION_INDEPENDENT_CODE ON
-                CUDA_RESOLVE_DEVICE_SYMBOLS ON
-        )
-
-        target_include_directories(gs_kernels
-                PUBLIC
-                ${CMAKE_CURRENT_SOURCE_DIR}/include
-                ${CMAKE_CURRENT_BINARY_DIR}/include
-                ${CMAKE_CURRENT_SOURCE_DIR}/include/kernels
-                ${CUDAToolkit_INCLUDE_DIRS}
-                ${OPENGL_INCLUDE_DIRS}
-                PRIVATE
-        )
-
-        target_link_libraries(gs_kernels
-                PUBLIC
-                CUDA::cudart
-                CUDA::curand
-                CUDA::cublas
-                ${TORCH_LIBRARIES}
-                glm::glm
-                ${OPENGL_LIBRARIES}
-                spdlog::spdlog
-        )
-
-        target_compile_options(gs_kernels PRIVATE
-                # CUDA device code + MSVC host compiler flags (Windows only)
-                $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Debug>>:-O0 -g -G -lineinfo -Xcompiler=/Od -Xcompiler=/Z7>
-                $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<CXX_COMPILER_ID:MSVC>,$<CONFIG:Release>>:-O3 -use_fast_math --ptxas-options=-v -Xcompiler=/O2 -Xcompiler=/DNDEBUG>
-
-                # CUDA device code for non-Windows
-                $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Debug>>:-O0 -g -G -lineinfo>
-                $<$<AND:$<COMPILE_LANGUAGE:CUDA>,$<NOT:$<CXX_COMPILER_ID:MSVC>>,$<CONFIG:Release>>:-O3 -use_fast_math --ptxas-options=-v>
-        )
-    else()
-        # Create empty interface library if no kernels
-        add_library(gs_kernels INTERFACE)
-    endif()
-endif(BUILD_LEGACY)
-
-# =============================================================================
 # LIBRARY MODULES
 # =============================================================================
-add_subdirectory(src/core_new)     # New core module (lfs::core namespace)
-add_subdirectory(src/training_new) # New training module (lfs::training namespace)
-add_subdirectory(src/io)           # I/O module (lfs::io namespace)
-add_subdirectory(src/rendering_new) # New rendering module (lfs::rendering namespace)
-add_subdirectory(src/visualizer_new) # New visualizer module (lfs::vis namespace)
-add_subdirectory(src/geometry_new) # LibTorch-free geometry utilities
-
-# Legacy LibTorch-based modules (only built if BUILD_LEGACY=ON)
-if(BUILD_LEGACY)
-    message(STATUS "Building legacy LibTorch-based modules...")
-    add_subdirectory(src/core)         # Foundation module
-    add_subdirectory(src/geometry)     # Geometry utilities
-    add_subdirectory(src/project)      # Project management
-    add_subdirectory(src/loader)       # Data loading
-    add_subdirectory(src/training)     # Training functionality
-    add_subdirectory(src/rendering)   # Rendering pipeline
-    add_subdirectory(src/visualizer)  # GUI and visualization
-endif()
+add_subdirectory(src/core)      # Core module (lfs::core namespace)
+add_subdirectory(src/training)  # Training module (lfs::training namespace)
+add_subdirectory(src/io)        # I/O module (lfs::io namespace)
+add_subdirectory(src/rendering) # Rendering module (lfs::rendering namespace)
+add_subdirectory(src/visualizer) # Visualizer module (lfs::vis namespace)
+add_subdirectory(src/geometry)  # Geometry utilities
 
 # =============================================================================
 # MAIN EXECUTABLES
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# LichtFeld-Studio (NEW, LibTorch-free)
+# LichtFeld-Studio
 # -----------------------------------------------------------------------------
 add_executable(${PROJECT_NAME}
     src/main.cpp
@@ -550,9 +412,9 @@ target_link_libraries(${PROJECT_NAME}
         lfs_visualizer     # For Visualizer class
         lfs_training       # For training setup
         lfs_geometry       # For EuclideanTransform
-        lfs_core           # LibTorch-free core library (new implementation)
+        lfs_core           # Core library
         lfs_io             # For CacheLoader
-        fastlfs_backend    # LibTorch-free rasterizer and optimizer
+        fastlfs_backend    # Rasterizer and optimizer
 
         ${OPENGL_LIBRARIES}
         CUDA::cudart
@@ -631,7 +493,7 @@ if(TARGET nvimgcodec)
     message(STATUS "Post-build: nvImageCodec libraries will be copied to executable directory")
 endif()
 
-# Platform-specific settings for new torch-free binary
+# Platform-specific settings
 if(UNIX)
     target_link_libraries(${PROJECT_NAME} PRIVATE GL GLU)
 
@@ -646,79 +508,6 @@ elseif(WIN32)
             RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     )
 endif()
-
-
-# -----------------------------------------------------------------------------
-# LichtFeld-Studio-legacy (OLD, LibTorch-based)
-# -----------------------------------------------------------------------------
-if(BUILD_LEGACY)
-    message(STATUS "Building legacy LibTorch-based binary: ${PROJECT_NAME}-legacy")
-    add_executable(${PROJECT_NAME}-legacy src/main_legacy.cpp resources/lichtfeld-studio.rc)
-
-    set_target_properties(${PROJECT_NAME}-legacy PROPERTIES
-        CUDA_ARCHITECTURES "${LichtFeld-Studio_CUDA_ARCH}"
-        CUDA_SEPARABLE_COMPILATION ON
-        CUDA_RESOLVE_DEVICE_SYMBOLS ON
-    )
-
-    target_include_directories(${PROJECT_NAME}-legacy
-        PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_BINARY_DIR}/include
-        ${CUDAToolkit_INCLUDE_DIRS}
-        ${OPENGL_INCLUDE_DIRS}
-    )
-
-    target_link_libraries(${PROJECT_NAME}-legacy
-        PRIVATE
-        gs_core            # LibTorch-based core library (legacy implementation)
-        gs_geometry
-        gs_project
-        gs_loader
-        gs_training
-        gs_rendering
-        gs_visualizer
-        gs_kernels
-        gsplat_backend
-        fastgs_backend
-        ${OPENGL_LIBRARIES}
-        CUDA::cudart
-        spdlog::spdlog
-        taywee::args
-        OpenImageIO::OpenImageIO
-    )
-
-    # Platform-specific settings for legacy binary
-    if(WIN32)
-        file(GLOB TORCH_DLLS "${Torch_DIR}/../../../lib/*.dll")
-        foreach(TORCH_DLL ${TORCH_DLLS})
-            add_custom_command(
-                TARGET ${PROJECT_NAME}-legacy
-                POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different "${TORCH_DLL}"
-                "$<TARGET_FILE_DIR:${PROJECT_NAME}-legacy>"
-            )
-        endforeach()
-    elseif(UNIX)
-        target_link_libraries(${PROJECT_NAME}-legacy PRIVATE GL GLU)
-
-        find_path(TORCH_LIB_DIR libtorch_cpu.so
-            PATHS "${Torch_DIR}/../../../lib"
-            NO_DEFAULT_PATH
-        )
-
-        if(TORCH_LIB_DIR)
-            set_target_properties(${PROJECT_NAME}-legacy PROPERTIES
-                INSTALL_RPATH "${CUDAToolkit_LIBRARY_DIR}:${TORCH_LIB_DIR}"
-                BUILD_WITH_INSTALL_RPATH TRUE
-                INSTALL_RPATH_USE_LINK_PATH TRUE
-            )
-            message(STATUS "Torch library directory: ${TORCH_LIB_DIR}")
-        else()
-            message(WARNING "Could not find Torch library directory")
-        endif()
-    endif()
-endif(BUILD_LEGACY)
 
 # Build type configuration function
 function(configure_build_type target)
@@ -760,12 +549,6 @@ function(configure_build_type target)
 endfunction()
 
 # Apply build configuration to all targets
-if(BUILD_LEGACY)
-    configure_build_type(gs_core)
-    configure_build_type(gs_kernels)
-    configure_build_type(gsplat_backend)
-    configure_build_type(fastgs_backend)
-endif()
 configure_build_type(fastlfs_backend)
 configure_build_type(lfs_core)
 configure_build_type(lfs_core_cuda)
@@ -793,12 +576,6 @@ message(STATUS "===========================================")
 message(STATUS "Build Configuration:")
 message(STATUS "  CUDA Version: ${CUDAToolkit_VERSION}")
 message(STATUS "  CUDA Archs: ${CMAKE_CUDA_ARCHITECTURES}")
-if(BUILD_LEGACY)
-    message(STATUS "  Torch Version: ${Torch_VERSION}")
-    message(STATUS "  Legacy Binary: ENABLED (LichtFeld-Studio-legacy)")
-else()
-    message(STATUS "  Legacy Binary: DISABLED (set -DBUILD_LEGACY=ON to enable)")
-endif()
 message(STATUS "  OpenGL Found: ${OPENGL_FOUND}")
 message(STATUS "  FreeType Found: ${FREETYPE_FOUND}")
 message(STATUS "  WebP Found: ${WebP_FOUND}")

@@ -10,7 +10,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 
-namespace gs::rendering {
+namespace lfs::rendering {
     class RenderCoordinateAxes : public ICoordinateAxes {
     public:
         RenderCoordinateAxes();
@@ -64,4 +64,4 @@ namespace gs::rendering {
 
         std::vector<AxisVertex> vertices_;
     };
-} // namespace gs::rendering
+} // namespace lfs::rendering

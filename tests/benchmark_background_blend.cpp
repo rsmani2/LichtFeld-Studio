@@ -3,8 +3,8 @@
 
 #include <gtest/gtest.h>
 #include <torch/torch.h>
-#include "core_new/tensor.hpp"
-#include "training_new/kernels/grad_alpha.hpp"
+#include "core/tensor.hpp"
+#include "training/kernels/grad_alpha.hpp"
 #include <chrono>
 
 using namespace lfs::core;

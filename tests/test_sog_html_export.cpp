@@ -24,12 +24,12 @@
 #include <webp/decode.h>
 #include <nlohmann/json.hpp>
 
-#include "core_new/sogs.hpp"
-#include "core_new/tensor.hpp"
-#include "core_new/cuda/kernels/kdtree_kmeans.hpp"
+#include "core/sogs.hpp"
+#include "core/tensor.hpp"
+#include "core/cuda/kernels/kdtree_kmeans.hpp"
 #include "io/formats/ply.hpp"
 #include "io/formats/sogs.hpp"
-#include "visualizer_new/gui/html_viewer_export.hpp"
+#include "visualizer/gui/html_viewer_export.hpp"
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;

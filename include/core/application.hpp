@@ -6,7 +6,7 @@
 
 #include <memory>
 
-namespace gs {
+namespace lfs::core {
 
     namespace param {
         struct TrainingParameters;
@@ -19,4 +19,4 @@ namespace gs {
         int run(std::unique_ptr<param::TrainingParameters> params);
     };
 
-} // namespace gs
+} // namespace lfs::core

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "spz.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/tensor.hpp"
+#include "core/logger.hpp"
+#include "core/tensor.hpp"
 #include "load-spz.h"
 #include <chrono>
 #include <format>

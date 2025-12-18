@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "colmap.hpp"
-#include "core_new/image_io.hpp"
-#include "core_new/logger.hpp"
+#include "core/image_io.hpp"
+#include "core/logger.hpp"
 #include "io/filesystem_utils.hpp"
 #include <algorithm>
 #include <cmath>

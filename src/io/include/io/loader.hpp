@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include "io/error.hpp"
 #include <chrono>
 #include <filesystem>

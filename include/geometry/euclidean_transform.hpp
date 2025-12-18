@@ -8,7 +8,7 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/quaternion.hpp>
 
-namespace gs {
+namespace lfs {
     namespace geometry {
 
         class EuclideanTransform {
@@ -72,4 +72,4 @@ namespace gs {
             static glm::mat4 OrthonormalizeRotation(const glm::mat4& matrix);
         };
     } // namespace geometry
-} // namespace gs
+} // namespace lfs

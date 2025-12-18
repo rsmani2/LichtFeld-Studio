@@ -6,7 +6,7 @@
  *   interleaved[N, 7].slice(1, 6, 7).copy_(indices[N, 1])
  */
 
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <gtest/gtest.h>
 #include <torch/torch.h>
 

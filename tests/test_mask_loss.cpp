@@ -13,8 +13,8 @@
  * - SSIM map masking (like legacy fused_ssim_map)
  */
 
-#include "core_new/tensor.hpp"
-#include "core_new/parameters.hpp"
+#include "core/tensor.hpp"
+#include "core/parameters.hpp"
 #include "lfs/kernels/ssim.cuh"
 #include <gtest/gtest.h>
 #include <cmath>

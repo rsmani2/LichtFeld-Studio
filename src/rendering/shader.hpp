@@ -22,7 +22,7 @@
 #include <string>
 #include <vector>
 
-namespace gs::rendering {
+namespace lfs::rendering {
 
     // Helper function to get OpenGL error string
     inline std::string getGLErrorString(GLenum error) {
@@ -301,6 +301,9 @@ namespace gs::rendering {
         }
 
         void bind(bool use_buffer = true) {
+            // Clear any pre-existing OpenGL errors before binding
+            while (glGetError() != GL_NO_ERROR);
+
             if (use_buffer) {
                 glBindVertexArray(vertex_array);
                 CHECK_GL_ERROR("glBindVertexArray");
@@ -589,4 +592,4 @@ namespace gs::rendering {
         GLuint index_buffer = 0;
         GLuint vertex_array = 0;
     };
-} // namespace gs::rendering
+} // namespace lfs::rendering

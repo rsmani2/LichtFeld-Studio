@@ -2,10 +2,10 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "core_new/application.hpp"
-#include "core_new/argument_parser.hpp"
-#include "core_new/converter.hpp"
-#include "core_new/logger.hpp"
+#include "core/application.hpp"
+#include "core/argument_parser.hpp"
+#include "core/converter.hpp"
+#include "core/logger.hpp"
 
 #include <print>
 

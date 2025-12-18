@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include <gtest/gtest.h>
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <torch/torch.h>
 #include <random>
 #include <vector>

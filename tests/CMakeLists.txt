@@ -6,22 +6,30 @@
 # Find GTest
 find_package(GTest CONFIG REQUIRED)
 
-# Note: WebP and LibArchive are already found by parent CMakeLists.txt
-# and will be available through gs_core target
+# Find LibTorch for tensor comparison tests
+# Set Torch_DIR based on platform
+get_filename_component(PROJ_ROOT_DIR "${CMAKE_SOURCE_DIR}" ABSOLUTE)
+if(WIN32)
+    if(CMAKE_BUILD_TYPE STREQUAL "Release" OR NOT CMAKE_BUILD_TYPE)
+        set(Torch_DIR "${PROJ_ROOT_DIR}/external/release/libtorch/share/cmake/Torch")
+    else()
+        set(Torch_DIR "${PROJ_ROOT_DIR}/external/debug/libtorch/share/cmake/Torch")
+    endif()
+else()
+    set(Torch_DIR "${PROJ_ROOT_DIR}/external/libtorch/share/cmake/Torch")
+endif()
+find_package(Torch REQUIRED)
+message(STATUS "Tests: LibTorch ${Torch_VERSION} found for tensor comparison tests")
 
-# Test sources - START WITH ONLY EXISTING FILES
+# Test sources
 set(TEST_SOURCES
     test_main.cpp       # Custom main with pinned memory pre-warming
-    test_geometry.cpp
-    test_ssim_kernel_wrapper.cu  # CUDA wrapper for SSIM kernel comparison tests
 )
 
-# Check if new test files exist and add them
+# Check if test files exist and add them
 set(OPTIONAL_TEST_FILES
     test_loss_gradients.cpp
     test_regularization_comparison.cpp
-    #test_add_new_gs_deterministic.cpp
-    #test_render_modes.cpp
     test_gut_rasterizer_gradients.cpp
     test_gut_manual_vs_autograd.cpp
     test_gut_autograd_vs_manual.cpp
@@ -61,14 +69,10 @@ set(OPTIONAL_TEST_FILES
     test_tensor_vs_torch.cpp
     test_tensor_move.cpp
     test_mcmc.cpp
-    test_loader_comparison.cpp  # Comprehensive comparison between old and new loaders
-    test_ply_loading_comparison.cpp  # PLY loading comparison between legacy and new
-    test_ply_save_comparison.cpp  # PLY saving comparison between legacy and new
-    test_mcmc_add_new_gs_comparison.cpp  # Compare MCMC add_new_gs between legacy and new
-    test_mcmc_relocate_optimizer_state_bug.cpp  # Test optimizer state bug in relocate_gs
-    test_gsplat_vs_legacy_gsplat_gut.cpp  # gsplat GUT comparison
+    test_mcmc_add_new_gs_comparison.cpp
+    test_mcmc_relocate_optimizer_state_bug.cpp
     test_tensor_benchmark.cpp
-    test_memory_pool_benchmark.cpp  # benchmarks CudaMemoryPool (now internal)
+    test_memory_pool_benchmark.cpp
     test_broadcast_benchmark.cpp
     test_reduction_benchmark.cpp
     test_expression_templates.cpp
@@ -88,55 +92,46 @@ set(OPTIONAL_TEST_FILES
     test_lfs_losses.cpp
     benchmark_losses.cpp
     test_mcmc_kernels.cpp
-    test_mcmc_strategy.cpp
     test_tensor_bool.cpp
     test_dataloader_lfs.cpp
     test_bilateral_grid.cpp
-    test_sparsity_optimizer.cpp
     test_sparsity_debug.cpp
     test_default_strategy.cpp
-    test_default_strategy_comparison.cpp
     benchmark_default_strategy.cpp
-    test_default_strategy_operations_comparison.cpp
-    test_default_strategy_real_conditions.cpp
     test_dtype_operations_comprehensive.cpp
     test_tensor_bugs.cpp
     test_densification_performance.cpp
-    test_densification_old_vs_new.cpp
     test_densification_profile.cpp
-    # Merged test files for better organization
-    test_bug_regressions.cpp        # Bug regressions (binary_search, index_select, minimal_tensor)
-    test_torch_comparisons.cpp      # LibTorch comparisons (naive_split, split_kernel, fill)
-    test_densification.cpp          # Densification tests (exact_pattern, lfs_only, benchmarks, 10M tests)
-    test_mcmc_logit_verification.cpp  # Verify log/logit operations match between legacy and new
-    test_metrics_comparison.cpp  # Compare old and new metrics implementations (PSNR, SSIM, no LPIPS in new)
-    test_tensor_reserve_capacity.cpp  # Test tensor reserve() and capacity management
-    test_tensor_cat_inplace.cpp  # Test in-place cat() optimization
-    test_tensor_inplace_cat_debug.cpp  # Debug tests for in-place cat() crash
-    test_tensor_slice_assignment_reserve.cpp  # Test reserve + cat as alternative to in-place slice assignment
-    test_tensor_mcmc_memory_profile.cpp  # MCMC-style memory profiling with huge tensors
-    test_mcmc_tensor_ops.cpp        # Comprehensive MCMC tensor operation tests (nonzero, multinomial, index_select)
-    test_mcmc_memory_ops.cpp        # Consolidated: append_gather, in-place cat, memory leak detection for MCMC
-    test_mcmc_critical_bugs.cpp     # Critical MCMC bugs: Adam add_new_params, inject_noise, cat self-ref, index_add_ int64
-    test_mcmc_dead_mask.cpp         # Comprehensive tests for MCMC dead mask calculation: (opacities <= min_opacity) | (rot_mag_sq < 1e-8)
-    test_relocate_gs_edge_cases.cpp # Comprehensive edge case tests for relocate_gs(): logit, Int32 ops, logical ops, indexing, division
-    test_bool_reduction.cpp  # Bool reduction tests for cropping bug investigation
-    test_tensor_index_select_bool.cpp  # Tests for index_select with boolean masks
-    test_tensor_index_select_uint8.cpp # Tests for index_select with UInt8 (colors)
-    test_tensor_uint8_inversion.cpp    # Tests for UInt8 mask inversion
-    test_tensor_serialization.cpp      # Tests for tensor serialization with << and >> operators
-    test_tensor_cat_reduction_bug.cpp  # Tests for cat+reduction bug (min/max on concatenated tensors)
-    test_tensor_inplace_capacity.cpp  # Tests for in-place operations preserving capacity (critical for training)
-    test_sog_format.cpp  # Tests for SOG (SuperSplat Optimized Gaussian) format support
-    test_sog_html_export.cpp  # Consolidated SOG/HTML export regression tests
-    test_rasterizer_crash_dump.cpp  # Reproduce rasterizer crash from crash dump
-    test_gsplat_rasterizer.cpp  # GSplat rasterizer tests
-    test_spz_format.cpp  # Tests for SPZ (Niantic compressed) format support
-    test_interleaved_slice_copy.cpp  # Tests for interleaved buffer construction via slice + copy_
-    test_default_strategy_tensor_ops.cpp  # Exhaustive tensor ops tests for default_strategy.cpp vs libtorch
-    test_tensor_zero_dimension.cpp  # Tests for zero-dimension tensor handling (sh-degree 0 bug)
-    test_mask_loss.cpp  # Tests for masked photometric loss computation
-    test_checkpoint_resume.cpp  # Tests for checkpoint save/load/resume across strategies and SH degrees
+    test_bug_regressions.cpp
+    test_torch_comparisons.cpp
+    test_mcmc_logit_verification.cpp
+    test_tensor_reserve_capacity.cpp
+    test_tensor_cat_inplace.cpp
+    test_tensor_inplace_cat_debug.cpp
+    test_tensor_slice_assignment_reserve.cpp
+    test_tensor_mcmc_memory_profile.cpp
+    test_mcmc_tensor_ops.cpp
+    test_mcmc_memory_ops.cpp
+    test_mcmc_critical_bugs.cpp
+    test_mcmc_dead_mask.cpp
+    test_relocate_gs_edge_cases.cpp
+    test_bool_reduction.cpp
+    test_tensor_index_select_bool.cpp
+    test_tensor_index_select_uint8.cpp
+    test_tensor_uint8_inversion.cpp
+    test_tensor_serialization.cpp
+    test_tensor_cat_reduction_bug.cpp
+    test_tensor_inplace_capacity.cpp
+    test_sog_format.cpp
+    test_sog_html_export.cpp
+    test_rasterizer_crash_dump.cpp
+    test_gsplat_rasterizer.cpp
+    test_spz_format.cpp
+    test_interleaved_slice_copy.cpp
+    test_default_strategy_tensor_ops.cpp
+    test_tensor_zero_dimension.cpp
+    test_mask_loss.cpp
+    test_checkpoint_resume.cpp
 )
 
 foreach(TEST_FILE ${OPTIONAL_TEST_FILES})
@@ -161,14 +156,13 @@ set_target_properties(lichtfeld_tests PROPERTIES
 )
 
 # Include directories
-# NOTE: Order matters! We want tests to explicitly choose old vs new headers
 target_include_directories(lichtfeld_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_BINARY_DIR}/include
     ${CMAKE_SOURCE_DIR}/tests
-    ${CMAKE_SOURCE_DIR}/src/training_new  # New libtorch-free (for test_lfs_*.cpp)
-    ${CMAKE_SOURCE_DIR}/src               # Old torch-based (for existing tests)
-    ${CMAKE_SOURCE_DIR}/external/spz      # SPZ library headers
+    ${CMAKE_SOURCE_DIR}/src/training   # For training headers
+    ${CMAKE_SOURCE_DIR}/src            # For module headers
+    ${CMAKE_SOURCE_DIR}/external/spz   # SPZ library headers
     ${CUDAToolkit_INCLUDE_DIRS}
     ${OPENGL_INCLUDE_DIRS}
 )
@@ -179,34 +173,22 @@ target_compile_definitions(lichtfeld_tests PRIVATE
     PROJECT_ROOT_PATH="${CMAKE_SOURCE_DIR}"
 )
 
-# Link libraries - Fix linking order and add missing dependencies
+# Link libraries
 target_link_libraries(lichtfeld_tests PRIVATE
-    # Core libraries (in dependency order)
-    gs_visualizer
-    gs_rendering
-    gs_training
-    gs_training_kernels
-    gs_project
-    gs_geometry
-    gs_core
-    gs_loader  # After gs_core since gs_core depends on gs_loader
-    gs_kernels
-
-    # New torch-free modules (for comparison tests)
+    # LFS modules
     lfs_visualizer
     lfs_rendering
     lfs_training
-    lfs_core      # Before lfs_geometry (lfs_core depends on lfs_geometry)
-    lfs_geometry  # After lfs_core - provides EuclideanTransform
-    lfs_io        # After lfs_core
+    lfs_core
+    lfs_geometry
+    lfs_io
     lfs_tensor
 
     # Backend libraries
-    gsplat_backend
-    fastgs_backend
+    fastlfs_backend
     spz_lib  # Niantic SPZ format library
 
-    # External libraries (using custom test_main.cpp instead of gtest_main)
+    # External libraries
     GTest::gtest
     ${TORCH_LIBRARIES}
     ${OPENGL_LIBRARIES}
@@ -243,8 +225,6 @@ add_custom_target(run_tests
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Running all tests with verbose output"
 )
-
-# Note: Profiling executables removed during test cleanup
 
 # Platform-specific settings
 if(WIN32)

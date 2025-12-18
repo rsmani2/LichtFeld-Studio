@@ -3,9 +3,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "io/nvcodec_image_loader.hpp"
-#include "core_new/cuda/lanczos_resize/lanczos_resize.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/tensor.hpp"
+#include "core/cuda/lanczos_resize/lanczos_resize.hpp"
+#include "core/logger.hpp"
+#include "core/tensor.hpp"
 
 #include <algorithm>
 #include <condition_variable>

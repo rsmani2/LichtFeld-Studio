@@ -12,7 +12,7 @@
 // Forward declarations
 struct GLFWwindow;
 
-namespace gs {
+namespace lfs::vis {
 
     class WindowManager {
     public:
@@ -30,10 +30,9 @@ namespace gs {
         void updateWindowSize();
         void swapBuffers();
         void pollEvents();
+        void waitEvents(double timeout_seconds);  // Sleep until event or timeout
         bool shouldClose() const;
         void cancelClose();
-        void setVSync(bool enabled);
-        [[nodiscard]] bool getVSync() const { return vsync_enabled_; }
         void requestRedraw();
         bool needsRedraw() const;
 
@@ -41,6 +40,8 @@ namespace gs {
         GLFWwindow* getWindow() const { return window_; }
         glm::ivec2 getWindowSize() const { return window_size_; }
         glm::ivec2 getFramebufferSize() const { return framebuffer_size_; }
+        bool isFullscreen() const { return is_fullscreen_; }
+        void toggleFullscreen();
 
         // Set the callback handler (typically the viewer instance)
         void setCallbackHandler(void* handler) { callback_handler_ = handler; }
@@ -51,9 +52,13 @@ namespace gs {
         glm::ivec2 window_size_;
         glm::ivec2 framebuffer_size_;
 
+        // Fullscreen state
+        bool is_fullscreen_ = false;
+        glm::ivec2 windowed_pos_{0, 0};
+        glm::ivec2 windowed_size_{1280, 720};
+
         // Static callback handler pointer
         static void* callback_handler_;
-        bool vsync_enabled_ = true;                     // Track VSync state
         mutable std::atomic<bool> needs_redraw_{false}; // Redraw flag
 
         // Static GLFW callbacks
@@ -64,4 +69,4 @@ namespace gs {
         static void dropCallback(GLFWwindow* window, int count, const char** paths);
     };
 
-} // namespace gs
+} // namespace lfs::vis

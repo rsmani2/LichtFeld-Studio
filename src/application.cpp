@@ -2,14 +2,14 @@
  *
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
-#include "core_new/application.hpp"
-#include "core_new/argument_parser.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/tensor/internal/memory_pool.hpp"
-#include "training_new/training_setup.hpp"
-#include "training_new/trainer.hpp"
-#include "visualizer_new/scene/scene.hpp"  // Scene for unified data storage
-#include "visualizer_new/visualizer.hpp"
+#include "core/application.hpp"
+#include "core/argument_parser.hpp"
+#include "core/logger.hpp"
+#include "core/tensor/internal/memory_pool.hpp"
+#include "training/training_setup.hpp"
+#include "training/trainer.hpp"
+#include "visualizer/scene/scene.hpp"  // Scene for unified data storage
+#include "visualizer/visualizer.hpp"
 #include <cstring>
 #ifdef WIN32
 #include <windows.h>

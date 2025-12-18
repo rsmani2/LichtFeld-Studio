@@ -14,7 +14,7 @@
 #include <stdexcept>
 #include <string>
 
-namespace gs::rendering {
+namespace lfs::rendering {
 
     // Consistent error handling
     template <typename T>
@@ -194,4 +194,4 @@ namespace gs::rendering {
         int getWidth() const { return width; }
         int getHeight() const { return height; }
     };
-} // namespace gs::rendering
+} // namespace lfs::rendering

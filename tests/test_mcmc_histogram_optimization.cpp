@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include <gtest/gtest.h>
-#include "training_new/kernels/mcmc_kernels.hpp"
-#include "core_new/tensor.hpp"
+#include "training/kernels/mcmc_kernels.hpp"
+#include "core/tensor.hpp"
 #include <cuda_runtime.h>
 #include <chrono>
 #include <algorithm>

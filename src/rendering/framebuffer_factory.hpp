@@ -6,7 +6,7 @@
 #include "framebuffer.hpp"
 #include <memory>
 
-namespace gs::rendering {
+namespace lfs::rendering {
     enum class FrameBufferMode {
         CPU,
         CUDA_INTEROP
@@ -41,4 +41,4 @@ namespace gs::rendering {
 
     // Create a framebuffer with the specified mode
     std::shared_ptr<FrameBuffer> createFrameBuffer(FrameBufferMode preferred = FrameBufferMode::CPU);
-} // namespace gs::rendering
+} // namespace lfs::rendering

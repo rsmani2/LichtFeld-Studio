@@ -21,14 +21,14 @@
 #include <cxxabi.h>
 #endif
 
-namespace gs::event {
+namespace lfs::core::event {
     using HandlerId = size_t;
 
     // Event concept
     template <typename T>
     concept Event = requires {
-        typename T::event_id;
-    } && std::is_aggregate_v<T>;
+                        typename T::event_id;
+                    } && std::is_aggregate_v<T>;
 
     class Bus {
         template <typename T>
@@ -289,4 +289,4 @@ namespace gs::event {
         b.debug_config().log_unhandled = unhandled;
     }
 
-} // namespace gs::event
+} // namespace lfs::core::event

@@ -6,7 +6,7 @@
 
 // Re-export public API
 #include "io/exporter.hpp"
-#include "core_new/point_cloud.hpp"
+#include "core/point_cloud.hpp"
 
 namespace lfs::io {
 

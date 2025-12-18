@@ -3,12 +3,12 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "io/loaders/blender_loader.hpp"
-#include "core_new/camera.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/point_cloud.hpp"
+#include "core/camera.hpp"
+#include "core/logger.hpp"
+#include "core/point_cloud.hpp"
 #include "formats/transforms.hpp"
 #include "io/error.hpp"
-#include "training_new/dataset.hpp"
+#include "training/dataset.hpp"
 #include <chrono>
 #include <filesystem>
 #include <format>

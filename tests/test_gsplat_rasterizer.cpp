@@ -2,10 +2,10 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include <gtest/gtest.h>
-#include "training_new/rasterization/gsplat_rasterizer.hpp"
-#include "core_new/tensor.hpp"
-#include "core_new/splat_data.hpp"
-#include "core_new/camera.hpp"
+#include "training/rasterization/gsplat_rasterizer.hpp"
+#include "core/tensor.hpp"
+#include "core/splat_data.hpp"
+#include "core/camera.hpp"
 
 using namespace lfs::training;
 using namespace lfs::core;

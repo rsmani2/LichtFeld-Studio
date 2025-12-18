@@ -11,14 +11,14 @@
 
 #include <nlohmann/json_fwd.hpp>
 
-namespace gs {
+namespace lfs::core {
     namespace param {
-        // Mask mode options for attention mask behavior
+        // Mask mode for attention mask behavior during training
         enum class MaskMode {
-            None,            // No masking applied
-            Segment,         // Soft penalty to segment regions (enforce alpha->0 in masked areas)
-            Ignore,          // Completely ignore masked regions in loss computation
-            AlphaConsistent  // Enforce exact alpha values from mask
+            None,           // No masking applied
+            Segment,        // Soft penalty to enforce alpha→0 in masked areas
+            Ignore,         // Completely ignore masked regions in loss
+            AlphaConsistent // Enforce exact alpha values from mask
         };
 
         struct OptimizationParameters {
@@ -29,7 +29,6 @@ namespace gs {
             float opacity_lr = 0.05f;
             float scaling_lr = 0.005f;
             float rotation_lr = 0.001f;
-            float final_lr_fraction = 0.01f;                  // Final LR as fraction of initial (0.01 = decay to 1%)
             float lambda_dssim = 0.2f;
             float min_opacity = 0.005f;
             size_t refine_every = 100;
@@ -42,25 +41,21 @@ namespace gs {
             float init_opacity = 0.5f;
             float init_scaling = 0.1f;
             int num_workers = 16;
-            int gpu_id = -1;                                  // GPU device ID to use (-1 = auto/default, 0+ = specific GPU)
             int max_cap = 1000000;
             std::vector<size_t> eval_steps = {7'000, 30'000}; // Steps to evaluate the model
             std::vector<size_t> save_steps = {7'000, 30'000}; // Steps to save the model
-            bool skip_intermediate_saving = false;            // Skip saving intermediate results and only save final output
             bool bg_modulation = false;                       // Enable sinusoidal background modulation
             bool enable_eval = false;                         // Only evaluate when explicitly enabled
-            bool rc = false;                                  // Workaround for reality captures - doesn't properly convert COLMAP camera model
             bool enable_save_eval_images = true;              // Save during evaluation images
             bool headless = false;                            // Disable visualization during training
-            std::string render_mode = "RGB";                  // Render mode: RGB, D, ED, RGB_D, RGB_ED
             std::string strategy = "mcmc";                    // Optimization strategy: mcmc, default.
-            MaskMode mask_mode = MaskMode::None;              // Mask mode: none, segment, ignore, alpha_consistent
-            bool invert_masks = false;                        // If true, inverts mask values (0.0 <-> 1.0) during loading
-            float mask_opacity_penalty_weight = 1.0f;         // Opacity penalty weight for segment mask mode
-            float mask_opacity_penalty_power = 2.0f;          // Power for penalty falloff curve (1=linear, 2=quadratic, higher=gentler on uncertain regions)
-            float mask_threshold = 0.5f;                      // Threshold for clamping masks: >= threshold → 1.0, < threshold → keep original (soft falloff)
-            bool preload_to_ram = false;                      // If true, the entire dataset will be loaded into RAM at startup
-            std::string pose_optimization = "none";           // Pose optimization type: none, direct, mlp
+
+            // Mask parameters
+            MaskMode mask_mode = MaskMode::None;              // Attention mask mode
+            bool invert_masks = false;                        // Invert mask values (swap object/background)
+            float mask_threshold = 0.5f;                      // Threshold: >= threshold → 1.0, < threshold → keep original
+            float mask_opacity_penalty_weight = 1.0f;         // Opacity penalty weight for segment mode
+            float mask_opacity_penalty_power = 2.0f;          // Penalty falloff (1=linear, 2=quadratic)
 
             // Bilateral grid parameters
             bool use_bilateral_grid = false;
@@ -69,8 +64,6 @@ namespace gs {
             int bilateral_grid_W = 8;
             float bilateral_grid_lr = 2e-3f;
             float tv_loss_weight = 10.f;
-            int bilateral_grid_warmup_steps = 1000;      // Warmup steps for bilateral grid scheduler
-            float bilateral_grid_warmup_start_lr = 0.01f; // Starting LR factor for warmup (fraction of initial)
 
             // Default strategy specific parameters
             float prune_opacity = 0.005f;
@@ -83,16 +76,14 @@ namespace gs {
             bool revised_opacity = false;
             bool gut = false;
             float steps_scaler = 0.f;  // If < 0, step size scaling is disabled
-            bool antialiasing = false; // Enable antialiasing in rendering
 
             // Random initialization parameters
             bool random = false;        // Use random initialization instead of SfM
             int init_num_pts = 100'000; // Number of random points to initialize
             float init_extent = 3.0f;   // Extent of random point cloud
 
-            // SOG format parameters
-            bool save_sog = false;   // Save in SOG format alongside PLY
-            int sog_iterations = 10; // K-means iterations for SOG compression
+            // Tile mode for memory-efficient training (1=1 tile, 2=2 tiles, 4=4 tiles)
+            int tile_mode = 1;
 
             // Sparsity optimization parameters
             bool enable_sparsity = false;
@@ -109,7 +100,7 @@ namespace gs {
         struct LoadingParams {
             bool use_cpu_memory = true;
             float min_cpu_free_memory_ratio = 0.1f; // make sure at least 10% RAM is free
-            std::size_t min_cpu_free_GB = 1;        // min GB we want to be free
+            float min_cpu_free_GB = 1.0f;        // min GB we want to be free
             bool use_fs_cache = true;
             bool print_cache_status = true;
             int print_status_freq_num = 500; // every print_status_freq_num calls for load print cache status
@@ -121,7 +112,6 @@ namespace gs {
         struct DatasetConfig {
             std::filesystem::path data_path = "";
             std::filesystem::path output_path = "";
-            std::filesystem::path project_path = ""; // if path is relative it will be saved to output_path/project_name.ls
             std::string images = "images";
             int resize_factor = -1;
             int test_every = 8;
@@ -129,8 +119,10 @@ namespace gs {
             int timelapse_every = 50;
             int max_width = 3840;
             LoadingParams loading_params;
-            bool invert_masks = false;  // Invert mask values during loading (swap object/background)
-            float mask_threshold = 0.5f; // Threshold for clamping masks: >= threshold → 1.0, < threshold → keep original (soft falloff)
+
+            // Mask loading parameters (copied from optimization params)
+            bool invert_masks = false;
+            float mask_threshold = 0.5f;
 
             nlohmann::json to_json() const;
             static DatasetConfig from_json(const nlohmann::json& j);
@@ -140,21 +132,40 @@ namespace gs {
             DatasetConfig dataset;
             OptimizationParameters optimization;
 
-            // Viewer mode specific
-            std::filesystem::path ply_path = "";
+            // Viewer mode: splat files to load (.ply, .sog, .resume)
+            std::vector<std::filesystem::path> view_paths;
 
             // Optional splat file for initialization (.ply, .sog, .spz, .resume)
             std::optional<std::string> init_path = std::nullopt;
+
+            // Checkpoint to resume training from
+            std::optional<std::filesystem::path> resume_checkpoint = std::nullopt;
+        };
+
+        // Output format for conversion tool
+        enum class OutputFormat { PLY, SOG, SPZ, HTML };
+
+        // Parameters for the convert command
+        struct ConvertParameters {
+            std::filesystem::path input_path;
+            std::filesystem::path output_path;  // Empty = derive from input
+            OutputFormat format = OutputFormat::PLY;
+            int sh_degree = 3;  // 0-3, -1 = keep original
+            int sog_iterations = 10;
+            bool overwrite = false;  // Skip overwrite prompts
         };
 
         // Modern C++23 functions returning expected values
-        std::expected<OptimizationParameters, std::string> read_optim_params_from_json(std::filesystem::path& path);
+        std::expected<OptimizationParameters, std::string> read_optim_params_from_json(const std::filesystem::path& path);
 
         // Save training parameters to JSON
         std::expected<void, std::string> save_training_parameters_to_json(
             const TrainingParameters& params,
             const std::filesystem::path& output_path);
 
-        std::expected<LoadingParams, std::string> read_loading_params_from_json(std::filesystem::path& path);
+        std::expected<LoadingParams, std::string> read_loading_params_from_json(const std::filesystem::path& path);
+
+        // Find parameter file by searching up from executable directory
+        std::filesystem::path get_parameter_file_path(const std::string& filename);
     } // namespace param
-} // namespace gs
+} // namespace lfs::core

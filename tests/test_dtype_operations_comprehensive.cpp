@@ -3,7 +3,7 @@
 
 #include <gtest/gtest.h>
 #include <cuda_runtime.h>
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <iostream>
 #include <vector>
 #include <string>

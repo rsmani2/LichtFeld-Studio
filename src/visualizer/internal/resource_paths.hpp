@@ -9,7 +9,7 @@
 #include <string>
 #include <vector>
 
-namespace gs::visualizer {
+namespace lfs::vis {
 
     inline std::filesystem::path getAssetPath(const std::string& asset_name) {
         std::vector<std::filesystem::path> search_paths;
@@ -24,7 +24,9 @@ namespace gs::visualizer {
         search_paths.push_back(std::filesystem::path(VISUALIZER_SOURCE_ASSET_PATH) / asset_name);
 #endif
 
-        // Check gui/assets directory (where the font actually is!)
+#ifdef PROJECT_ROOT_PATH
+        search_paths.push_back(std::filesystem::path(PROJECT_ROOT_PATH) / "src/visualizer/gui/assets" / asset_name);
+#endif
 #ifdef PROJECT_ROOT_PATH
         search_paths.push_back(std::filesystem::path(PROJECT_ROOT_PATH) / "src/visualizer/gui/assets" / asset_name);
 #endif
@@ -83,4 +85,4 @@ namespace gs::visualizer {
         throw std::runtime_error(error_msg);
     }
 
-} // namespace gs::visualizer
+} // namespace lfs::vis

@@ -4,11 +4,11 @@
 
 #include "split_view_renderer.hpp"
 #include "core/logger.hpp"
-#include "core/splat_data.hpp"
+#include "core/tensor.hpp"
 #include "gl_state_guard.hpp"
 #include <glad/glad.h>
 
-namespace gs::rendering {
+namespace lfs::rendering {
 
     Result<void> SplitViewRenderer::initialize() {
         if (initialized_) {
@@ -187,20 +187,22 @@ namespace gs::rendering {
                 .fov = request.viewport.fov,
                 .scaling_modifier = request.scaling_modifier,
                 .antialiasing = request.antialiasing,
+                .sh_degree = request.sh_degree,
                 .render_mode = RenderMode::RGB,
                 .crop_box = nullptr,
                 .background_color = request.background_color,
                 .point_cloud_mode = request.point_cloud_mode,
                 .voxel_size = request.voxel_size,
                 .gut = request.gut,
-                .sh_degree = request.sh_degree};
+                .show_rings = request.show_rings,
+                .ring_width = request.ring_width};
 
             // Handle crop box if present
-            std::unique_ptr<geometry::BoundingBox> temp_crop_box;
+            std::unique_ptr<lfs::geometry::BoundingBox> temp_crop_box;
             if (request.crop_box.has_value()) {
-                temp_crop_box = std::make_unique<geometry::BoundingBox>();
+                temp_crop_box = std::make_unique<lfs::geometry::BoundingBox>();
                 temp_crop_box->setBounds(request.crop_box->min, request.crop_box->max);
-                geometry::EuclideanTransform transform(request.crop_box->transform);
+                lfs::geometry::EuclideanTransform transform(request.crop_box->transform);
                 temp_crop_box->setworld2BBox(transform);
                 base_req.crop_box = temp_crop_box.get();
             }
@@ -289,10 +291,10 @@ namespace gs::rendering {
         glGetIntegerv(GL_FRAMEBUFFER_BINDING, &current_fbo);
 
         // Check if this is a GT comparison (one panel is Image2D or CachedRender)
-        bool is_gt_comparison = (request.panels[0].content_type == gs::rendering::PanelContentType::Image2D ||
-                                 request.panels[0].content_type == gs::rendering::PanelContentType::CachedRender ||
-                                 request.panels[1].content_type == gs::rendering::PanelContentType::Image2D ||
-                                 request.panels[1].content_type == gs::rendering::PanelContentType::CachedRender);
+        bool is_gt_comparison = (request.panels[0].content_type == lfs::rendering::PanelContentType::Image2D ||
+                                 request.panels[0].content_type == lfs::rendering::PanelContentType::CachedRender ||
+                                 request.panels[1].content_type == lfs::rendering::PanelContentType::Image2D ||
+                                 request.panels[1].content_type == lfs::rendering::PanelContentType::CachedRender);
 
         GLuint left_texture = 0;
         GLuint right_texture = 0;
@@ -303,15 +305,15 @@ namespace gs::rendering {
                 const auto& panel = request.panels[i];
                 GLuint* target_texture = (i == 0) ? &left_texture : &right_texture;
 
-                if (panel.content_type == gs::rendering::PanelContentType::Image2D ||
-                    panel.content_type == gs::rendering::PanelContentType::CachedRender) {
+                if (panel.content_type == lfs::rendering::PanelContentType::Image2D ||
+                    panel.content_type == lfs::rendering::PanelContentType::CachedRender) {
                     // Use the texture directly
                     *target_texture = panel.texture_id;
                     if (*target_texture == 0) {
                         LOG_ERROR("Panel {} has invalid texture ID", i);
                         return std::unexpected("Invalid texture ID");
                     }
-                } else if (panel.content_type == gs::rendering::PanelContentType::Model3D) {
+                } else if (panel.content_type == lfs::rendering::PanelContentType::Model3D) {
                     // Need to render the model - use framebuffer
                     auto* framebuffer = (i == 0) ? left_framebuffer_.get() : right_framebuffer_.get();
 
@@ -386,14 +388,16 @@ namespace gs::rendering {
         glBindFramebuffer(GL_FRAMEBUFFER, current_fbo);
 
         // Return a dummy result
-        torch::Tensor dummy_image = torch::zeros({3, request.viewport.size.y, request.viewport.size.x},
-                                                 torch::kFloat32)
-                                        .to(torch::kCUDA);
-        torch::Tensor dummy_depth = torch::empty({0}, torch::kFloat32);
+        const size_t height = static_cast<size_t>(request.viewport.size.y);
+        const size_t width = static_cast<size_t>(request.viewport.size.x);
+
+        auto dummy_image = lfs::core::Tensor::zeros({3, height, width}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
+        auto dummy_depth = lfs::core::Tensor::empty({0}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
 
         return RenderResult{
-            .image = std::make_shared<torch::Tensor>(std::move(dummy_image)),
-            .depth = std::make_shared<torch::Tensor>(std::move(dummy_depth))};
+            .image = std::make_shared<lfs::core::Tensor>(std::move(dummy_image)),
+            .depth = std::make_shared<lfs::core::Tensor>(std::move(dummy_depth)),
+            .valid = true};
     }
 
     Result<void> SplitViewRenderer::compositeSplitView(
@@ -471,4 +475,4 @@ namespace gs::rendering {
         return {};
     }
 
-} // namespace gs::rendering
+} // namespace lfs::rendering

@@ -3,16 +3,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "gui/windows/file_browser.hpp"
-#include "loader/loader.hpp"
-#include "project/project.hpp"
+#include "io/loader.hpp"
 #include <algorithm>
 #include <imgui.h>
 
-namespace gs::gui {
-    using management::Project;
-}
-
-namespace gs::gui {
+namespace lfs::vis::gui {
 
     FileBrowser::FileBrowser() {
         current_path_ = std::filesystem::current_path().string();
@@ -70,8 +65,8 @@ namespace gs::gui {
                         auto ext = entry.path().extension().string();
                         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-                        // Add .sog to the list of supported file extensions
-                        if (ext == ".ply" || ext == ".sog" || ext == ".json" || ext == Project::EXTENSION ||
+                        // Supported file extensions
+                        if (ext == ".ply" || ext == ".sog" || ext == ".json" ||
                             entry.path().filename() == "cameras.bin" ||
                             entry.path().filename() == "cameras.txt" ||
                             entry.path().filename() == "images.bin" ||
@@ -97,13 +92,13 @@ namespace gs::gui {
             });
 
             // Create a Loader instance to check if paths can be loaded
-            auto loader = gs::loader::Loader::create();
+            auto loader = lfs::io::Loader::create();
 
             for (const auto& dir : dirs) {
                 std::string dirname = "[DIR] " + dir.path().filename().string();
                 bool is_selected = (selected_file_ == dir.path().string());
 
-                bool is_dataset = gs::loader::Loader::isDatasetPath(dir.path());
+                bool is_dataset = lfs::io::Loader::isDatasetPath(dir.path());
                 bool is_sog_dir = false;
 
                 // Check if it's a SOG directory (has meta.json and WebP files)
@@ -155,8 +150,6 @@ namespace gs::gui {
                     color = ImVec4(0.3f, 0.8f, 0.3f, 1.0f); // Green for PLY
                 } else if (file.path().extension() == ".sog") {
                     color = ImVec4(0.9f, 0.6f, 0.2f, 1.0f); // Orange for SOG
-                } else if (file.path().extension() == Project::EXTENSION) {
-                    color = ImVec4(0.9f, 0.4f, 0.9f, 1.0f); // Pink/purple for project files
                 } else if (filename == "cameras.bin" || filename == "cameras.txt" ||
                            filename == "images.bin" || filename == "images.txt" ||
                            filename == "transforms.json" || filename == "transforms_train.json") {
@@ -202,7 +195,7 @@ namespace gs::gui {
             std::filesystem::path selected_path(selected_file_);
 
             if (std::filesystem::is_directory(selected_path)) {
-                bool is_dataset = gs::loader::Loader::isDatasetPath(selected_path);
+                bool is_dataset = lfs::io::Loader::isDatasetPath(selected_path);
 
                 // Check if it's a SOG directory
                 bool is_sog_dir = false;
@@ -228,9 +221,9 @@ namespace gs::gui {
 
                     ImGui::SameLine();
 
-                    auto dataset_type = gs::loader::Loader::getDatasetType(selected_path);
-                    const char* type_str = (dataset_type == gs::loader::DatasetType::COLMAP) ? "(COLMAP)" : (dataset_type == gs::loader::DatasetType::Transforms) ? "(Transforms)"
-                                                                                                                                                                  : "(Dataset)";
+                    auto dataset_type = lfs::io::Loader::getDatasetType(selected_path);
+                    const char* type_str = (dataset_type == lfs::io::DatasetType::COLMAP) ? "(COLMAP)" : (dataset_type == lfs::io::DatasetType::Transforms) ? "(Transforms)"
+                                                                                                                                                                    : "(Dataset)";
                     ImGui::TextDisabled(type_str);
                 } else if (is_sog_dir) {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.5f, 0.1f, 1.0f)); // Orange button
@@ -271,15 +264,6 @@ namespace gs::gui {
                 } else if (ext == ".sog") {
                     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.8f, 0.5f, 0.1f, 1.0f)); // Orange button
                     if (ImGui::Button("Load SOG", ImVec2(120, 0))) {
-                        if (on_file_selected_) {
-                            on_file_selected_(selected_path, false);
-                            *p_open = false;
-                        }
-                    }
-                    ImGui::PopStyleColor();
-                } else if (ext == Project::EXTENSION) {
-                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.3f, 0.7f, 1.0f));
-                    if (ImGui::Button("Load LichtFeldStudio Project", ImVec2(200, 0))) {
                         if (on_file_selected_) {
                             on_file_selected_(selected_path, false);
                             *p_open = false;
@@ -346,4 +330,4 @@ namespace gs::gui {
             current_path_ = path.parent_path().string();
         }
     }
-} // namespace gs::gui
+} // namespace lfs::vis::gui

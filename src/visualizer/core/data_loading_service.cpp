@@ -3,12 +3,14 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "core/data_loading_service.hpp"
+#include "core/parameter_manager.hpp"
+#include "core/services.hpp"
 #include "core/logger.hpp"
 #include "scene/scene_manager.hpp"
 #include <algorithm>
 #include <stdexcept>
 
-namespace gs::visualizer {
+namespace lfs::vis {
 
     DataLoadingService::DataLoadingService(SceneManager* scene_manager)
         : scene_manager_(scene_manager) {
@@ -18,41 +20,43 @@ namespace gs::visualizer {
     DataLoadingService::~DataLoadingService() = default;
 
     void DataLoadingService::setupEventHandlers() {
-        using namespace events;
+        using namespace lfs::core::events;
 
         // Listen for file load commands
         cmd::LoadFile::when([this](const auto& cmd) {
             handleLoadFileCommand(cmd.is_dataset, cmd.path);
         });
+
+        // Listen for checkpoint load for training commands
+        cmd::LoadCheckpointForTraining::when([this](const auto& cmd) {
+            handleLoadCheckpointForTrainingCommand(cmd.path);
+        });
     }
 
-    void DataLoadingService::handleLoadFileCommand(bool is_dataset, const std::filesystem::path& path) {
+    void DataLoadingService::handleLoadFileCommand(const bool is_dataset, const std::filesystem::path& path) {
         if (is_dataset) {
-            // Prevent GUI crash on unsupported dataset formats
-            try {
-                loadDataset(path);
-            } catch (const std::exception& e) {
-                events::state::DatasetLoadCompleted{
-                    .path = path,
-                    .success = false,
-                    .error = std::string(e.what()),
-                    .num_images = 0,
-                    .num_points = 0}
-                    .emit();
-            }
-
-        } else {
-            scene_manager_->changeContentType(SceneManager::ContentType::SplatFiles);
-            // Determine file type and load appropriately
-            if (isSOGFile(path) || isPLYFile(path)) {
-                std::string ply_name = path.stem().string();
-                scene_manager_->addSplatFile(path, ply_name);
-                scene_manager_->getProject()->addPly(true, path, -1, ply_name);
-            } else {
-                // Let scene manager determine the type
-                scene_manager_->addSplatFile(path);
-            }
+            loadDataset(path);
+            return;
         }
+
+        // Checkpoint files get special handling - redirect to training resume flow
+        if (isCheckpointFile(path)) {
+            handleLoadCheckpointForTrainingCommand(path);
+            return;
+        }
+
+        if (scene_manager_->getContentType() == SceneManager::ContentType::Dataset) {
+            scene_manager_->clear();
+        }
+        scene_manager_->changeContentType(SceneManager::ContentType::SplatFiles);
+
+        const std::string name = path.stem().string();
+        scene_manager_->addSplatFile(path, name);
+    }
+
+    void DataLoadingService::handleLoadCheckpointForTrainingCommand(const std::filesystem::path& path) {
+        LOG_INFO("Loading checkpoint for training: {}", path.string());
+        loadCheckpointForTraining(path);
     }
 
     bool DataLoadingService::isSOGFile(const std::filesystem::path& path) const {
@@ -96,6 +100,12 @@ namespace gs::visualizer {
         auto ext = path.extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
         return ext == ".ply";
+    }
+
+    bool DataLoadingService::isCheckpointFile(const std::filesystem::path& path) const {
+        auto ext = path.extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        return ext == ".resume";
     }
 
     std::expected<void, std::string> DataLoadingService::loadPLY(const std::filesystem::path& path) {
@@ -223,25 +233,19 @@ namespace gs::visualizer {
     std::expected<void, std::string> DataLoadingService::loadDataset(const std::filesystem::path& path) {
         LOG_TIMER("LoadDataset");
 
-        try {
-            LOG_INFO("Loading dataset from: {}", path.string());
+        LOG_INFO("Loading dataset from: {}", path.string());
 
-            // Validate parameters
-            if (params_.dataset.data_path.empty() && path.empty()) {
-                LOG_ERROR("No dataset path specified");
-                throw std::runtime_error("No dataset path specified");
-            }
-
-            // Load through scene manager
-            LOG_DEBUG("Passing dataset to scene manager with parameters");
-            scene_manager_->loadDataset(path, params_);
-
-            return {};
-        } catch (const std::exception& e) {
-            std::string error_msg = std::format("Failed to load dataset: {}", e.what());
-            LOG_ERROR("{} (Path: {})", error_msg, path.string());
-            throw std::runtime_error(error_msg);
+        // Validate parameters
+        if (params_.dataset.data_path.empty() && path.empty()) {
+            LOG_ERROR("No dataset path specified");
+            return std::unexpected("No dataset path specified");
         }
+
+        // Load through scene manager (it emits DatasetLoadCompleted event on success/failure)
+        LOG_DEBUG("Passing dataset to scene manager with parameters");
+        scene_manager_->loadDataset(path, params_);
+
+        return {};
     }
 
     void DataLoadingService::clearScene() {
@@ -255,4 +259,18 @@ namespace gs::visualizer {
         }
     }
 
-} // namespace gs::visualizer
+    std::expected<void, std::string> DataLoadingService::loadCheckpointForTraining(const std::filesystem::path& path) {
+        LOG_TIMER("LoadCheckpointForTraining");
+        try {
+            // Pass empty params; checkpoint contains all required params (dataset path, optimization, etc.)
+            lfs::core::param::TrainingParameters params;
+            scene_manager_->loadCheckpointForTraining(path, params);
+            return {};
+        } catch (const std::exception& e) {
+            const std::string error = std::format("Checkpoint load failed: {}", e.what());
+            LOG_ERROR("{}", error);
+            return std::unexpected(error);
+        }
+    }
+
+} // namespace lfs::vis

@@ -4,8 +4,8 @@
 
 #pragma once
 
-#include "core_new/point_cloud.hpp"
-#include "core_new/splat_data.hpp"
+#include "core/point_cloud.hpp"
+#include "core/splat_data.hpp"
 #include "io/error.hpp"
 #include <filesystem>
 #include <functional>

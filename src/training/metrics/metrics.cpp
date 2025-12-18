@@ -5,123 +5,56 @@
 #include "metrics.hpp"
 #include "core/image_io.hpp"
 #include "core/splat_data.hpp"
-#include "rasterization/fast_rasterizer.hpp"
-#include "rasterization/rasterizer.hpp"
-#include "kernels/ssim.cuh"
+#include "../rasterization/fast_rasterizer.hpp"
+#include "lfs/kernels/ssim.cuh"
 #include <chrono>
 #include <cmath>
 #include <iostream>
 #include <numeric>
 
-namespace gs::training {
-    // SSIM now uses kernel-based implementation to match NEW
+namespace lfs::training {
 
-    // PSNR Implementation
-    float PSNR::compute(const torch::Tensor& pred, const torch::Tensor& target) const {
-        TORCH_CHECK(pred.sizes() == target.sizes(),
-                    "Prediction and target must have the same shape");
+    // PSNR Implementation using lfs::core::Tensor
+    float PSNR::compute(const lfs::core::Tensor& pred, const lfs::core::Tensor& target) const {
+        // Check shapes match
+        if (pred.shape() != target.shape()) {
+            throw std::runtime_error("PSNR: Prediction and target must have the same shape");
+        }
 
-        // Make tensors contiguous before operations
-        const auto pred_cont = pred.contiguous();
-        const auto target_cont = target.contiguous();
+        // Compute MSE: mean((pred - target)^2)
+        auto diff = pred - target;
+        auto squared_diff = diff * diff;
 
-        // Compute MSE
-        const torch::Tensor squared_diff = (pred_cont - target_cont).pow(2);
+        // Compute mean over all dimensions
+        float mse = squared_diff.mean().item<float>();
 
-        // Use reshape instead of view to handle non-contiguous tensors
-        torch::Tensor mse_val = squared_diff.reshape({pred.size(0), -1}).mean(1, true);
-
-        // Avoid log(0)
-        mse_val = torch::clamp_min(mse_val, 1e-10);
+        // Clamp to avoid log(0)
+        if (mse < 1e-10f) {
+            mse = 1e-10f;
+        }
 
         // PSNR = 20 * log10(data_range / sqrt(MSE))
-        return (20.f * torch::log10(data_range_ / mse_val.sqrt())).mean().item<float>();
+        const float psnr = 20.0f * std::log10(data_range_ / std::sqrt(mse));
+
+        return psnr;
     }
 
-    // SSIM Implementation (using kernel-based implementation to match NEW)
-    SSIM::SSIM(const int window_size, const int channel)
-        : window_size_(window_size),
-          channel_(channel) {
+    // SSIM Implementation using LibTorch-free kernels
+    SSIM::SSIM(bool apply_valid_padding)
+        : apply_valid_padding_(apply_valid_padding) {
     }
 
-    float SSIM::compute(const torch::Tensor& pred, const torch::Tensor& target) {
-        TORCH_CHECK(pred.dim() == 4, "Expected 4D tensor [B, C, H, W]");
-        TORCH_CHECK(pred.sizes() == target.sizes(),
-                    "Prediction and target must have the same shape");
-
-        // Use kernel-based SSIM implementation (same as NEW)
-        // apply_valid_padding = true to match NEW's default behavior
-        auto [ssim_value, ctx] = ssim_forward(pred, target, true);
-
-        return ssim_value;
-    }
-
-    // LPIPS Implementation
-    LPIPS::LPIPS(const std::string& model_path) {
-        if (!model_path.empty()) {
-            load_model(model_path);
-        } else {
-            // Try default paths
-            const std::vector<std::string> default_paths = {
-                "weights/lpips_vgg.pt",
-                "../weights/lpips_vgg.pt",
-                "../../weights/lpips_vgg.pt",
-                std::string(std::getenv("HOME") ? std::getenv("HOME") : "") + "/.cache/LichtFeld-Studio/lpips_vgg.pt"};
-
-            for (const auto& path : default_paths) {
-                if (std::filesystem::exists(path)) {
-                    load_model(path);
-                    break;
-                }
-            }
+    float SSIM::compute(const lfs::core::Tensor& pred, const lfs::core::Tensor& target) {
+        // Check shapes match
+        if (pred.shape() != target.shape()) {
+            throw std::runtime_error("SSIM: Prediction and target must have the same shape");
         }
 
-        if (!model_loaded_) {
-            throw std::runtime_error(
-                "LPIPS model not found! \n"
-                "Searched paths: weights/lpips_vgg.pt, ../weights/lpips_vgg.pt");
-        }
-    }
+        // Use our LibTorch-free SSIM kernel
+        auto [ssim_value, ctx] = kernels::ssim_forward(pred, target, apply_valid_padding_);
 
-    void LPIPS::load_model(const std::string& model_path) {
-        try {
-            model_ = torch::jit::load(model_path);
-            model_.eval();
-            model_.to(torch::kCUDA);
-            model_loaded_ = true;
-            std::cout << "LPIPS model loaded from: " << model_path << std::endl;
-        } catch (const c10::Error& e) {
-            throw std::runtime_error(
-                "Failed to load LPIPS model from " + model_path + ": " + e.what());
-        }
-    }
-
-    float LPIPS::compute(const torch::Tensor& pred, const torch::Tensor& target) {
-        TORCH_CHECK(pred.dim() == 4, "Expected 4D tensor [B, C, H, W]");
-        TORCH_CHECK(pred.sizes() == target.sizes(),
-                    "Prediction and target must have the same shape");
-        TORCH_CHECK(model_loaded_, "LPIPS model not loaded!");
-
-        const torch::NoGradGuard no_grad;
-
-        // LPIPS expects inputs in range [-1, 1], but our inputs are in [0, 1]
-        // Convert from [0, 1] to [-1, 1]
-        auto pred_normalized = 2.0f * pred - 1.0f;
-        auto target_normalized = 2.0f * target - 1.0f;
-
-        // Ensure inputs are on CUDA and contiguous
-        pred_normalized = pred_normalized.to(torch::kCUDA).contiguous();
-        target_normalized = target_normalized.to(torch::kCUDA).contiguous();
-
-        // Forward pass through LPIPS model
-        std::vector<torch::jit::IValue> inputs;
-        inputs.push_back(pred_normalized);
-        inputs.push_back(target_normalized);
-
-        const auto output = model_.forward(inputs).toTensor();
-
-        // LPIPS returns a single value per batch item
-        return output.mean().item<float>();
+        // Return mean SSIM value
+        return ssim_value.mean().item<float>();
     }
 
     // MetricsReporter Implementation
@@ -182,22 +115,16 @@ namespace gs::training {
                                                     [](const EvalMetrics& a, const EvalMetrics& b) {
                                                         return a.ssim < b.ssim;
                                                     });
-            const auto best_lpips = std::min_element(all_metrics_.begin(), all_metrics_.end(),
-                                                     [](const EvalMetrics& a, const EvalMetrics& b) {
-                                                         return a.lpips > b.lpips;
-                                                     });
 
             report_file << std::fixed << std::setprecision(4);
             report_file << "Best PSNR:  " << best_psnr->psnr << " (at iteration " << best_psnr->iteration << ")\n";
             report_file << "Best SSIM:  " << best_ssim->ssim << " (at iteration " << best_ssim->iteration << ")\n";
-            report_file << "Best LPIPS: " << best_lpips->lpips << " (at iteration " << best_lpips->iteration << ")\n";
 
             // Final metrics
             const auto& final = all_metrics_.back();
             report_file << "\nFinal Metrics (iteration " << final.iteration << "):\n";
             report_file << "PSNR:  " << final.psnr << "\n";
             report_file << "SSIM:  " << final.ssim << "\n";
-            report_file << "LPIPS: " << final.lpips << "\n";
             report_file << "Time per image: " << final.elapsed_time << " seconds\n";
             report_file << "Number of Gaussians: " << final.num_gaussians << "\n";
         }
@@ -208,17 +135,15 @@ namespace gs::training {
         report_file << std::setw(10) << "Iteration"
                     << std::setw(10) << "PSNR"
                     << std::setw(10) << "SSIM"
-                    << std::setw(10) << "LPIPS"
                     << std::setw(15) << "Time(s/img)"
                     << std::setw(15) << "#Gaussians"
                     << "\n";
-        report_file << std::string(75, '-') << "\n";
+        report_file << std::string(60, '-') << "\n";
 
         for (const auto& m : all_metrics_) {
             report_file << std::setw(10) << m.iteration
                         << std::setw(10) << std::fixed << std::setprecision(4) << m.psnr
                         << std::setw(10) << m.ssim
-                        << std::setw(10) << m.lpips
                         << std::setw(15) << m.elapsed_time
                         << std::setw(15) << m.num_gaussians << "\n";
         }
@@ -229,7 +154,7 @@ namespace gs::training {
     }
 
     // MetricsEvaluator Implementation
-    MetricsEvaluator::MetricsEvaluator(const param::TrainingParameters& params)
+    MetricsEvaluator::MetricsEvaluator(const lfs::core::param::TrainingParameters& params)
         : _params(params) {
         if (!params.optimization.enable_eval) {
             return;
@@ -237,14 +162,7 @@ namespace gs::training {
 
         // Initialize metrics
         _psnr_metric = std::make_unique<PSNR>(1.0f);
-        _ssim_metric = std::make_unique<SSIM>(11, 3);
-
-        // Find LPIPS model
-        std::filesystem::path lpips_path = params.dataset.output_path.parent_path() / "weights" / "lpips_vgg.pt";
-        if (!std::filesystem::exists(lpips_path)) {
-            lpips_path = "weights/lpips_vgg.pt";
-        }
-        _lpips_metric = std::make_unique<LPIPS>(lpips_path.string());
+        _ssim_metric = std::make_unique<SSIM>(true);  // apply_valid_padding = true
 
         // Initialize reporter
         _reporter = std::make_unique<MetricsReporter>(params.dataset.output_path);
@@ -258,69 +176,61 @@ namespace gs::training {
                _params.optimization.eval_steps.cend();
     }
 
-    bool MetricsEvaluator::has_rgb() const {
-        const auto render_mode = stringToRenderMode(_params.optimization.render_mode);
-        return render_mode == RenderMode::RGB ||
-               render_mode == RenderMode::RGB_D ||
-               render_mode == RenderMode::RGB_ED;
-    }
-
-    bool MetricsEvaluator::has_depth() const {
-        return stringToRenderMode(_params.optimization.render_mode) != RenderMode::RGB;
-    }
-
-    torch::Tensor MetricsEvaluator::apply_depth_colormap(const torch::Tensor& depth_normalized) const {
+    lfs::core::Tensor MetricsEvaluator::apply_depth_colormap(const lfs::core::Tensor& depth_normalized) const {
         // depth_normalized should be [H, W] with values in [0, 1]
-        TORCH_CHECK(depth_normalized.dim() == 2, "Expected 2D tensor for depth_normalized");
+        if (depth_normalized.ndim() != 2) {
+            throw std::runtime_error("Expected 2D tensor for depth_normalized");
+        }
+
+        const int H = depth_normalized.shape()[0];
+        const int W = depth_normalized.shape()[1];
 
         // Create output tensor [3, H, W] for RGB
-        auto colormap = torch::zeros({(3), (depth_normalized.size(0)), (depth_normalized.size(1))},
-                                     torch::TensorOptions().dtype(torch::kFloat32).device(depth_normalized.device()));
+        auto colormap = lfs::core::Tensor::zeros({static_cast<size_t>(3), static_cast<size_t>(H), static_cast<size_t>(W)}, depth_normalized.device());
 
-        // Get individual channel views
-        auto r = colormap[0];
-        auto g = colormap[1];
-        auto b = colormap[2];
+        // Get data pointers
+        const float* depth_data = depth_normalized.ptr<float>();
+        float* r_data = colormap.ptr<float>();
+        float* g_data = r_data + H * W;
+        float* b_data = g_data + H * W;
 
-        // Create masks for different value ranges
-        const auto mask1 = depth_normalized < 0.25f;
-        const auto mask2 = (depth_normalized >= 0.25f) & (depth_normalized < 0.5f);
-        const auto mask3 = (depth_normalized >= 0.5f) & (depth_normalized < 0.75f);
-        const auto mask4 = depth_normalized >= 0.75f;
+        // Apply jet colormap (CPU implementation for simplicity)
+        auto depth_cpu = depth_normalized.to(lfs::core::Device::CPU);
+        const float* depth_cpu_data = depth_cpu.ptr<float>();
 
-        // Apply jet colormap using vectorized operations
+        for (int i = 0; i < H * W; i++) {
+            float val = depth_cpu_data[i];
 
-        // Range [0, 0.25): Blue to Cyan
-        // R = 0, G = 4*val, B = 1
-        r.masked_fill_(mask1, 0.0f);
-        g.masked_scatter_(mask1, 4.0f * depth_normalized.masked_select(mask1));
-        b.masked_fill_(mask1, 1.0f);
+            // Jet colormap
+            if (val < 0.25f) {
+                // Blue to Cyan
+                r_data[i] = 0.0f;
+                g_data[i] = 4.0f * val;
+                b_data[i] = 1.0f;
+            } else if (val < 0.5f) {
+                // Cyan to Green
+                r_data[i] = 0.0f;
+                g_data[i] = 1.0f;
+                b_data[i] = 1.0f - 4.0f * (val - 0.25f);
+            } else if (val < 0.75f) {
+                // Green to Yellow
+                r_data[i] = 4.0f * (val - 0.5f);
+                g_data[i] = 1.0f;
+                b_data[i] = 0.0f;
+            } else {
+                // Yellow to Red
+                r_data[i] = 1.0f;
+                g_data[i] = 1.0f - 4.0f * (val - 0.75f);
+                b_data[i] = 0.0f;
+            }
 
-        // Range [0.25, 0.5): Cyan to Green
-        // R = 0, G = 1, B = 1 - 4*(val-0.25)
-        r.masked_fill_(mask2, 0.0f);
-        g.masked_fill_(mask2, 1.0f);
-        const auto vals2 = depth_normalized.masked_select(mask2);
-        b.masked_scatter_(mask2, 1.0f - 4.0f * (vals2 - 0.25f));
+            // Clamp
+            r_data[i] = std::clamp(r_data[i], 0.0f, 1.0f);
+            g_data[i] = std::clamp(g_data[i], 0.0f, 1.0f);
+            b_data[i] = std::clamp(b_data[i], 0.0f, 1.0f);
+        }
 
-        // Range [0.5, 0.75): Green to Yellow
-        // R = 4*(val-0.5), G = 1, B = 0
-        const auto vals3 = depth_normalized.masked_select(mask3);
-        r.masked_scatter_(mask3, 4.0f * (vals3 - 0.5f));
-        g.masked_fill_(mask3, 1.0f);
-        b.masked_fill_(mask3, 0.0f);
-
-        // Range [0.75, 1.0]: Yellow to Red
-        // R = 1, G = 1 - 4*(val-0.75), B = 0
-        r.masked_fill_(mask4, 1.0f);
-        const auto vals4 = depth_normalized.masked_select(mask4);
-        g.masked_scatter_(mask4, 1.0f - 4.0f * (vals4 - 0.75f));
-        b.masked_fill_(mask4, 0.0f);
-
-        // Clamp values to ensure they're in [0, 1]
-        colormap = colormap.clamp(0.0f, 1.0f);
-
-        return colormap;
+        return colormap.to(depth_normalized.device());
     }
 
     auto MetricsEvaluator::make_dataloader(std::shared_ptr<CameraDataset> dataset, const int workers) const {
@@ -328,9 +238,9 @@ namespace gs::training {
     }
 
     EvalMetrics MetricsEvaluator::evaluate(const int iteration,
-                                           const SplatData& splatData,
+                                           const lfs::core::SplatData& splatData,
                                            std::shared_ptr<CameraDataset> val_dataset,
-                                           torch::Tensor& background) {
+                                           lfs::core::Tensor& background) {
         if (!_params.optimization.enable_eval) {
             throw std::runtime_error("Evaluation is not enabled");
         }
@@ -341,7 +251,7 @@ namespace gs::training {
 
         const auto val_dataloader = make_dataloader(val_dataset);
 
-        std::vector<float> psnr_values, ssim_values, lpips_values;
+        std::vector<float> psnr_values, ssim_values;
         const auto start_time = std::chrono::steady_clock::now();
 
         // Create directory for evaluation images
@@ -351,93 +261,42 @@ namespace gs::training {
             std::filesystem::create_directories(eval_dir);
         }
 
-        // Create subdirectory for depth maps only if we're saving depth
-        std::filesystem::path depth_dir;
-        if (has_depth() && _params.optimization.enable_save_eval_images) {
-            depth_dir = eval_dir / "depth";
-            std::filesystem::create_directories(depth_dir);
-        }
-
         int image_idx = 0;
-        const size_t val_dataset_size = val_dataset->size().value();
+        const size_t val_dataset_size = val_dataset->size();
 
-        for (auto& batch : *val_dataloader) {
+        while (auto batch_opt = val_dataloader->next()) {
+            auto& batch = *batch_opt;
             auto camera_with_image = batch[0].data;
-            Camera* cam = camera_with_image.camera; // rasterize needs non-const Camera&
-            torch::Tensor gt_image = std::move(camera_with_image.image).to(torch::kCUDA);
+            lfs::core::Camera* cam = camera_with_image.camera;
+            lfs::core::Tensor gt_image = std::move(camera_with_image.image);
 
-            // TODO: const_cast is certainly not the correct solution here!
-            auto& splatData_mutable = const_cast<SplatData&>(splatData);
-            RenderOutput r_output;
-            if (_params.optimization.gut) {
-                r_output = rasterize(*cam, splatData_mutable, background, 1.0f, false, false, RenderMode::RGB, nullptr);
-            } else {
-                r_output = fast_rasterize(*cam, splatData_mutable, background);
+            // Ensure gt_image is on CUDA
+            if (gt_image.device() != lfs::core::Device::CUDA) {
+                gt_image = gt_image.to(lfs::core::Device::CUDA);
             }
 
-            // Only compute metrics if we have RGB output
-            if (has_rgb()) {
-                // Ensure correct dimensions
-                if (r_output.image.dim() == 3)
-                    r_output.image = r_output.image.unsqueeze(0);
-                if (gt_image.dim() == 3)
-                    gt_image = gt_image.unsqueeze(0);
+            // Rasterize
+            auto& splatData_mutable = const_cast<lfs::core::SplatData&>(splatData);
+            RenderOutput r_output = fast_rasterize(*cam, splatData_mutable, background);
 
-                // Clamp rendered image to [0, 1]
-                r_output.image = torch::clamp(r_output.image, 0.0, 1.0);
+            // Clamp rendered image to [0, 1]
+            r_output.image = r_output.image.clamp(0.0f, 1.0f);
 
-                // Compute metrics
-                const float psnr = _psnr_metric->compute(r_output.image, gt_image);
-                const float ssim = _ssim_metric->compute(r_output.image, gt_image);
-                const float lpips = _lpips_metric->compute(r_output.image, gt_image);
+            // Compute metrics
+            const float psnr = _psnr_metric->compute(r_output.image, gt_image);
+            const float ssim = _ssim_metric->compute(r_output.image, gt_image);
 
-                psnr_values.push_back(psnr);
-                ssim_values.push_back(ssim);
-                lpips_values.push_back(lpips);
+            psnr_values.push_back(psnr);
+            ssim_values.push_back(ssim);
 
-                // Save side-by-side RGB images asynchronously
-                if (_params.optimization.enable_save_eval_images) {
-                    const std::vector<torch::Tensor> rgb_images = {gt_image.squeeze(0), r_output.image.squeeze(0)};
-                    image_io::save_images_async(
-                        eval_dir / (std::to_string(image_idx) + ".png"),
-                        rgb_images,
-                        true, // horizontal
-                        4);   // separator width
-                }
-            }
-
-            // Only save depth if enabled and render mode includes depth
-            if (has_depth() && _params.optimization.enable_save_eval_images) {
-                if (r_output.depth.defined()) {
-                    auto depth_vis = r_output.depth.clone().squeeze(0).to(torch::kCPU); // [H, W]
-
-                    // Normalize depth
-                    const auto min_depth = depth_vis.min();
-                    const auto max_depth = depth_vis.max();
-                    const auto depth_normalized = (depth_vis - min_depth) / (max_depth - min_depth).clamp_min(1e-10);
-
-                    // Apply colormap
-                    const auto depth_colormap = apply_depth_colormap(depth_normalized);
-
-                    // Optionally save RGB + Depth side by side (only if we have RGB)
-                    if (has_rgb()) {
-                        const std::vector<torch::Tensor> rgb_depth_images = {r_output.image.squeeze(0), depth_colormap};
-                        image_io::save_images_async(
-                            depth_dir / (std::to_string(image_idx) + "_rgb_depth.png"),
-                            rgb_depth_images,
-                            true, // horizontal
-                            4);   // separator width
-                    } else {
-                        // Save depth alone if no RGB
-                        const auto depth_gray_rgb = depth_normalized.unsqueeze(0).repeat({3, 1, 1});
-                        image_io::save_image_async(
-                            depth_dir / (std::to_string(image_idx) + "_gray.png"),
-                            depth_gray_rgb);
-                        image_io::save_image_async(
-                            depth_dir / (std::to_string(image_idx) + "_color.png"),
-                            depth_colormap);
-                    }
-                }
+            // Save side-by-side RGB images asynchronously
+            if (_params.optimization.enable_save_eval_images) {
+                const std::vector<lfs::core::Tensor> rgb_images = {gt_image, r_output.image};
+                lfs::core::image_io::save_images_async(
+                    eval_dir / (std::to_string(image_idx) + ".png"),
+                    rgb_images,
+                    true, // horizontal
+                    4);   // separator width
             }
 
             image_idx++;
@@ -445,25 +304,19 @@ namespace gs::training {
 
         // Wait for all images to be saved before computing final timing
         if (_params.optimization.enable_save_eval_images) {
-            const auto pending = image_io::BatchImageSaver::instance().pending_count();
+            const auto pending = lfs::core::image_io::BatchImageSaver::instance().pending_count();
             if (pending > 0) {
-                image_io::wait_for_pending_saves();
+                lfs::core::image_io::wait_for_pending_saves();
             }
         }
 
         const auto end_time = std::chrono::steady_clock::now();
         const auto elapsed = std::chrono::duration<float>(end_time - start_time).count();
 
-        // Compute averages only if we have RGB metrics
-        if (has_rgb() && !psnr_values.empty()) {
+        // Compute averages
+        if (!psnr_values.empty()) {
             result.psnr = std::accumulate(psnr_values.begin(), psnr_values.end(), 0.0f) / psnr_values.size();
             result.ssim = std::accumulate(ssim_values.begin(), ssim_values.end(), 0.0f) / ssim_values.size();
-            result.lpips = std::accumulate(lpips_values.begin(), lpips_values.end(), 0.0f) / lpips_values.size();
-        } else {
-            // Set default values for depth-only modes
-            result.psnr = 0.0f;
-            result.ssim = 0.0f;
-            result.lpips = 0.0f;
         }
         result.elapsed_time = elapsed / val_dataset_size;
 
@@ -472,11 +325,8 @@ namespace gs::training {
 
         if (_params.optimization.enable_save_eval_images) {
             std::cout << "Saved " << image_idx << " evaluation images to: " << eval_dir << std::endl;
-            if (has_depth()) {
-                std::cout << "Saved depth maps to: " << depth_dir << std::endl;
-            }
         }
 
         return result;
     }
-} // namespace gs::training
+} // namespace lfs::training

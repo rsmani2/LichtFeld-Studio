@@ -6,7 +6,7 @@
 #include <filesystem>
 #include <cmath>
 
-#include "core_new/splat_data.hpp"
+#include "core/splat_data.hpp"
 #include "io/loader.hpp"
 #include "io/exporter.hpp"
 

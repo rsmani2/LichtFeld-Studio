@@ -4,9 +4,9 @@
 
 #pragma once
 
-#include "core_new/camera.hpp"
-#include "core_new/point_cloud.hpp"
-#include "core_new/tensor.hpp"
+#include "core/camera.hpp"
+#include "core/point_cloud.hpp"
+#include "core/tensor.hpp"
 #include <filesystem>
 #include <memory>
 #include <vector>

@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "spz_loader.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/splat_data.hpp"
+#include "core/logger.hpp"
+#include "core/splat_data.hpp"
 #include "formats/spz.hpp"
 #include "io/error.hpp"
 #include <chrono>

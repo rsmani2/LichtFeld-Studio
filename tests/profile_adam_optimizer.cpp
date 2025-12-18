@@ -11,8 +11,8 @@
  */
 
 #include "optimizer/adam_optimizer.hpp"
-#include "core_new/splat_data.hpp"
-#include "core_new/tensor.hpp"
+#include "core/splat_data.hpp"
+#include "core/tensor.hpp"
 #include "optimizers/fused_adam.hpp"  // Reference optimizer
 #include <nvtx3/nvToolsExt.h>
 #include <chrono>

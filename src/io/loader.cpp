@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "io/loader.hpp"
-#include "core_new/logger.hpp"
+#include "core/logger.hpp"
 #include "io/filesystem_utils.hpp"
 #include "loader_service.hpp"
 #include <algorithm>

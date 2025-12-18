@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "html.hpp"
-#include "core_new/logger.hpp"
+#include "core/logger.hpp"
 #include "html_viewer_resources.hpp"
 #include "io/error.hpp"
 #include "sogs.hpp"

@@ -11,7 +11,7 @@
 #include <source_location>
 #include <string>
 
-namespace gs::rendering {
+namespace lfs::rendering {
 
     template <typename T>
     using Result = std::expected<T, std::string>;
@@ -205,4 +205,4 @@ namespace gs::rendering {
                   active_attributes, active_uniforms);
     }
 
-} // namespace gs::rendering
+} // namespace lfs::rendering

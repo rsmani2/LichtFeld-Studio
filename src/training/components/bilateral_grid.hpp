@@ -1,73 +1,94 @@
 /* SPDX-FileCopyrightText: 2025 LichtFeld Studio Authors
- *
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #pragma once
-#include <torch/torch.h>
+#include "core/tensor.hpp"
+#include "lfs/kernels/bilateral_grid.cuh"
+#include <cmath>
+#include <istream>
+#include <ostream>
 
-namespace gs::training {
+namespace lfs::training {
 
-    class BilateralGrid {
-    public:
-        BilateralGrid(int num_images, int grid_W = 16, int grid_H = 16, int grid_L = 8);
+struct BilateralGridConfig {
+    double lr = 2e-3;
+    double beta1 = 0.9;
+    double beta2 = 0.999;
+    double eps = 1e-15;
+    int warmup_steps = 1000;
+    double warmup_start_factor = 0.01;
+    double final_lr_factor = 0.01;
+};
 
-        // Apply bilateral grid to rendered image
-        torch::Tensor apply(const torch::Tensor& rgb, int image_idx);
+/// Bilateral grid for per-image appearance modeling with fused Adam optimizer
+class BilateralGrid {
+public:
+    using Config = BilateralGridConfig;
 
-        // Compute total variation loss
-        torch::Tensor tv_loss() const;
+    BilateralGrid(int num_images, int grid_W, int grid_H, int grid_L,
+                  int total_iterations, Config config = {});
 
-        // Get parameters for optimizer
-        torch::Tensor parameters() { return grids_; }
-        const torch::Tensor& parameters() const { return grids_; }
+    /// Forward pass: apply color correction
+    lfs::core::Tensor apply(const lfs::core::Tensor& rgb, int image_idx);
 
-        // Grid dimensions
-        int grid_width() const { return grid_width_; }
-        int grid_height() const { return grid_height_; }
-        int grid_guidance() const { return grid_guidance_; }
+    /// Backward pass: accumulate gradients (call optimizer_step after all backward calls)
+    lfs::core::Tensor backward(const lfs::core::Tensor& rgb,
+                               const lfs::core::Tensor& grad_output,
+                               int image_idx);
 
-        // Test/comparison helpers - wrap around apply() to match new API signature
-        // Returns (output, input_copy_with_grad) where input_copy_with_grad serves as context
-        std::pair<torch::Tensor, torch::Tensor> apply_forward(const torch::Tensor& rgb, int image_idx) {
-            auto rgb_with_grad = rgb.requires_grad_(true);
-            auto output = apply(rgb_with_grad, image_idx);
-            return {output, rgb_with_grad};  // Return output and input (serves as context for backward)
-        }
+    /// Compute TV loss for regularization (returns GPU tensor for async accumulation)
+    lfs::core::Tensor tv_loss_gpu();
 
-        // Test/comparison helper for backward - uses PyTorch autograd
-        torch::Tensor apply_backward(const torch::Tensor& rgb_with_grad, const torch::Tensor& grad_output, int image_idx) {
-            // rgb_with_grad is the context from forward pass
-            // We need to compute gradients w.r.t. the input
-            if (rgb_with_grad.grad().defined()) {
-                rgb_with_grad.grad().zero_();
-            }
+    /// Accumulate TV loss gradients
+    void tv_backward(float tv_weight);
 
-            // Get the output again (it should be in computation graph from forward)
-            auto output = apply(rgb_with_grad, image_idx);
-            output.backward(grad_output);
+    /// Apply Adam with all accumulated gradients
+    void optimizer_step();
 
-            return rgb_with_grad.grad();
-        }
+    /// Clear gradients for next iteration
+    void zero_grad();
 
-        // Test/comparison helpers for TV loss
-        std::pair<torch::Tensor, int> tv_loss_forward() {
-            auto loss = tv_loss();
-            return {loss, 0};  // Return (loss, dummy_context)
-        }
+    /// Update learning rate schedule
+    void scheduler_step();
 
-        void tv_loss_backward(int /*dummy_context*/, float grad_loss) {
-            // TV loss backward is handled by PyTorch autograd
-            // The grids_ tensor tracks gradients automatically
-            auto loss = tv_loss();
-            loss.backward(torch::tensor(grad_loss, loss.options()));
-        }
+    // Accessors
+    int grid_width() const { return grid_width_; }
+    int grid_height() const { return grid_height_; }
+    int grid_guidance() const { return grid_guidance_; }
+    int num_images() const { return num_images_; }
+    double get_lr() const { return current_lr_; }
+    int64_t get_step() const { return step_; }
+    const lfs::core::Tensor& grids() const { return grids_; }
 
-    private:
-        torch::Tensor grids_; // [N, 12, L, H, W]
-        int num_images_;
-        int grid_width_;
-        int grid_height_;
-        int grid_guidance_;
-    };
+    // Serialization
+    void serialize(std::ostream& os) const;
+    void deserialize(std::istream& is);
 
-} // namespace gs::training
+private:
+    void compute_bias_corrections(float& bc1_rcp, float& bc2_sqrt_rcp) const {
+        const double bc1 = 1.0 - std::pow(config_.beta1, step_ + 1);
+        const double bc2 = 1.0 - std::pow(config_.beta2, step_ + 1);
+        bc1_rcp = static_cast<float>(1.0 / bc1);
+        bc2_sqrt_rcp = static_cast<float>(1.0 / std::sqrt(bc2));
+    }
+
+    // Grid parameters [N, 12, L, H, W]
+    lfs::core::Tensor grids_;
+    lfs::core::Tensor exp_avg_;
+    lfs::core::Tensor exp_avg_sq_;
+    lfs::core::Tensor accumulated_grads_;
+    lfs::core::Tensor grad_buffer_;
+    lfs::core::Tensor tv_temp_buffer_;
+
+    Config config_;
+    int64_t step_ = 0;
+    double current_lr_;
+    double initial_lr_;
+    int total_iterations_;
+    int num_images_;
+    int grid_width_;
+    int grid_height_;
+    int grid_guidance_;
+};
+
+} // namespace lfs::training

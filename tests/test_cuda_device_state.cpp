@@ -3,7 +3,7 @@
 
 // Test to check if LibTorch changes CUDA device state
 
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 #include <gtest/gtest.h>
 #include <torch/torch.h>
 #include <cuda_runtime.h>

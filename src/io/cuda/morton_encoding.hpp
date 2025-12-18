@@ -4,7 +4,7 @@
 
 #pragma once
 
-#include "core_new/tensor.hpp"
+#include "core/tensor.hpp"
 
 namespace lfs::io {
 

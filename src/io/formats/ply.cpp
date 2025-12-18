@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "ply.hpp"
-#include "core_new/logger.hpp"
-#include "core_new/tensor.hpp"
+#include "core/logger.hpp"
+#include "core/tensor.hpp"
 #include "external/tinyply.hpp"
 #include "io/error.hpp"
 #include <algorithm>
