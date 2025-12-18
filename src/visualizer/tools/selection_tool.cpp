@@ -265,6 +265,7 @@ namespace lfs::vis::tools {
             // ===== Brush / Rings mode =====
             if (is_brush || is_rings) {
                 beginStroke(ctx);
+                last_stroke_pos_ = glm::vec2(static_cast<float>(x), static_cast<float>(y));
                 updateBrushSelection(x, y, ctx);
                 return true;
             }
@@ -513,18 +514,19 @@ namespace lfs::vis::tools {
         const int render_w = cached.image ? static_cast<int>(cached.image->size(2)) : viewport.windowSize.x;
         const int render_h = cached.image ? static_cast<int>(cached.image->size(1)) : viewport.windowSize.y;
 
-        const float rel_x = static_cast<float>(x) - bounds.x;
-        const float rel_y = static_cast<float>(y) - bounds.y;
         const float scale_x = static_cast<float>(render_w) / bounds.width;
         const float scale_y = static_cast<float>(render_h) / bounds.height;
-
-        const float image_x = rel_x * scale_x;
-        const float image_y = rel_y * scale_y;
         const bool add_mode = (current_op_ != SelectionOp::Remove);
 
         const auto transform_indices = sm->getScene().getTransformIndices();
 
+        // Rings mode doesn't need interpolation (click-based)
         if (rm->getSelectionMode() == lfs::rendering::SelectionMode::Rings) {
+            const float rel_x = static_cast<float>(x) - bounds.x;
+            const float rel_y = static_cast<float>(y) - bounds.y;
+            const float image_x = rel_x * scale_x;
+            const float image_y = rel_y * scale_y;
+
             const int hovered_id = rm->getHoveredGaussianId();
             if (hovered_id >= 0) {
                 lfs::rendering::set_selection_element(stroke_selection_.ptr<bool>(), hovered_id, add_mode);
@@ -534,11 +536,29 @@ namespace lfs::vis::tools {
             }
             rm->setBrushState(true, image_x, image_y, 0.0f, add_mode, nullptr, false, 0.0f);
         } else {
+            // Interpolate along stroke to avoid gaps with fast mouse movement
+            constexpr float STEP_FACTOR = 0.5f;
+            const glm::vec2 current_pos(static_cast<float>(x), static_cast<float>(y));
+            const glm::vec2 delta = current_pos - last_stroke_pos_;
             const float scaled_radius = brush_radius_ * scale_x;
-            rm->setBrushState(true, image_x, image_y, scaled_radius, add_mode, &stroke_selection_);
+            const int num_steps = std::max(1, static_cast<int>(std::ceil(glm::length(delta) / (brush_radius_ * STEP_FACTOR))));
+
+            for (int i = 0; i < num_steps; ++i) {
+                const float t = (num_steps == 1) ? 1.0f : static_cast<float>(i + 1) / static_cast<float>(num_steps);
+                const glm::vec2 pos = last_stroke_pos_ + delta * t;
+                const float image_x = (pos.x - bounds.x) * scale_x;
+                const float image_y = (pos.y - bounds.y) * scale_y;
+                rm->brushSelect(image_x, image_y, scaled_radius, stroke_selection_);
+            }
+
             if (transform_indices) {
                 lfs::rendering::filter_selection_by_node_mask(stroke_selection_, *transform_indices, node_mask);
             }
+
+            const float final_x = (current_pos.x - bounds.x) * scale_x;
+            const float final_y = (current_pos.y - bounds.y) * scale_y;
+            rm->setBrushState(true, final_x, final_y, scaled_radius, add_mode, nullptr);
+            last_stroke_pos_ = current_pos;
         }
 
         rm->setPreviewSelection(&stroke_selection_, add_mode);

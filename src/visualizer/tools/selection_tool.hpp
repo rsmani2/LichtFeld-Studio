@@ -62,6 +62,7 @@ namespace lfs::vis::tools {
         // ========== Interaction State ==========
         bool is_dragging_ = false;
         glm::vec2 last_mouse_pos_{0.0f};
+        glm::vec2 last_stroke_pos_{0.0f}; // Last position during active stroke (for interpolation)
         float brush_radius_ = 20.0f;
         const ToolContext* tool_context_ = nullptr;
 
