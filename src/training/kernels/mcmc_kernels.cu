@@ -51,8 +51,9 @@ namespace lfs::training::mcmc {
 
         // new_opacity = 1 - (1 - opacity)^(1/n_idx)
         const float new_opacity = fminf(fmaxf(
-            1.0f - powf(1.0f - opacity, 1.0f / static_cast<float>(n_idx)),
-            OPACITY_MIN), OPACITY_MAX);
+                                            1.0f - powf(1.0f - opacity, 1.0f / static_cast<float>(n_idx)),
+                                            OPACITY_MIN),
+                                        OPACITY_MAX);
         new_opacities[idx] = new_opacity;
 
         // Compute denominator sum for scale calculation
@@ -68,7 +69,8 @@ namespace lfs::training::mcmc {
 
         // Safe division with sign preservation
         float safe_denom = fmaxf(fabsf(denom_sum), DENOM_MIN);
-        if (denom_sum < 0.0f) safe_denom = -safe_denom;
+        if (denom_sum < 0.0f)
+            safe_denom = -safe_denom;
 
         const float coeff = fminf(fmaxf(opacity / safe_denom, -COEFF_MAX), COEFF_MAX);
 
