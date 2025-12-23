@@ -11,6 +11,7 @@
 #include "core/logger.hpp"
 #include "core/splat_data_export.hpp"
 #include "core/splat_data_transform.hpp"
+#include "control/control_boundary.hpp"
 #include "core/tensor/internal/memory_pool.hpp"
 #include "io/cache_image_loader.hpp"
 #include "io/filesystem_utils.hpp"
@@ -22,6 +23,9 @@
 #include "strategies/default_strategy.hpp"
 #include "strategies/mcmc.hpp"
 #include "visualizer/scene/scene.hpp"
+#include "python/runner.hpp"
+
+#include <filesystem>
 
 #include <atomic>
 #include <chrono>
@@ -494,6 +498,25 @@ namespace lfs::training {
                 LOG_INFO("Starting from iteration: {}", current_iteration_.load());
             }
 
+            // Default Python control script if none provided
+            if (python_scripts_.empty()) {
+                std::filesystem::path default_script = std::filesystem::path(PROJECT_ROOT_PATH) / "src/python/sample/iter_hooks.py";
+                if (std::filesystem::exists(default_script)) {
+                    set_python_scripts({default_script});
+                    LOG_INFO("No Python scripts specified; using default: {}", default_script.string());
+                } else {
+                    LOG_WARN("Default Python script not found: {}", default_script.string());
+                }
+            }
+
+            // Execute configured Python scripts to register iteration callbacks
+            if (!python_scripts_.empty()) {
+                auto py_result = lfs::python::run_scripts(python_scripts_);
+                if (!py_result) {
+                    return std::unexpected(std::format("Failed to run Python scripts: {}", py_result.error()));
+                }
+            }
+
             initialized_ = true;
             LOG_INFO("Trainer initialization complete");
             return {};
@@ -676,6 +699,17 @@ namespace lfs::training {
 
             // Check control requests at the beginning
             handle_control_requests(iter, stop_token);
+
+            // Python hook: iteration start (safe, pre-forward)
+            {
+                lfs::training::HookContext ctx{
+                    .iteration = iter,
+                    .loss = current_loss_.load(),
+                    .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                    .is_refining = strategy_ ? strategy_->is_refining(iter) : false,
+                    .trainer = this};
+                lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::IterationStart, ctx);
+            }
 
             // If stop requested, return Stop
             if (stop_requested_.load() || stop_token.stop_requested()) {
@@ -1014,6 +1048,17 @@ namespace lfs::training {
                 {
                     std::unique_lock<std::shared_mutex> lock(render_mutex_);
 
+                    // Python hook: pre-optimizer-step (post-backward, pre-step)
+                    {
+                        lfs::training::HookContext ctx{
+                            .iteration = iter,
+                            .loss = current_loss_.load(),
+                            .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                            .is_refining = strategy_ ? strategy_->is_refining(iter) : false,
+                            .trainer = this};
+                        lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::PreOptimizerStep, ctx);
+                    }
+
                     // Skip post_backward during sparsification phase
                     const bool in_sparsification = params_.optimization.enable_sparsity &&
                                                    iter > (params_.optimization.iterations - params_.optimization.sparsify_steps);
@@ -1087,6 +1132,17 @@ namespace lfs::training {
                 }
             }
 
+            // Python hook: post-step (after optimizer and side-effects)
+            {
+                lfs::training::HookContext ctx{
+                    .iteration = iter,
+                    .loss = current_loss_.load(),
+                    .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                    .is_refining = strategy_ ? strategy_->is_refining(iter) : false,
+                    .trainer = this};
+                lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::PostStep, ctx);
+            }
+
             // Return Continue if we should continue training
             if (iter < params_.optimization.iterations && !stop_requested_.load() && !stop_token.stop_requested()) {
                 return StepResult::Continue;
@@ -1123,6 +1179,17 @@ namespace lfs::training {
                                          params_.dataset.loading_params.min_cpu_free_memory_ratio,
                                          params_.dataset.loading_params.print_cache_status,
                                          params_.dataset.loading_params.print_status_freq_num);
+
+        // Notify Python control layer that training is starting
+        {
+            lfs::training::HookContext ctx{
+                .iteration = 0,
+                .loss = current_loss_.load(),
+                .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                .is_refining = strategy_ ? strategy_->is_refining(0) : false,
+                .trainer = this};
+            lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::TrainingStart, ctx);
+        }
 
         try {
             // Start from current_iteration_ (allows resume from checkpoint)
@@ -1267,6 +1334,17 @@ namespace lfs::training {
 
             cache_loader.clear_cpu_cache();
             lfs::core::image_io::wait_for_pending_saves();
+
+            // Notify training end
+            {
+                lfs::training::HookContext ctx{
+                    .iteration = current_iteration_.load(),
+                    .loss = current_loss_.load(),
+                    .num_gaussians = strategy_ ? strategy_->get_model().size() : 0,
+                    .is_refining = strategy_ ? strategy_->is_refining(current_iteration_.load()) : false,
+                    .trainer = this};
+                lfs::training::ControlBoundary::instance().notify(lfs::training::ControlHook::TrainingEnd, ctx);
+            }
 
             LOG_INFO("Training completed successfully");
             return {};

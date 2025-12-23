@@ -75,6 +75,7 @@ set(TRAINING_NEW_SOURCES
     rasterization/gsplat_rasterizer.cpp
     components/bilateral_grid.cpp
     components/sparsity_optimizer.cpp
+    control/control_boundary.cpp
     metrics/metrics.cpp
     checkpoint.cpp
     trainer.cpp
@@ -107,6 +108,8 @@ target_link_libraries(lfs_training
         lfs_training_kernels    # LibTorch-free SSIM kernels
         fastlfs_backend         # For adam_step_raw CUDA kernel (LibTorch-free)
         gsplat_backend_lfs      # LibTorch-free gsplat rasterization backend
+    PRIVATE
+        $<$<BOOL:${BUILD_PYTHON_BINDINGS}>:lfs_python_utils>
 )
 
 # Set C++ standard

@@ -29,4 +29,5 @@ build*/**
 *.pt
 !weights/*.pt
 lichtfeld-studio.aps
-.vs
+.vs__pycache__/
+*.pyc

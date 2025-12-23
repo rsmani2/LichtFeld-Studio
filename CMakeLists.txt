@@ -63,6 +63,7 @@ get_filename_component(PROJ_ROOT_DIR "${CMAKE_CURRENT_SOURCE_DIR}" ABSOLUTE)
 option(ENABLE_CUDA_GL_INTEROP "Enable CUDA-OpenGL interoperability" ON)
 option(BUILD_TESTS "Build tests" OFF)
 option(ENABLE_ALLOCATION_PROFILING "Enable tensor allocation profiling" OFF)
+option(BUILD_PYTHON_BINDINGS "Build Python bindings (nanobind)" OFF)
 
 # Debug options
 option(ENABLE_TENSOR_VALIDATION "Enable runtime tensor NaN/Inf validation" OFF)
@@ -376,6 +377,9 @@ add_subdirectory(src/rendering)  # Rendering module (lfs::rendering namespace)
 add_subdirectory(src/sequencer)  # Sequencer module (lfs::sequencer namespace)
 add_subdirectory(src/visualizer) # Visualizer module (lfs::vis namespace)
 add_subdirectory(src/geometry)   # Geometry utilities
+if(BUILD_PYTHON_BINDINGS)
+    add_subdirectory(src/python)
+endif()
 
 # =============================================================================
 # MAIN EXECUTABLES
@@ -384,11 +388,13 @@ add_subdirectory(src/geometry)   # Geometry utilities
 # -----------------------------------------------------------------------------
 # LichtFeld-Studio
 # -----------------------------------------------------------------------------
+
 add_executable(${PROJECT_NAME}
     src/main.cpp
     src/application.cpp
     resources/lichtfeld-studio.rc
 )
+
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
         CUDA_ARCHITECTURES "${LichtFeld-Studio_CUDA_ARCH}"

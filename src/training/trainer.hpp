@@ -79,12 +79,20 @@ namespace lfs::training {
         bool is_training_complete() const { return training_complete_.load(); }
         bool has_stopped() const { return stop_requested_.load(); }
 
+        // Set Python script paths to execute once before training; scripts register per-iteration callbacks.
+        void set_python_scripts(std::vector<std::filesystem::path> scripts) {
+            python_scripts_ = std::move(scripts);
+        }
+
         // Get current training state
         int get_current_iteration() const { return current_iteration_.load(); }
         float get_current_loss() const { return current_loss_.load(); }
 
         // just for viewer to get model
         const IStrategy& get_strategy() const { return *strategy_; }
+
+    // Mutable access for controlled callbacks (e.g., Python control layer)
+    IStrategy& get_strategy_mutable() { return *strategy_; }
 
         // Allow viewer to lock for rendering
         std::shared_mutex& getRenderMutex() const { return render_mutex_; }
@@ -233,5 +241,8 @@ namespace lfs::training {
         std::function<void()> callback_;
         std::atomic<bool> callback_busy_{false};
         cudaStream_t callback_stream_ = nullptr;
+
+        // Python control scripts (file paths) to execute before training starts
+        std::vector<std::filesystem::path> python_scripts_;
     };
 } // namespace lfs::training
