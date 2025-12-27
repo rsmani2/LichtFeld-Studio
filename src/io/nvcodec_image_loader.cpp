@@ -392,7 +392,7 @@ namespace lfs::io {
     namespace {
         constexpr size_t DEFAULT_POOL_SIZE = 8;
         constexpr int DEFAULT_LANCZOS_KERNEL = 2;
-    }
+    } // namespace
 
     NvCodecImageLoader::NvCodecImageLoader(const Options& options)
         : impl_(std::make_unique<Impl>()) {
@@ -416,8 +416,7 @@ namespace lfs::io {
         const nvimgcodecInstanceCreateInfo_t create_info{
             NVIMGCODEC_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
             sizeof(nvimgcodecInstanceCreateInfo_t),
-            nullptr, 1, 1, extensions_path_ptr, 0, nullptr, 0, 0
-        };
+            nullptr, 1, 1, extensions_path_ptr, 0, nullptr, 0, 0};
 
         auto status = nvimgcodecInstanceCreate(&impl_->instance, &create_info);
         if (status != NVIMGCODEC_STATUS_SUCCESS) {
@@ -433,8 +432,7 @@ namespace lfs::io {
             NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS,
             sizeof(nvimgcodecExecutionParams_t),
             nullptr, nullptr, nullptr,
-            options.max_num_cpu_threads, nullptr, options.device_id, 0, 0, 0, nullptr
-        };
+            options.max_num_cpu_threads, nullptr, options.device_id, 0, 0, 0, nullptr};
 
         for (size_t i = 0; i < pool_size; ++i) {
             status = nvimgcodecDecoderCreate(impl_->instance, &impl_->decoder_pool[i], &exec_params, nullptr);
@@ -562,8 +560,8 @@ namespace lfs::io {
         }
         if (max_width > 0 && (target_width > max_width || target_height > max_width)) {
             const float scale = (target_width > target_height)
-                ? static_cast<float>(max_width) / target_width
-                : static_cast<float>(max_width) / target_height;
+                                    ? static_cast<float>(max_width) / target_width
+                                    : static_cast<float>(max_width) / target_height;
             target_width = static_cast<int>(target_width * scale);
             target_height = static_cast<int>(target_height * scale);
         }
@@ -754,12 +752,12 @@ namespace lfs::io {
         if (is_chw) {
             auto permuted = image.permute({1, 2, 0}).contiguous();
             hwc_uint8 = (permuted.dtype() == DataType::Float32)
-                ? (permuted * 255.0f).clamp(0.0f, 255.0f).to(DataType::UInt8)
-                : permuted.to(DataType::UInt8);
+                            ? (permuted * 255.0f).clamp(0.0f, 255.0f).to(DataType::UInt8)
+                            : permuted.to(DataType::UInt8);
         } else {
             hwc_uint8 = (image.dtype() == DataType::Float32)
-                ? (image * 255.0f).clamp(0.0f, 255.0f).to(DataType::UInt8)
-                : image.to(DataType::UInt8);
+                            ? (image * 255.0f).clamp(0.0f, 255.0f).to(DataType::UInt8)
+                            : image.to(DataType::UInt8);
         }
 
         if (hwc_uint8.device() != Device::CUDA) {
@@ -840,7 +838,7 @@ namespace lfs::io {
 
         if (encode_status != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
             throw std::runtime_error("JPEG encoding failed: " +
-                std::string(processing_status_to_string(encode_status)));
+                                     std::string(processing_status_to_string(encode_status)));
         }
         return output_buffer;
     }
