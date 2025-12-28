@@ -736,7 +736,8 @@ namespace lfs::io {
                 H, W, C, static_cast<cudaStream_t>(cuda_stream));
         }
 
-        // Free uint8 tensor immediately - no longer needed
+        // Sync before freeing - kernel reads from uint8_tensor
+        cudaDeviceSynchronize();
         uint8_tensor = Tensor();
 
         if (saved_context) {
@@ -903,34 +904,28 @@ namespace lfs::io {
 
         for (size_t i = 0; i < batch_size; ++i) {
             if (decode_statuses[i] != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
-                LOG_WARN("[NvCodecImageLoader] Batch decode image {} failed: {}",
+                LOG_WARN("[NvCodecImageLoader] Batch image {} failed: {}",
                          i, processing_status_to_string(decode_statuses[i]));
                 results.push_back(Tensor());
-                uint8_tensors[i] = Tensor(); // Free immediately
+                uint8_tensors[i] = Tensor();
                 continue;
             }
 
-            // Fused uint8 HWC -> float32 CHW normalized (single kernel, no intermediates!)
-            auto shape = uint8_tensors[i].shape();
-            size_t H = shape[0], W = shape[1], C = shape[2];
-
-            // Allocate output directly in final format
+            const auto shape = uint8_tensors[i].shape();
+            const size_t H = shape[0], W = shape[1], C = shape[2];
             auto output = Tensor::zeros(TensorShape({C, H, W}), Device::CUDA, DataType::Float32);
 
-            // Launch fused kernel
             cuda::launch_uint8_hwc_to_float32_chw(
                 reinterpret_cast<const uint8_t*>(uint8_tensors[i].data_ptr()),
                 reinterpret_cast<float*>(output.data_ptr()),
                 H, W, C, nullptr);
 
-            // CRITICAL: Free uint8 tensor immediately after use to reduce peak VRAM!
-            uint8_tensors[i] = Tensor();
-
             results.push_back(std::move(output));
         }
 
-        // Ensure all conversion kernels complete before returning tensors
+        // Sync before freeing - kernels read from uint8_tensors
         cudaDeviceSynchronize();
+        uint8_tensors.clear();
 
         if (saved_context) {
             cuCtxSetCurrent(saved_context);
@@ -1086,29 +1081,27 @@ namespace lfs::io {
 
         for (size_t i = 0; i < batch_size; ++i) {
             if (decode_statuses[i] != NVIMGCODEC_PROCESSING_STATUS_SUCCESS) {
-                LOG_WARN("[NvCodecImageLoader] Batch decode image {} failed", i);
+                LOG_WARN("[NvCodecImageLoader] Batch image {} failed", i);
                 results.push_back(Tensor());
-                uint8_tensors[i] = Tensor(); // Free immediately
+                uint8_tensors[i] = Tensor();
                 continue;
             }
 
-            // Fused uint8 HWC -> float32 CHW normalized (single kernel!)
-            auto shape = uint8_tensors[i].shape();
-            size_t H = shape[0], W = shape[1], C = shape[2];
+            const auto shape = uint8_tensors[i].shape();
+            const size_t H = shape[0], W = shape[1], C = shape[2];
             auto output = Tensor::zeros(TensorShape({C, H, W}), Device::CUDA, DataType::Float32);
+
             cuda::launch_uint8_hwc_to_float32_chw(
                 reinterpret_cast<const uint8_t*>(uint8_tensors[i].data_ptr()),
                 reinterpret_cast<float*>(output.data_ptr()),
                 H, W, C, nullptr);
 
-            // CRITICAL: Free uint8 tensor immediately to reduce peak VRAM!
-            uint8_tensors[i] = Tensor();
-
             results.push_back(std::move(output));
         }
 
-        // Ensure all conversion kernels complete before returning tensors
+        // Sync before freeing - kernels read from uint8_tensors
         cudaDeviceSynchronize();
+        uint8_tensors.clear();
 
         if (saved_context) {
             cuCtxSetCurrent(saved_context);
