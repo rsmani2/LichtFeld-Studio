@@ -8,6 +8,7 @@
 // clang-format on
 
 #include "gui/gui_manager.hpp"
+#include "gui/dpi_scale.hpp"
 #include "command/command_history.hpp"
 #include "core/image_io.hpp"
 #include "core/logger.hpp"
@@ -279,8 +280,12 @@ namespace lfs::vis::gui {
         float xscale, yscale;
         glfwGetWindowContentScale(viewer_->getWindow(), &xscale, &yscale);
 
-        // some clamping / safety net for weird DPI values
-        xscale = std::clamp(xscale, 1.0f, 2.0f);
+        // Clamping / safety net for weird DPI values
+        // Support up to 4.0x scale for high-DPI displays (e.g., 6K monitors)
+        xscale = std::clamp(xscale, 1.0f, 4.0f);
+
+        // Store DPI scale for use by UI components
+        setDpiScale(xscale);
 
         // Set application icon - use the resource path helper
         try {
@@ -599,7 +604,8 @@ namespace lfs::vis::gui {
 
             if (ImGui::Begin("##RightPanel", nullptr, PANEL_FLAGS)) {
                 const float avail_h = ImGui::GetContentRegionAvail().y;
-                constexpr float SPLITTER_H = 6.0f, MIN_H = 80.0f;
+                const float scale = getDpiScale();
+                const float SPLITTER_H = 6.0f * scale, MIN_H = 80.0f * scale;
 
                 // Scene panel
                 const float scene_h = std::max(MIN_H, avail_h * scene_panel_ratio_ - SPLITTER_H * 0.5f);
@@ -2367,11 +2373,12 @@ namespace lfs::vis::gui {
             return;
         }
 
-        constexpr float OVERLAY_WIDTH = 350.0f;
-        constexpr float OVERLAY_HEIGHT = 100.0f;
-        constexpr float BUTTON_WIDTH = 100.0f;
-        constexpr float BUTTON_HEIGHT = 30.0f;
-        constexpr float PROGRESS_BAR_HEIGHT = 20.0f;
+        const float scale = getDpiScale();
+        const float OVERLAY_WIDTH = 350.0f * scale;
+        const float OVERLAY_HEIGHT = 100.0f * scale;
+        const float BUTTON_WIDTH = 100.0f * scale;
+        const float BUTTON_HEIGHT = 30.0f * scale;
+        const float PROGRESS_BAR_HEIGHT = 20.0f * scale;
 
         const ImGuiViewport* const viewport = ImGui::GetMainViewport();
         const ImVec2 overlay_pos(
@@ -2389,8 +2396,8 @@ namespace lfs::vis::gui {
                                            ImGuiWindowFlags_AlwaysAutoResize;
 
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 0.95f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 15));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * scale, 15 * scale));
 
         if (ImGui::Begin("##ExportProgress", nullptr, FLAGS)) {
             ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
