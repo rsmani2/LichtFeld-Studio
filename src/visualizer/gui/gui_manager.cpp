@@ -114,6 +114,7 @@ namespace lfs::vis::gui {
         notification_popup_ = std::make_unique<NotificationPopup>();
         save_directory_popup_ = std::make_unique<SaveDirectoryPopup>();
         sequencer_panel_ = std::make_unique<SequencerPanel>(sequencer_controller_);
+        resume_checkpoint_popup_ = std::make_unique<ResumeCheckpointPopup>();
         exit_confirmation_popup_ = std::make_unique<ExitConfirmationPopup>();
 
         // Initialize window states
@@ -162,7 +163,7 @@ namespace lfs::vis::gui {
         menu_bar_->setOnImportCheckpoint([this]() {
             const auto path = OpenCheckpointFileDialog();
             if (!path.empty()) {
-                lfs::core::events::cmd::LoadFile{.path = path, .is_dataset = false}.emit();
+                resume_checkpoint_popup_->show(path);
             }
         });
 
@@ -347,13 +348,16 @@ namespace lfs::vis::gui {
                 if (!font)
                     return nullptr;
 
-                // Merge Japanese glyphs if available
+                // Merge Japanese + Chinese glyphs if available (NotoSansJP contains both)
                 if (is_font_valid(japanese_path)) {
                     ImFontConfig config;
                     config.MergeMode = true;
                     const std::string japanese_path_utf8 = lfs::core::path_to_utf8(japanese_path);
                     io.Fonts->AddFontFromFileTTF(japanese_path_utf8.c_str(), size, &config,
                                                  io.Fonts->GetGlyphRangesJapanese());
+                    // Chinese glyphs are also in NotoSansJP, just need to load the ranges
+                    io.Fonts->AddFontFromFileTTF(japanese_path_utf8.c_str(), size, &config,
+                                                 io.Fonts->GetGlyphRangesChineseFull());
                 }
 
                 // Merge Korean glyphs if available
@@ -391,7 +395,7 @@ namespace lfs::vis::gui {
             } else {
                 LOG_INFO("Loaded fonts: {} and {}", t.fonts.regular_path, t.fonts.bold_path);
                 if (is_font_valid(japanese_path)) {
-                    LOG_INFO("Japanese font support enabled");
+                    LOG_INFO("Japanese + Chinese font support enabled");
                 }
                 if (is_font_valid(korean_path)) {
                     LOG_INFO("Korean font support enabled");
@@ -403,16 +407,30 @@ namespace lfs::vis::gui {
             font_regular_ = font_bold_ = font_heading_ = font_small_ = font_section_ = fallback;
         }
 
-        save_directory_popup_->setOnConfirm([this](const std::filesystem::path& dataset_path,
-                                                   const std::filesystem::path& output_path) {
+        save_directory_popup_->setOnConfirm([this](const DatasetLoadParams& load_params) {
             if (const auto result = services().params().ensureLoaded(); !result) {
                 LOG_ERROR("Failed to load parameter files: {}", result.error());
                 return;
             }
             services().params().resetToDefaults();
-            const auto params = services().params().createForDataset(dataset_path, output_path);
+            auto params = services().params().createForDataset(load_params.dataset_path, load_params.output_path);
+            if (load_params.init_path) {
+                params.init_path = lfs::core::path_to_utf8(*load_params.init_path);
+            }
             viewer_->setParameters(params);
-            lfs::core::events::cmd::LoadFile{.path = dataset_path, .is_dataset = true}.emit();
+            lfs::core::events::cmd::LoadFile{.path = load_params.dataset_path, .is_dataset = true}.emit();
+        });
+
+        resume_checkpoint_popup_->setOnConfirm([](const CheckpointLoadParams& params) {
+            lfs::core::events::cmd::LoadCheckpointForTraining{
+                .checkpoint_path = params.checkpoint_path,
+                .dataset_path = params.dataset_path,
+                .output_path = params.output_path}
+                .emit();
+        });
+
+        lfs::core::events::cmd::ShowResumeCheckpointPopup::when([this](const auto& e) {
+            resume_checkpoint_popup_->show(e.checkpoint_path);
         });
 
         setFileSelectedCallback([this](const std::filesystem::path& path, const bool is_dataset) {
@@ -1092,6 +1110,9 @@ namespace lfs::vis::gui {
         if (save_directory_popup_) {
             save_directory_popup_->render(viewport_pos_, viewport_size_);
         }
+        if (resume_checkpoint_popup_) {
+            resume_checkpoint_popup_->render(viewport_pos_, viewport_size_);
+        }
 
         // Render keyframe context menu (needs to be at end of frame for proper z-order)
         if (keyframe_context_menu_open_) {
@@ -1164,7 +1185,7 @@ namespace lfs::vis::gui {
 
         // Render notification popups (errors, warnings, etc.)
         if (notification_popup_)
-            notification_popup_->render();
+            notification_popup_->render(viewport_pos_, viewport_size_);
         if (exit_confirmation_popup_)
             exit_confirmation_popup_->render();
 

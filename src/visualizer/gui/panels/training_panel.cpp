@@ -853,8 +853,8 @@ namespace lfs::vis::gui::panels {
             ImGui::TreePop();
         }
 
-        // Pruning/Growing Thresholds (for default strategy)
-        if (opt_params.strategy == "default" && ImGui::TreeNode(LOC(Training::Section::PRUNING_GROWING))) {
+        // Pruning/Growing Thresholds (for adc strategy)
+        if (opt_params.strategy == "adc" && ImGui::TreeNode(LOC(Training::Section::PRUNING_GROWING))) {
             if (ImGui::BeginTable("PruneTable", 2, ImGuiTableFlags_SizingStretchProp)) {
                 ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
                 ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
@@ -977,11 +977,6 @@ namespace lfs::vis::gui::panels {
                     if (ImGui::InputInt("##sparsify_steps", &opt_params.sparsify_steps, 1000, 5000)) {
                         opt_params.sparsify_steps = std::max(1, opt_params.sparsify_steps);
                         const int delta = opt_params.sparsify_steps - prev;
-                        if (delta > 0) {
-                            opt_params.iterations += static_cast<size_t>(delta);
-                        } else if (opt_params.iterations > static_cast<size_t>(-delta)) {
-                            opt_params.iterations -= static_cast<size_t>(-delta);
-                        }
                     }
                     ImGui::PopItemWidth();
                 } else {
@@ -1078,17 +1073,17 @@ namespace lfs::vis::gui::panels {
             ImGui::TableNextColumn();
             if (can_edit) {
                 ImGui::PushItemWidth(-1);
-                static constexpr const char* const STRATEGY_LABELS[] = {"MCMC", "Default"};
+                static constexpr const char* const STRATEGY_LABELS[] = {"MCMC", "ADC"};
                 int current_strategy = (opt_params.strategy == "mcmc") ? 0 : 1;
                 if (ImGui::Combo("##strategy", &current_strategy, STRATEGY_LABELS, 2)) {
-                    const auto new_strategy = (current_strategy == 0) ? "mcmc" : "default";
+                    const auto new_strategy = (current_strategy == 0) ? "mcmc" : "adc";
                     if (new_strategy != opt_params.strategy) {
                         param_manager->setActiveStrategy(new_strategy);
                     }
                 }
                 ImGui::PopItemWidth();
             } else {
-                ImGui::Text("%s", opt_params.strategy == "mcmc" ? "MCMC" : "Default");
+                ImGui::Text("%s", opt_params.strategy == "mcmc" ? "MCMC" : "ADC");
             }
 
             // Iterations
@@ -1281,12 +1276,6 @@ namespace lfs::vis::gui::panels {
             ImGui::TableNextColumn();
             if (can_edit) {
                 if (ImGui::Checkbox("##enable_sparsity", &opt_params.enable_sparsity)) {
-                    const auto steps = static_cast<size_t>(opt_params.sparsify_steps);
-                    if (opt_params.enable_sparsity) {
-                        opt_params.iterations += steps;
-                    } else if (opt_params.iterations > steps) {
-                        opt_params.iterations -= steps;
-                    }
                 }
             } else {
                 ImGui::Text("%s", opt_params.enable_sparsity ? "Enabled" : "Disabled");
