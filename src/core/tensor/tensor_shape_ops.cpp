@@ -103,6 +103,11 @@ namespace lfs::core {
         view.id_ = profiling_enabled_ ? next_id_++ : 0; // Only increment ID when profiling
         view.storage_offset_ = storage_offset_;
 
+        // Inherit stream and ready_event from parent (views share synchronization state)
+        view.stream_ = stream_;
+        view.ready_event_ = ready_event_;
+        view.ready_event_owner_ = ready_event_owner_;
+
         // Permute shape and strides together (single allocation, single loop)
         std::vector<size_t> new_dims(rank);
         std::vector<size_t> new_strides(rank);
@@ -216,6 +221,10 @@ namespace lfs::core {
             Tensor view(new_data, TensorShape(new_shape), device_, dtype_);
             view.data_owner_ = data_owner_;
             view.is_view_ = true;
+            // Inherit stream and ready_event from parent
+            view.stream_ = stream_;
+            view.ready_event_ = ready_event_;
+            view.ready_event_owner_ = ready_event_owner_;
             return view;
         } else {
             return copy_slice(starts, ends, new_shape);
@@ -246,6 +255,11 @@ namespace lfs::core {
         view.dtype_ = dtype_;
         view.is_view_ = true;
         view.id_ = profiling_enabled_ ? next_id_++ : 0; // Only increment ID when profiling
+
+        // Inherit stream and ready_event from parent
+        view.stream_ = stream_;
+        view.ready_event_ = ready_event_;
+        view.ready_event_owner_ = ready_event_owner_;
 
         // Adjust offset to point to slice start (in elements)
         view.storage_offset_ = storage_offset_ + start * strides_[dim];

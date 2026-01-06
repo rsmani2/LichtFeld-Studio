@@ -4,6 +4,8 @@
 #include "core/logger.hpp"
 #include "core/path_utils.hpp"
 #include "core/tensor_trace.hpp"
+#include "internal/cuda_stream_context.hpp"
+#include "internal/memory_pool.hpp"
 #include "internal/tensor_broadcast.hpp"
 #include "internal/tensor_impl.hpp"
 #include "internal/tensor_ops.hpp"
@@ -112,6 +114,8 @@ namespace lfs::core {
           is_aligned_16_(other.is_aligned_16_), // Copy alignment flags
           is_aligned_128_(other.is_aligned_128_),
           stream_(other.stream_),     // Copy stream assignment
+          ready_event_(other.ready_event_),         // Share ready event (for cross-stream sync)
+          ready_event_owner_(other.ready_event_owner_), // Share event ownership
           capacity_(other.capacity_), // Copy capacity management
           logical_size_(other.logical_size_),
           id_(next_id_++) {
@@ -184,6 +188,8 @@ namespace lfs::core {
         is_aligned_16_ = other.is_aligned_16_; // Copy alignment flags
         is_aligned_128_ = other.is_aligned_128_;
         stream_ = other.stream_; // Copy stream assignment
+        ready_event_ = other.ready_event_;         // Share ready event
+        ready_event_owner_ = other.ready_event_owner_;
         // capacity_ and logical_size_ apply to the specific buffer allocation
         // When we're doing shallow copy (sharing buffer), we share these too
         if (capacity_ != other.capacity_ && capacity_ > 1000000) {
@@ -217,6 +223,8 @@ namespace lfs::core {
           is_aligned_16_(std::exchange(other.is_aligned_16_, false)),
           is_aligned_128_(std::exchange(other.is_aligned_128_, false)),
           stream_(std::exchange(other.stream_, nullptr)),
+          ready_event_(std::exchange(other.ready_event_, nullptr)),  // Move ready event
+          ready_event_owner_(std::move(other.ready_event_owner_)),   // Move event ownership
           capacity_(std::exchange(other.capacity_, 0)),
           logical_size_(std::exchange(other.logical_size_, 0)),
           id_(other.id_) {
@@ -281,6 +289,8 @@ namespace lfs::core {
             is_aligned_16_ = std::exchange(other.is_aligned_16_, false);
             is_aligned_128_ = std::exchange(other.is_aligned_128_, false);
             stream_ = std::exchange(other.stream_, nullptr);
+            ready_event_ = std::exchange(other.ready_event_, nullptr);  // Move ready event
+            ready_event_owner_ = std::move(other.ready_event_owner_);   // Move event ownership
             capacity_ = std::exchange(other.capacity_, 0);
             logical_size_ = std::exchange(other.logical_size_, 0);
             id_ = other.id_;
@@ -327,7 +337,16 @@ namespace lfs::core {
         size_t num_bytes = this->bytes();
 
         if (device_ == Device::CUDA) {
-            cudaError_t err = cudaMemcpy(result.data_ptr(), data_ptr(), num_bytes, cudaMemcpyDeviceToDevice);
+            cudaStream_t result_stream = result.stream();
+
+            // Ensure result stream waits for source tensor's work to complete
+            if (ready_event_ && stream_ != result_stream) {
+                cudaStreamWaitEvent(result_stream, ready_event_, 0);
+            }
+
+            // Async copy on result's stream
+            cudaError_t err = cudaMemcpyAsync(result.data_ptr(), data_ptr(), num_bytes,
+                                               cudaMemcpyDeviceToDevice, result_stream);
             if (err != cudaSuccess) {
                 LOG_ERROR("CUDA memcpy failed in clone(): {}", cudaGetErrorString(err));
                 return Tensor();
@@ -591,6 +610,8 @@ namespace lfs::core {
                 if (shape_.rank() <= 3) {
                     LOG_DEBUG("Using optimized rank-{} strided upload (no metadata allocation)", shape_.rank());
 
+                    cudaStream_t result_stream = t.stream();
+
                     // Pass host pointers directly - the launcher will use them as immediate kernel parameters
                     tensor_ops::launch_strided_upload(
                         src,
@@ -600,15 +621,9 @@ namespace lfs::core {
                         shape_.rank(),
                         numel(),
                         dtype_,
-                        nullptr // Default stream
+                        result_stream
                     );
 
-                    // NO SYNC: Let CUDA runtime handle synchronization when data is accessed
-                    // The pinned memory (src) is hopefully safe because:
-                    // 1. It's managed by shared_ptr in data_owner_
-                    // 2. Stream-aware allocator tracks the stream and won't reuse until complete
-                    // Update source tensor's stream for deallocator
-                    const_cast<Tensor*>(this)->stream_ = nullptr; // Used default stream
                     LOG_DEBUG("Optimized rank-{} strided upload launched (async): {} elements", shape_.rank(), numel());
                     return t;
                 }
@@ -616,17 +631,19 @@ namespace lfs::core {
                 // GENERIC PATH: For rank > 3, allocate device memory for metadata
                 LOG_DEBUG("Using generic strided upload (requires metadata allocation for rank={})", shape_.rank());
 
+                cudaStream_t result_stream = t.stream();
+
                 size_t* d_shape;
                 size_t* d_strides;
-                CHECK_CUDA(cudaMalloc(&d_shape, shape_.rank() * sizeof(size_t)));
-                CHECK_CUDA(cudaMalloc(&d_strides, shape_.rank() * sizeof(size_t)));
+                CHECK_CUDA(cudaMallocAsync(&d_shape, shape_.rank() * sizeof(size_t), result_stream));
+                CHECK_CUDA(cudaMallocAsync(&d_strides, shape_.rank() * sizeof(size_t), result_stream));
 
-                CHECK_CUDA(cudaMemcpy(d_shape, shape_.dims().data(),
-                                      shape_.rank() * sizeof(size_t),
-                                      cudaMemcpyHostToDevice));
-                CHECK_CUDA(cudaMemcpy(d_strides, strides_.data(),
-                                      shape_.rank() * sizeof(size_t),
-                                      cudaMemcpyHostToDevice));
+                CHECK_CUDA(cudaMemcpyAsync(d_shape, shape_.dims().data(),
+                                           shape_.rank() * sizeof(size_t),
+                                           cudaMemcpyHostToDevice, result_stream));
+                CHECK_CUDA(cudaMemcpyAsync(d_strides, strides_.data(),
+                                           shape_.rank() * sizeof(size_t),
+                                           cudaMemcpyHostToDevice, result_stream));
 
                 // Launch generic strided upload kernel
                 tensor_ops::launch_strided_upload(
@@ -637,16 +654,12 @@ namespace lfs::core {
                     shape_.rank(),
                     numel(),
                     dtype_,
-                    nullptr // Default stream
+                    result_stream
                 );
 
-                // Free metadata immediately (kernel has already captured the data)
-                // NO SYNC: Kernel launches asynchronously for better PCIe overlap
-                CHECK_CUDA(cudaFree(d_shape));
-                CHECK_CUDA(cudaFree(d_strides));
-
-                // CRITICAL: Update source tensor's stream for deallocator
-                const_cast<Tensor*>(this)->stream_ = nullptr; // Used default stream
+                // Free metadata asynchronously after kernel completes
+                CHECK_CUDA(cudaFreeAsync(d_shape, result_stream));
+                CHECK_CUDA(cudaFreeAsync(d_strides, result_stream));
 
                 LOG_DEBUG("Generic strided upload launched (async): {} elements", numel());
                 return t;
@@ -737,33 +750,19 @@ namespace lfs::core {
             }
             */
 
-            cudaStream_t transfer_stream = stream ? stream : 0;
+            // Use result tensor's stream for H2D transfer
+            cudaStream_t transfer_stream = stream ? stream : t.stream();
             CHECK_CUDA(cudaMemcpyAsync(t.data_, src, bytes(), cudaMemcpyHostToDevice, transfer_stream));
-
-            // CRITICAL: Update source tensor's stream so deallocator knows which stream used this memory
-            // This is needed for the stream-aware pinned memory allocator
-            if (stream) {
-                const_cast<Tensor*>(this)->stream_ = stream;
-            }
-
-            // If stream is provided, caller is responsible for sync
-            if (!stream) {
-                CHECK_CUDA(cudaDeviceSynchronize()); // Ensure transfer completes before returning
-            }
+            // H2D transfer is async - result tensor's stream will order subsequent operations
         } else if (device_ == Device::CUDA && device == Device::CPU) {
-            // API BOUNDARY: Sync before GPU→CPU transfer
-            if (stream) {
-                cudaStreamSynchronize(stream);
-            } else {
-                cudaDeviceSynchronize();
+            // D2H: Must sync source stream before CPU can access the data
+            if (stream_) {
+                cudaStreamSynchronize(stream_);
+            } else if (ready_event_) {
+                cudaEventSynchronize(ready_event_);
             }
-            // Async transfer for GPU→CPU as well (destination is pinned)
-            cudaStream_t transfer_stream = stream ? stream : 0;
-            CHECK_CUDA(cudaMemcpyAsync(t.data_, src, bytes(), cudaMemcpyDeviceToHost, transfer_stream));
-
-            if (!stream) {
-                CHECK_CUDA(cudaDeviceSynchronize()); // Ensure transfer completes before returning
-            }
+            // Then do D2H transfer (synchronous since CPU is destination)
+            CHECK_CUDA(cudaMemcpy(t.data_, src, bytes(), cudaMemcpyDeviceToHost));
         }
 
         return t;
@@ -1319,10 +1318,20 @@ namespace lfs::core {
         // Both contiguous: direct memcpy
         if (dst_contig && src_contig) {
             if (device_ == Device::CUDA && other.device_ == Device::CUDA) {
-                CHECK_CUDA(cudaMemcpy(data_ptr(), other.data_ptr(), bytes(), cudaMemcpyDeviceToDevice));
+                // Cross-stream sync: wait for source to complete
+                if (other.ready_event() && other.stream() != stream_) {
+                    cudaStreamWaitEvent(stream_ ? stream_ : nullptr, other.ready_event(), 0);
+                }
+                CHECK_CUDA(cudaMemcpyAsync(data_ptr(), other.data_ptr(), bytes(),
+                                           cudaMemcpyDeviceToDevice, stream_));
             } else if (device_ == Device::CUDA && other.device_ == Device::CPU) {
-                CHECK_CUDA(cudaMemcpy(data_ptr(), other.data_ptr(), bytes(), cudaMemcpyHostToDevice));
+                CHECK_CUDA(cudaMemcpyAsync(data_ptr(), other.data_ptr(), bytes(),
+                                           cudaMemcpyHostToDevice, stream_));
             } else if (device_ == Device::CPU && other.device_ == Device::CUDA) {
+                // Must sync source before CPU access
+                if (other.stream()) {
+                    cudaStreamSynchronize(other.stream());
+                }
                 CHECK_CUDA(cudaMemcpy(data_ptr(), other.data_ptr(), bytes(), cudaMemcpyDeviceToHost));
             } else {
                 std::memcpy(data_ptr(), other.data_ptr(), bytes());
@@ -2394,6 +2403,61 @@ namespace lfs::core {
         t.id_ = next_id_++;
 
         return t;
+    }
+
+    void Tensor::record_ready() {
+        if (device_ != Device::CUDA) return;
+
+        if (!ready_event_) {
+            cudaEvent_t event;
+            if (cudaEventCreateWithFlags(&event, cudaEventDisableTiming) != cudaSuccess) {
+                LOG_ERROR("Failed to create CUDA event");
+                return;
+            }
+            ready_event_owner_ = std::make_shared<cudaEvent_t>(event);
+            ready_event_ = event;
+        }
+
+        const cudaStream_t stream = stream_ ? stream_ : getCurrentCUDAStream();
+        if (cudaEventRecord(ready_event_, stream) != cudaSuccess) {
+            LOG_ERROR("cudaEventRecord failed");
+        }
+    }
+
+    void Tensor::ensure_ready_on(cudaStream_t target_stream) const {
+        if (device_ != Device::CUDA || !ready_event_) return;
+
+        const cudaStream_t my_stream = stream_ ? stream_ : nullptr;
+        if (target_stream == my_stream) return;
+
+        if (cudaStreamWaitEvent(target_stream, ready_event_, 0) != cudaSuccess) {
+            LOG_ERROR("cudaStreamWaitEvent failed");
+        }
+    }
+
+    void Tensor::record_stream(cudaStream_t stream) const {
+        if (device_ != Device::CUDA || !data_ || !stream) return;
+        CudaMemoryPool::instance().record_stream(data_, stream);
+    }
+
+    void Tensor::synchronize() const {
+        if (device_ != Device::CUDA) return;
+
+        const cudaStream_t stream = stream_ ? stream_ : getCurrentCUDAStream();
+        const cudaError_t err = stream ? cudaStreamSynchronize(stream) : cudaDeviceSynchronize();
+        if (err != cudaSuccess) {
+            LOG_ERROR("Stream sync failed: {}", cudaGetErrorString(err));
+        }
+    }
+
+    bool Tensor::is_ready() const {
+        if (device_ != Device::CUDA) return true;
+
+        const cudaStream_t stream = stream_ ? stream_ : getCurrentCUDAStream();
+        if (!stream) return true;
+
+        const cudaError_t err = cudaStreamQuery(stream);
+        return err == cudaSuccess || err != cudaErrorNotReady;
     }
 
 } // namespace lfs::core

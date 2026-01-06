@@ -340,7 +340,7 @@ namespace lfs::training {
             output_image.ptr<float>(),
             height,
             width,
-            nullptr // default stream
+            output_image.stream() // Use tensor's stream
         );
 
         render_output.image = output_image;

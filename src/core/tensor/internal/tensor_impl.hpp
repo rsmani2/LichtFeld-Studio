@@ -293,6 +293,14 @@ namespace lfs::core {
         // CUDA stream for async execution (assigned round-robin from StreamPool)
         cudaStream_t stream_ = nullptr;
 
+        // CUDA event for cross-stream synchronization
+        // When record_ready() is called, an event is recorded on the tensor's stream.
+        // This event can be used to make other streams wait via ensure_ready_on().
+        cudaEvent_t ready_event_ = nullptr;
+
+        // Shared ownership of the event (views share with parent tensor)
+        std::shared_ptr<cudaEvent_t> ready_event_owner_;
+
         mutable size_t id_ = 0;
         static std::atomic<size_t> next_id_;
         static inline bool profiling_enabled_ = false;
@@ -337,6 +345,19 @@ namespace lfs::core {
             }
 
             auto result = Tensor::empty(broadcast_shape, device_, out_dtype);
+
+            // Cross-stream synchronization: make result stream wait for both inputs
+            if (device_ == Device::CUDA) {
+                cudaStream_t result_stream = result.stream();
+                // Ensure result stream waits for this tensor's work to complete
+                if (ready_event_ && stream_ != result_stream) {
+                    cudaStreamWaitEvent(result_stream, ready_event_, 0);
+                }
+                // Ensure result stream waits for other tensor's work to complete
+                if (other.ready_event() && other.stream() != result_stream) {
+                    cudaStreamWaitEvent(result_stream, other.ready_event(), 0);
+                }
+            }
 
             bool a_needs_broadcast = (shape_ != broadcast_shape);
             bool b_needs_broadcast = (other.shape() != broadcast_shape);
@@ -385,27 +406,34 @@ namespace lfs::core {
             auto result = Tensor::empty(shape_, device_, out_dtype);
 
             if (device_ == Device::CUDA) {
+                cudaStream_t result_stream = result.stream();
+
+                // Cross-stream synchronization: ensure result stream waits for input
+                if (ready_event_ && stream_ != result_stream) {
+                    cudaStreamWaitEvent(result_stream, ready_event_, 0);
+                }
+
                 // Handle different input tensor dtypes
                 if (dtype_ == DataType::Int32) {
                     int scalar_int = static_cast<int>(scalar);
                     if (out_dtype == DataType::Bool) {
                         tensor_ops::launch_scalar_op_generic(
                             ptr<int>(), scalar_int, result.ptr<unsigned char>(),
-                            numel(), op, nullptr);
+                            numel(), op, result_stream);
                     } else if (out_dtype == DataType::Int32) {
                         tensor_ops::launch_scalar_op_generic(
                             ptr<int>(), scalar_int, result.ptr<int>(),
-                            numel(), op, nullptr);
+                            numel(), op, result_stream);
                     }
                 } else { // Float32
                     if (out_dtype == DataType::Bool) {
                         tensor_ops::launch_scalar_op_generic(
                             ptr<float>(), scalar, result.ptr<unsigned char>(),
-                            numel(), op, nullptr);
+                            numel(), op, result_stream);
                     } else {
                         tensor_ops::launch_scalar_op_generic(
                             ptr<float>(), scalar, result.ptr<float>(),
-                            numel(), op, nullptr);
+                            numel(), op, result_stream);
                     }
                 }
                 // No sync needed - operations are async
@@ -483,9 +511,14 @@ namespace lfs::core {
             }
 
             if (device_ == Device::CUDA) {
+                // Cross-stream synchronization: ensure our stream waits for other's work
+                if (other.ready_event() && other.stream() != stream_) {
+                    cudaStreamWaitEvent(stream_ ? stream_ : nullptr, other.ready_event(), 0);
+                }
+
                 tensor_ops::launch_binary_op_generic(
                     ptr<SrcT>(), other.ptr<SrcT>(), ptr<SrcT>(),
-                    numel(), op, nullptr);
+                    numel(), op, stream_);
                 // No sync - tensor operation
             } else {
                 // CPU implementation
@@ -604,6 +637,10 @@ namespace lfs::core {
             view.storage_offset_ = storage_offset_; // Preserve storage offset
             view.is_view_ = true;
             view.is_contiguous_ = true; // Reshaped contiguous tensor is still contiguous
+            // Inherit stream and ready_event from parent
+            view.stream_ = stream_;
+            view.ready_event_ = ready_event_;
+            view.ready_event_owner_ = ready_event_owner_;
             // Strides are automatically set to contiguous by constructor
             return view;
         }
@@ -873,6 +910,69 @@ namespace lfs::core {
         // Stream accessor (for async CUDA operations)
         cudaStream_t stream() const { return stream_; }
         void set_stream(cudaStream_t stream) { stream_ = stream; }
+
+        // =========================================================================
+        // Cross-Stream Synchronization API (PyTorch-style)
+        // =========================================================================
+
+        /**
+         * Record a completion event on this tensor's stream.
+         *
+         * After calling this, other streams can wait for this tensor to be ready
+         * using ensure_ready_on(). This is the producer side of the pattern.
+         *
+         * Example:
+         *   tensor = compute_something();
+         *   tensor.record_ready();  // Record that work is queued
+         *   queue.push(tensor);     // Pass to another thread/stream
+         */
+        void record_ready();
+
+        /**
+         * Get the ready event (nullptr if record_ready() was never called).
+         *
+         * This is primarily for internal use and testing.
+         */
+        cudaEvent_t ready_event() const { return ready_event_; }
+
+        /**
+         * Ensure this tensor is ready for use on the target stream.
+         *
+         * If record_ready() was called, this makes the target stream wait
+         * for the event via cudaStreamWaitEvent. This is GPU-side only,
+         * it does NOT block the CPU.
+         *
+         * Example:
+         *   auto tensor = queue.pop();
+         *   tensor.ensure_ready_on(my_stream);  // GPU waits for producer
+         *   auto result = tensor + other;       // Safe to use now
+         */
+        void ensure_ready_on(cudaStream_t target_stream) const;
+
+        /**
+         * Record that this tensor's memory is being used on the given stream.
+         *
+         * This is for memory safety: prevents the memory pool from reusing
+         * this tensor's memory until the stream completes.
+         *
+         * Call this when passing a tensor to a different stream that will
+         * outlive the tensor's scope.
+         */
+        void record_stream(cudaStream_t stream) const;
+
+        /**
+         * Synchronize this tensor's stream (blocks CPU until GPU work completes).
+         *
+         * Use sparingly - this blocks the calling thread!
+         */
+        void synchronize() const;
+
+        /**
+         * Check if this tensor's stream has completed all work (non-blocking).
+         *
+         * @return true if ready (or no stream), false if work still pending
+         */
+        bool is_ready() const;
 
         // Debug tracking - mark tensor to trace all operations it's involved in
         bool is_tracked() const { return tracked_; }
@@ -2007,6 +2107,35 @@ namespace lfs::core {
             device_,
             dtype_);
     }
+
+// Stream validation helpers (debug builds only, no-op in release)
+#ifndef NDEBUG
+inline void assert_same_stream(std::initializer_list<const Tensor*> tensors) {
+    cudaStream_t expected = nullptr;
+    bool first = true;
+    for (const Tensor* t : tensors) {
+        if (!t || t->device() != Device::CUDA) continue;
+        if (first) {
+            expected = t->stream();
+            first = false;
+        } else if (t->stream() != expected) {
+            throw std::runtime_error("Stream mismatch detected");
+        }
+    }
+}
+
+inline void assert_on_stream(const Tensor& t, cudaStream_t expected) {
+    if (t.device() == Device::CUDA && t.stream() != expected) {
+        throw std::runtime_error("Tensor not on expected stream");
+    }
+}
+
+#define LFS_ASSERT_SAME_STREAM(...) ::lfs::core::assert_same_stream(__VA_ARGS__)
+#define LFS_ASSERT_ON_STREAM(tensor, stream) ::lfs::core::assert_on_stream(tensor, stream)
+#else
+#define LFS_ASSERT_SAME_STREAM(...)
+#define LFS_ASSERT_ON_STREAM(tensor, stream)
+#endif
 
 } // namespace lfs::core
 

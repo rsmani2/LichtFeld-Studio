@@ -192,6 +192,7 @@ set(TEST_FILES
     test_vram_resize.cpp
     test_stride_bugs.cpp
     test_bool_any_all.cpp
+    test_cuda_stream_sync.cpp
     test_fused_l1_ssim.cpp
     test_add_new_gs_tensor_ops.cpp
     test_cpu_dtype_conversions.cpp

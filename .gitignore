@@ -30,3 +30,4 @@ build*/**
 !weights/*.pt
 lichtfeld-studio.aps
 .vs
+Claude.md

@@ -4,6 +4,7 @@
 #include "core/logger.hpp"
 #include "core/pinned_memory_allocator.hpp"
 #include "core/tensor_trace.hpp"
+#include "internal/cuda_stream_context.hpp"
 #include "internal/memory_pool.hpp"
 #include "internal/tensor_broadcast.hpp"
 #include "internal/tensor_functors.hpp"
@@ -80,7 +81,10 @@ namespace lfs::core {
                 // Create a dummy allocation to hold a valid shared_ptr
                 // We allocate 1 byte even though we don't need it
                 if (result.device_ == Device::CUDA) {
-                    void* dummy = CudaMemoryPool::instance().allocate(1, nullptr);
+                    // Set stream to current thread-local stream (PyTorch-style)
+                    result.stream_ = getCurrentCUDAStream();
+
+                    void* dummy = CudaMemoryPool::instance().allocate(1, result.stream_);
                     result.data_owner_ = std::shared_ptr<void>(dummy, [](void* p) {
                         CudaMemoryPool::instance().deallocate(p, nullptr);
                     });
@@ -105,7 +109,10 @@ namespace lfs::core {
             }
 
             if (result.device_ == Device::CUDA) {
-                void* ptr = CudaMemoryPool::instance().allocate(bytes, nullptr);
+                // Set stream to current thread-local stream (PyTorch-style)
+                result.stream_ = getCurrentCUDAStream();
+
+                void* ptr = CudaMemoryPool::instance().allocate(bytes, result.stream_);
                 if (!ptr) {
                     LOG_ERROR("Failed to allocate {} bytes from memory pool", bytes);
                     return Tensor();

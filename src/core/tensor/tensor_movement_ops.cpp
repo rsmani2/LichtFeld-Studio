@@ -134,6 +134,11 @@ namespace lfs::core {
                 view.is_view_ = true;
                 view.id_ = next_id_++;
 
+                // Inherit stream and ready_event from parent
+                view.stream_ = stream_;
+                view.ready_event_ = ready_event_;
+                view.ready_event_owner_ = ready_event_owner_;
+
                 // Create new shape with swapped dimensions
                 std::vector<size_t> new_dims = shape_.dims();
                 std::swap(new_dims[dim1], new_dims[dim2]);

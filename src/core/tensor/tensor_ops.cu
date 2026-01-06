@@ -15,6 +15,8 @@
 #include <cuda_runtime.h>
 #include <device_launch_parameters.h>
 #include <limits>
+#include <tuple>
+#include <utility>
 
 // Thrust headers
 #include <mutex>
@@ -48,44 +50,19 @@
 
 namespace lfs::core::tensor_ops {
 
-    // Pooled CUB temp storage - grows as needed, never shrinks
-    class CubTempStoragePool {
-    public:
-        static CubTempStoragePool& instance() {
-            static CubTempStoragePool pool;
-            return pool;
+    // Stream-aware CUB temp storage allocation - uses memory pool for stream-ordered safety
+    // Returns {ptr, size} pair - caller must deallocate with release_cub_temp_storage
+    inline std::pair<void*, size_t> allocate_cub_temp_storage(size_t bytes, cudaStream_t stream) {
+        // Round up to 1MB for better reuse from pool
+        size_t alloc_size = std::max(((bytes + 1024 * 1024 - 1) / (1024 * 1024)) * (1024 * 1024), size_t(1024 * 1024));
+        void* ptr = CudaMemoryPool::instance().allocate(alloc_size, stream);
+        return {ptr, alloc_size};
+    }
+
+    inline void release_cub_temp_storage(void* ptr, size_t size, cudaStream_t stream) {
+        if (ptr) {
+            CudaMemoryPool::instance().deallocate(ptr, stream);
         }
-
-        void* get(size_t bytes, cudaStream_t) {
-            std::lock_guard<std::mutex> lock(mutex_);
-            if (bytes <= capacity_ && buffer_)
-                return buffer_;
-            if (buffer_)
-                cudaFree(buffer_);
-            size_t alloc_size = std::max(((bytes + 1024 * 1024 - 1) / (1024 * 1024)) * (1024 * 1024), size_t(4 * 1024 * 1024));
-            if (cudaMalloc(&buffer_, alloc_size) != cudaSuccess) {
-                buffer_ = nullptr;
-                capacity_ = 0;
-                return nullptr;
-            }
-            capacity_ = alloc_size;
-            return buffer_;
-        }
-
-        ~CubTempStoragePool() {
-            if (buffer_)
-                cudaFree(buffer_);
-        }
-
-    private:
-        CubTempStoragePool() = default;
-        void* buffer_ = nullptr;
-        size_t capacity_ = 0;
-        std::mutex mutex_;
-    };
-
-    inline void* get_cub_temp_storage(size_t bytes, cudaStream_t stream) {
-        return CubTempStoragePool::instance().get(bytes, stream);
     }
 
     // Pre-allocated buffers for scalar reductions with pinned host memory
@@ -101,7 +78,9 @@ namespace lfs::core::tensor_ops {
                 return 0.0f;
             size_t temp_bytes = temp_capacity_;
             cub::DeviceReduce::Sum(temp_storage_, temp_bytes, data, d_scalar_, n, stream);
-            cudaMemcpy(h_scalar_, d_scalar_, sizeof(float), cudaMemcpyDeviceToHost);
+            // Use async copy + stream sync to only block this stream (not all GPU work)
+            cudaMemcpyAsync(h_scalar_, d_scalar_, sizeof(float), cudaMemcpyDeviceToHost, stream);
+            cudaStreamSynchronize(stream);
             return *h_scalar_;
         }
 
@@ -114,7 +93,9 @@ namespace lfs::core::tensor_ops {
                 return -std::numeric_limits<float>::infinity();
             size_t temp_bytes = temp_capacity_;
             cub::DeviceReduce::Max(temp_storage_, temp_bytes, data, d_scalar_, n, stream);
-            cudaMemcpy(h_scalar_, d_scalar_, sizeof(float), cudaMemcpyDeviceToHost);
+            // Use async copy + stream sync to only block this stream (not all GPU work)
+            cudaMemcpyAsync(h_scalar_, d_scalar_, sizeof(float), cudaMemcpyDeviceToHost, stream);
+            cudaStreamSynchronize(stream);
             return *h_scalar_;
         }
 
@@ -123,7 +104,9 @@ namespace lfs::core::tensor_ops {
                 return std::numeric_limits<float>::infinity();
             size_t temp_bytes = temp_capacity_;
             cub::DeviceReduce::Min(temp_storage_, temp_bytes, data, d_scalar_, n, stream);
-            cudaMemcpy(h_scalar_, d_scalar_, sizeof(float), cudaMemcpyDeviceToHost);
+            // Use async copy + stream sync to only block this stream (not all GPU work)
+            cudaMemcpyAsync(h_scalar_, d_scalar_, sizeof(float), cudaMemcpyDeviceToHost, stream);
+            cudaStreamSynchronize(stream);
             return *h_scalar_;
         }
 
@@ -699,19 +682,20 @@ namespace lfs::core::tensor_ops {
                 return;
             }
 
-            // CUB DeviceReduce with pooled temp storage (no allocation overhead!)
+            // CUB DeviceReduce with stream-ordered temp storage from memory pool
             void* d_temp_storage = nullptr;
             size_t temp_storage_bytes = 0;
+            size_t allocated_size = 0;
 
             switch (op) {
             case ReduceOp::Sum:
                 cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_in, d_out, n, stream);
-                d_temp_storage = get_cub_temp_storage(temp_storage_bytes, stream);
+                std::tie(d_temp_storage, allocated_size) = allocate_cub_temp_storage(temp_storage_bytes, stream);
                 cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_in, d_out, n, stream);
                 break;
             case ReduceOp::Mean: {
                 cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_in, d_out, n, stream);
-                d_temp_storage = get_cub_temp_storage(temp_storage_bytes, stream);
+                std::tie(d_temp_storage, allocated_size) = allocate_cub_temp_storage(temp_storage_bytes, stream);
                 cub::DeviceReduce::Sum(d_temp_storage, temp_storage_bytes, d_in, d_out, n, stream);
                 // Divide by n using a simple kernel (faster than Thrust for single value)
                 auto out_ptr = thrust::device_pointer_cast(d_out);
@@ -723,12 +707,12 @@ namespace lfs::core::tensor_ops {
             }
             case ReduceOp::Max:
                 cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_in, d_out, n, stream);
-                d_temp_storage = get_cub_temp_storage(temp_storage_bytes, stream);
+                std::tie(d_temp_storage, allocated_size) = allocate_cub_temp_storage(temp_storage_bytes, stream);
                 cub::DeviceReduce::Max(d_temp_storage, temp_storage_bytes, d_in, d_out, n, stream);
                 break;
             case ReduceOp::Min:
                 cub::DeviceReduce::Min(d_temp_storage, temp_storage_bytes, d_in, d_out, n, stream);
-                d_temp_storage = get_cub_temp_storage(temp_storage_bytes, stream);
+                std::tie(d_temp_storage, allocated_size) = allocate_cub_temp_storage(temp_storage_bytes, stream);
                 cub::DeviceReduce::Min(d_temp_storage, temp_storage_bytes, d_in, d_out, n, stream);
                 break;
             case ReduceOp::Prod: {
@@ -743,6 +727,8 @@ namespace lfs::core::tensor_ops {
                 init_scalar_gpu(static_cast<float*>(output), 0.0f, stream);
                 break;
             }
+            // Release temp storage back to memory pool (stream-ordered, safe for reuse)
+            release_cub_temp_storage(d_temp_storage, allocated_size, stream);
             return;
         }
 

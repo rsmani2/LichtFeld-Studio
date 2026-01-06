@@ -60,6 +60,9 @@ namespace lfs::training {
         auto sh_coeffs = gaussian_model.get_shs().contiguous();     // [N, K, 3]
         const uint32_t sh_degree = static_cast<uint32_t>(gaussian_model.get_active_sh_degree());
 
+        // Get stream from input tensors for stream-ordered operations
+        cudaStream_t stream = means.stream();
+
         // Squeeze opacities if needed
         if (opacities.ndim() == 2 && opacities.shape()[1] == 1) {
             opacities = opacities.squeeze(-1);
@@ -261,7 +264,7 @@ namespace lfs::training {
             tangential_ptr,
             thin_prism_ptr,
             result,
-            nullptr);
+            stream);
 
         // Build RenderOutput - wrap raw pointers in tensor views
         RenderOutput render_output;
@@ -437,12 +440,15 @@ namespace lfs::training {
         bwd_ptr += v_opacities_size;
         auto* v_sh_coeffs_ptr = reinterpret_cast<float*>(bwd_ptr);
 
+        // Get stream from input tensors for stream-ordered operations
+        cudaStream_t stream = grad_image.is_valid() ? grad_image.stream() : gaussian_model.means().stream();
+
         // Zero the gradient buffers
-        cudaMemsetAsync(v_means_ptr, 0, N * 3 * sizeof(float), nullptr);
-        cudaMemsetAsync(v_quats_ptr, 0, N * 4 * sizeof(float), nullptr);
-        cudaMemsetAsync(v_scales_ptr, 0, N * 3 * sizeof(float), nullptr);
-        cudaMemsetAsync(v_opacities_ptr, 0, N * sizeof(float), nullptr);
-        cudaMemsetAsync(v_sh_coeffs_ptr, 0, N * K * 3 * sizeof(float), nullptr);
+        cudaMemsetAsync(v_means_ptr, 0, N * 3 * sizeof(float), stream);
+        cudaMemsetAsync(v_quats_ptr, 0, N * 4 * sizeof(float), stream);
+        cudaMemsetAsync(v_scales_ptr, 0, N * 3 * sizeof(float), stream);
+        cudaMemsetAsync(v_opacities_ptr, 0, N * sizeof(float), stream);
+        cudaMemsetAsync(v_sh_coeffs_ptr, 0, N * K * 3 * sizeof(float), stream);
 
         // Prepare grad_render_colors [1, H, W, channels] - permute from CHW to HWC using custom kernel
         // This avoids memory pool allocation from tensor permute().contiguous()
@@ -452,9 +458,9 @@ namespace lfs::training {
                 grad_image.ptr<float>(),
                 v_render_colors_ptr,
                 static_cast<int>(channels), static_cast<int>(H), static_cast<int>(W),
-                nullptr);
+                stream);
         } else {
-            cudaMemsetAsync(v_render_colors_ptr, 0, H * W * channels * sizeof(float), nullptr);
+            cudaMemsetAsync(v_render_colors_ptr, 0, H * W * channels * sizeof(float), stream);
         }
 
         // Prepare grad_render_alphas [H, W] - squeeze from [1, H, W] using custom kernel
@@ -465,9 +471,9 @@ namespace lfs::training {
                 grad_alpha.ptr<float>(),
                 v_render_alphas_ptr,
                 static_cast<int>(H), static_cast<int>(W),
-                nullptr);
+                stream);
         } else {
-            cudaMemsetAsync(v_render_alphas_ptr, 0, H * W * sizeof(float), nullptr);
+            cudaMemsetAsync(v_render_alphas_ptr, 0, H * W * sizeof(float), stream);
         }
 
         UnscentedTransformParameters ut_params;
@@ -534,8 +540,8 @@ namespace lfs::training {
             v_scales_ptr,
             v_opacities_ptr,
             v_sh_coeffs_ptr,
-            nullptr // stream
-        );
+            stream);
+
 
         // Debug: check for errors after gsplat backward
         cudaDeviceSynchronize();
@@ -551,7 +557,7 @@ namespace lfs::training {
 
         // Scales: exp(raw) -> v_scales_raw = v_scales * exp(raw_scales) = v_scales * scales
         // In-place: v_scales_ptr *= scales
-        kernels::launch_exp_backward(v_scales_ptr, ctx.scales.ptr<float>(), N, nullptr);
+        kernels::launch_exp_backward(v_scales_ptr, ctx.scales.ptr<float>(), N, stream);
 
         cudaDeviceSynchronize();
         auto err_exp = cudaGetLastError();
@@ -561,7 +567,7 @@ namespace lfs::training {
 
         // Opacities: sigmoid(raw) -> v_opacities_raw = v_opacities * sigmoid * (1 - sigmoid)
         // In-place: v_opacities_ptr *= sigmoid * (1 - sigmoid)
-        kernels::launch_sigmoid_backward(v_opacities_ptr, ctx.opacities.ptr<float>(), N, nullptr);
+        kernels::launch_sigmoid_backward(v_opacities_ptr, ctx.opacities.ptr<float>(), N, stream);
 
         cudaDeviceSynchronize();
         auto err_sigmoid = cudaGetLastError();
@@ -578,7 +584,7 @@ namespace lfs::training {
             ctx.quats.ptr<float>(),
             raw_quats.ptr<float>(),
             N,
-            nullptr);
+            stream);
 
         cudaDeviceSynchronize();
         auto err_quat = cudaGetLastError();
@@ -594,28 +600,28 @@ namespace lfs::training {
             optimizer.get_grad(ParamType::Means).ptr<float>(),
             v_means_ptr,
             N * 3,
-            nullptr);
+            stream);
 
         // Scales: [N, 3] -> [N, 3]
         kernels::launch_grad_accumulate(
             optimizer.get_grad(ParamType::Scaling).ptr<float>(),
             v_scales_ptr,
             N * 3,
-            nullptr);
+            stream);
 
         // Rotations: [N, 4] -> [N, 4]
         kernels::launch_grad_accumulate(
             optimizer.get_grad(ParamType::Rotation).ptr<float>(),
             v_quats_ptr,
             N * 4,
-            nullptr);
+            stream);
 
         // Opacities: [N] -> [N, 1] (same memory layout)
         kernels::launch_grad_accumulate_unsqueeze(
             optimizer.get_grad(ParamType::Opacity).ptr<float>(),
             v_opacities_ptr,
             N,
-            nullptr);
+            stream);
 
         // SH coefficients: [N, K, 3] -> sh0 [N, 1, 3] + shN [N, K_dst, 3]
         // K is active SH coeffs, K_dst is the full buffer width (max_sh_degree^2 - 1)
@@ -643,7 +649,7 @@ namespace lfs::training {
             N,
             K,     // K_src: active SH coefficients
             K_dst, // K_dst: destination buffer width
-            nullptr);
+            stream);
 
         // Debug: sync and check for errors after SH kernel
         cudaDeviceSynchronize();
@@ -665,7 +671,7 @@ namespace lfs::training {
                 gaussian_model._densification_info.ptr<float>(),
                 v_means_ptr,
                 N,
-                nullptr);
+                stream);
 
             cudaDeviceSynchronize();
             auto err_dens = cudaGetLastError();
