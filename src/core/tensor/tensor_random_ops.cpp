@@ -167,7 +167,7 @@ namespace lfs::core {
             curandGenerator_t* gen = static_cast<curandGenerator_t*>(
                 RandomGenerator::instance().get_generator(Device::CUDA));
 
-            // Set the stream for cuRAND operations (stream-ordered async)
+            // Set stream for async cuRAND
             CHECK_CURAND(curandSetStream(*gen, stream_ ? stream_ : nullptr));
 
             // Advance the generator offset (not the seed!) for reproducibility
@@ -181,7 +181,6 @@ namespace lfs::core {
             } else {
                 CHECK_CURAND(curandGenerateNormal(*gen, ptr<float>(), n, mean, std));
             }
-            // With stream set, curandGenerateNormal is async on that stream
         } else {
             // CPU uses stateful generator
             auto* impl = static_cast<RandomGeneratorImpl*>(

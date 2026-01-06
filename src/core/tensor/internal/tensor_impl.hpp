@@ -291,15 +291,8 @@ namespace lfs::core {
         bool is_aligned_16_ = false;  // 16-byte alignment for float4 vectorization
         bool is_aligned_128_ = false; // 128-byte alignment for cache line optimization
 
-        // CUDA stream for async execution (assigned round-robin from StreamPool)
         cudaStream_t stream_ = nullptr;
-
-        // CUDA event for cross-stream synchronization
-        // When record_ready() is called, an event is recorded on the tensor's stream.
-        // This event can be used to make other streams wait via ensure_ready_on().
         cudaEvent_t ready_event_ = nullptr;
-
-        // Shared ownership of the event (views share with parent tensor)
         std::shared_ptr<cudaEvent_t> ready_event_owner_;
 
         mutable size_t id_ = 0;
@@ -347,14 +340,12 @@ namespace lfs::core {
 
             auto result = Tensor::empty(broadcast_shape, device_, out_dtype);
 
-            // Cross-stream synchronization: make result stream wait for both inputs
+            // Cross-stream sync: result waits for both inputs
             if (device_ == Device::CUDA) {
-                cudaStream_t result_stream = result.stream();
-                // Ensure result stream waits for this tensor's work to complete
+                const cudaStream_t result_stream = result.stream();
                 if (ready_event_ && stream_ != result_stream) {
                     cudaStreamWaitEvent(result_stream, ready_event_, 0);
                 }
-                // Ensure result stream waits for other tensor's work to complete
                 if (other.ready_event() && other.stream() != result_stream) {
                     cudaStreamWaitEvent(result_stream, other.ready_event(), 0);
                 }
@@ -407,16 +398,14 @@ namespace lfs::core {
             auto result = Tensor::empty(shape_, device_, out_dtype);
 
             if (device_ == Device::CUDA) {
-                cudaStream_t result_stream = result.stream();
-
-                // Cross-stream synchronization: ensure result stream waits for input
+                const cudaStream_t result_stream = result.stream();
                 if (ready_event_ && stream_ != result_stream) {
                     cudaStreamWaitEvent(result_stream, ready_event_, 0);
                 }
 
                 // Handle different input tensor dtypes
                 if (dtype_ == DataType::Int32) {
-                    int scalar_int = static_cast<int>(scalar);
+                    const int scalar_int = static_cast<int>(scalar);
                     if (out_dtype == DataType::Bool) {
                         tensor_ops::launch_scalar_op_generic(
                             ptr<int>(), scalar_int, result.ptr<unsigned char>(),
@@ -512,7 +501,7 @@ namespace lfs::core {
             }
 
             if (device_ == Device::CUDA) {
-                // Cross-stream synchronization: ensure our stream waits for other's work
+                // Cross-stream sync: wait for other tensor
                 if (other.ready_event() && other.stream() != stream_) {
                     cudaStreamWaitEvent(stream_ ? stream_ : nullptr, other.ready_event(), 0);
                 }
@@ -736,8 +725,7 @@ namespace lfs::core {
         Tensor ternary(const Tensor& b, const Tensor& c) const;
 
         // ============= FACTORY METHODS =============
-        // All factory methods accept an optional stream parameter.
-        // nullptr = use getCurrentCUDAStream() (thread-local default)
+        // Optional stream param: nullptr = getCurrentCUDAStream()
         static Tensor empty(TensorShape shape, Device device = Device::CUDA,
                             DataType dtype = DataType::Float32, bool use_pinned = true,
                             cudaStream_t stream = nullptr);

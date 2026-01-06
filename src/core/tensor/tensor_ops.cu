@@ -50,11 +50,10 @@
 
 namespace lfs::core::tensor_ops {
 
-    // Stream-aware CUB temp storage allocation - uses memory pool for stream-ordered safety
-    // Returns {ptr, size} pair - caller must deallocate with release_cub_temp_storage
+    // Stream-aware CUB temp storage from memory pool
     inline std::pair<void*, size_t> allocate_cub_temp_storage(size_t bytes, cudaStream_t stream) {
-        // Round up to 1MB for better reuse from pool
-        size_t alloc_size = std::max(((bytes + 1024 * 1024 - 1) / (1024 * 1024)) * (1024 * 1024), size_t(1024 * 1024));
+        // Round up to 1MB for better pool reuse
+        const size_t alloc_size = std::max(((bytes + 1024 * 1024 - 1) / (1024 * 1024)) * (1024 * 1024), size_t(1024 * 1024));
         void* ptr = CudaMemoryPool::instance().allocate(alloc_size, stream);
         return {ptr, alloc_size};
     }
@@ -78,7 +77,7 @@ namespace lfs::core::tensor_ops {
                 return 0.0f;
             size_t temp_bytes = temp_capacity_;
             cub::DeviceReduce::Sum(temp_storage_, temp_bytes, data, d_scalar_, n, stream);
-            // Use async copy + stream sync to only block this stream (not all GPU work)
+            // Async copy + stream sync (only blocks this stream)
             cudaMemcpyAsync(h_scalar_, d_scalar_, sizeof(float), cudaMemcpyDeviceToHost, stream);
             cudaStreamSynchronize(stream);
             return *h_scalar_;

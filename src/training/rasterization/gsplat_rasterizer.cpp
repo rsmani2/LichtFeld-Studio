@@ -60,8 +60,8 @@ namespace lfs::training {
         auto sh_coeffs = gaussian_model.get_shs().contiguous();     // [N, K, 3]
         const uint32_t sh_degree = static_cast<uint32_t>(gaussian_model.get_active_sh_degree());
 
-        // Get stream from input tensors for stream-ordered operations
-        cudaStream_t stream = means.stream();
+        // Use input tensor's stream
+        const cudaStream_t stream = means.stream();
 
         // Squeeze opacities if needed
         if (opacities.ndim() == 2 && opacities.shape()[1] == 1) {
@@ -440,8 +440,8 @@ namespace lfs::training {
         bwd_ptr += v_opacities_size;
         auto* v_sh_coeffs_ptr = reinterpret_cast<float*>(bwd_ptr);
 
-        // Get stream from input tensors for stream-ordered operations
-        cudaStream_t stream = grad_image.is_valid() ? grad_image.stream() : gaussian_model.means().stream();
+        // Use input tensor's stream
+        const cudaStream_t stream = grad_image.is_valid() ? grad_image.stream() : gaussian_model.means().stream();
 
         // Zero the gradient buffers
         cudaMemsetAsync(v_means_ptr, 0, N * 3 * sizeof(float), stream);

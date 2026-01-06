@@ -2,16 +2,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  *
  * CUDA Stream Synchronization Tests
- * Adapted from PyTorch's test_cuda.py and aten/src/ATen/test/cuda_stream_test.cpp
- *
- * These tests verify correct cross-stream data visibility and synchronization.
- * The goal is to ensure that tensors created on one stream can be safely used
- * on another stream with proper synchronization.
- *
- * Key patterns tested:
- * - record_stream: Track which streams use a tensor's memory
- * - wait_stream: Make one stream wait for another
- * - Event-based sync: cudaEventRecord + cudaStreamWaitEvent
+ * Tests cross-stream data visibility via record_stream, wait_stream, and events.
  */
 
 #include <gtest/gtest.h>

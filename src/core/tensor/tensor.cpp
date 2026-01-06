@@ -333,20 +333,19 @@ namespace lfs::core {
         // Create new tensor with same properties
         auto result = empty(shape_, device_, dtype_);
 
-        // Copy data using data_ptr() which accounts for storage_offset
-        size_t num_bytes = this->bytes();
+        // Copy data accounting for storage_offset
+        const size_t num_bytes = this->bytes();
 
         if (device_ == Device::CUDA) {
-            cudaStream_t result_stream = result.stream();
+            const cudaStream_t result_stream = result.stream();
 
-            // Ensure result stream waits for source tensor's work to complete
+            // Cross-stream sync
             if (ready_event_ && stream_ != result_stream) {
                 cudaStreamWaitEvent(result_stream, ready_event_, 0);
             }
 
-            // Async copy on result's stream
-            cudaError_t err = cudaMemcpyAsync(result.data_ptr(), data_ptr(), num_bytes,
-                                               cudaMemcpyDeviceToDevice, result_stream);
+            const cudaError_t err = cudaMemcpyAsync(result.data_ptr(), data_ptr(), num_bytes,
+                                                    cudaMemcpyDeviceToDevice, result_stream);
             if (err != cudaSuccess) {
                 LOG_ERROR("CUDA memcpy failed in clone(): {}", cudaGetErrorString(err));
                 return Tensor();
@@ -610,9 +609,9 @@ namespace lfs::core {
                 if (shape_.rank() <= 3) {
                     LOG_DEBUG("Using optimized rank-{} strided upload (no metadata allocation)", shape_.rank());
 
-                    cudaStream_t result_stream = t.stream();
+                    const cudaStream_t result_stream = t.stream();
 
-                    // Pass host pointers directly - the launcher will use them as immediate kernel parameters
+                    // Host pointers passed directly as kernel parameters
                     tensor_ops::launch_strided_upload(
                         src,
                         t.data_,
@@ -631,7 +630,7 @@ namespace lfs::core {
                 // GENERIC PATH: For rank > 3, allocate device memory for metadata
                 LOG_DEBUG("Using generic strided upload (requires metadata allocation for rank={})", shape_.rank());
 
-                cudaStream_t result_stream = t.stream();
+                const cudaStream_t result_stream = t.stream();
 
                 size_t* d_shape;
                 size_t* d_strides;
@@ -750,18 +749,16 @@ namespace lfs::core {
             }
             */
 
-            // Use result tensor's stream for H2D transfer
-            cudaStream_t transfer_stream = stream ? stream : t.stream();
+            // H2D transfer on result tensor's stream
+            const cudaStream_t transfer_stream = stream ? stream : t.stream();
             CHECK_CUDA(cudaMemcpyAsync(t.data_, src, bytes(), cudaMemcpyHostToDevice, transfer_stream));
-            // H2D transfer is async - result tensor's stream will order subsequent operations
         } else if (device_ == Device::CUDA && device == Device::CPU) {
-            // D2H: Must sync source stream before CPU can access the data
+            // D2H: sync source stream before CPU access
             if (stream_) {
                 cudaStreamSynchronize(stream_);
             } else if (ready_event_) {
                 cudaEventSynchronize(ready_event_);
             }
-            // Then do D2H transfer (synchronous since CPU is destination)
             CHECK_CUDA(cudaMemcpy(t.data_, src, bytes(), cudaMemcpyDeviceToHost));
         }
 

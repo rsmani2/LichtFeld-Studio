@@ -81,7 +81,7 @@ namespace lfs::core {
                 // Create a dummy allocation to hold a valid shared_ptr
                 // We allocate 1 byte even though we don't need it
                 if (result.device_ == Device::CUDA) {
-                    // Use provided stream or fall back to current thread-local stream
+                    // Use provided stream or thread-local default
                     result.stream_ = args.stream ? args.stream : getCurrentCUDAStream();
 
                     void* dummy = CudaMemoryPool::instance().allocate(1, result.stream_);
@@ -92,7 +92,7 @@ namespace lfs::core {
                     void* dummy = nullptr;
                     if (args.use_pinned) {
                         dummy = PinnedMemoryAllocator::instance().allocate(1);
-                        cudaStream_t stream = result.stream_;
+                        const cudaStream_t stream = result.stream_;
                         result.data_owner_ = std::shared_ptr<void>(dummy, [stream](void* p) {
                             if (p)
                                 PinnedMemoryAllocator::instance().deallocate(p, stream);
@@ -109,7 +109,7 @@ namespace lfs::core {
             }
 
             if (result.device_ == Device::CUDA) {
-                // Use provided stream or fall back to current thread-local stream
+                // Use provided stream or thread-local default
                 result.stream_ = args.stream ? args.stream : getCurrentCUDAStream();
 
                 void* ptr = CudaMemoryPool::instance().allocate(bytes, result.stream_);
@@ -141,7 +141,7 @@ namespace lfs::core {
                         LOG_ERROR("Failed to allocate {} bytes of pinned memory", bytes);
                         return Tensor();
                     }
-                    cudaStream_t stream = result.stream_;
+                    const cudaStream_t stream = result.stream_;
                     result.data_owner_ = std::shared_ptr<void>(ptr, [stream](void* p) {
                         if (p)
                             PinnedMemoryAllocator::instance().deallocate(p, stream);
@@ -170,16 +170,12 @@ namespace lfs::core {
             if (!result.is_valid() || result.numel() == 0)
                 return result;
 
-            // Get the stream from the result tensor (set during LoadOp::Empty)
-            cudaStream_t stream = result.stream_;
+            const cudaStream_t stream = result.stream_;
 
             if (result.device_ == Device::CUDA) {
                 if (result.dtype_ == DataType::Float32) {
                     if (value == 0.0f) {
-                        // STREAM-AWARE: Use cudaMemsetAsync on the tensor's stream
-                        // This prevents race conditions with operations on other streams
                         cudaMemsetAsync(result.data_, 0, result.bytes(), stream);
-                        // Record ready event so other streams can synchronize
                         result.record_ready();
                     } else {
                         tensor_ops::launch_load_op(
@@ -316,7 +312,7 @@ namespace lfs::core {
                     LOG_ERROR("Failed to allocate {} bytes on CPU (pinned memory)", bytes);
                     return Tensor();
                 }
-                cudaStream_t stream = result.stream_;
+                const cudaStream_t stream = result.stream_;
                 result.data_owner_ = std::shared_ptr<void>(ptr, [stream](void* p) {
                     if (p)
                         PinnedMemoryAllocator::instance().deallocate(p, stream);
@@ -344,7 +340,7 @@ namespace lfs::core {
             if (!result.is_valid() || result.numel() == 0)
                 return result;
 
-            cudaStream_t stream = result.stream_;
+            const cudaStream_t stream = result.stream_;
 
             if (result.device_ == Device::CUDA) {
                 if (result.dtype_ == DataType::Float32) {
@@ -415,7 +411,7 @@ namespace lfs::core {
             if (!result.is_valid() || result.numel() == 0)
                 return result;
 
-            cudaStream_t stream = result.stream_;
+            const cudaStream_t stream = result.stream_;
 
             if (result.device_ == Device::CUDA) {
                 if (result.dtype_ == DataType::Int32) {
@@ -486,7 +482,7 @@ namespace lfs::core {
             if (!result.is_valid() || result.numel() == 0)
                 return result;
 
-            cudaStream_t stream = result.stream_;
+            const cudaStream_t stream = result.stream_;
 
             if (result.device_ == Device::CUDA) {
                 tensor_ops::launch_bernoulli(result.ptr<float>(), result.numel(), p,
@@ -520,7 +516,7 @@ namespace lfs::core {
             if (!result.is_valid())
                 return result;
 
-            cudaStream_t stream = result.stream_;
+            const cudaStream_t stream = result.stream_;
 
             if (weights->device() == Device::CUDA) {
                 tensor_ops::launch_multinomial(weights->ptr<float>(), result.ptr<int64_t>(),
@@ -587,7 +583,7 @@ namespace lfs::core {
             size_t n = args.shape[1];
             size_t min_dim = std::min(m, n);
 
-            cudaStream_t stream = result.stream_;
+            const cudaStream_t stream = result.stream_;
 
             if (result.device_ == Device::CUDA) {
                 tensor_ops::launch_eye(result.ptr<float>(), m, n, stream);

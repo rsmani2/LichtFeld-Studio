@@ -1203,7 +1203,7 @@ namespace lfs::training::kernels {
         auto dm_dsigma1_sq = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
         auto dm_dsigma12 = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
 
-        cudaStream_t stream = img1.stream();
+        const cudaStream_t stream = img1.stream();
         fusedssimCUDA<<<grid, block, 0, stream>>>(
             H, W, C, C1, C2,
             img1.ptr<float>(),
@@ -1270,7 +1270,7 @@ namespace lfs::training::kernels {
         auto dm_dsigma1_sq = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
         auto dm_dsigma12 = lfs::core::Tensor::zeros(img1.shape(), lfs::core::Device::CUDA);
 
-        cudaStream_t stream = img1.stream();
+        const cudaStream_t stream = img1.stream();
         fusedssimCUDA<<<grid, block, 0, stream>>>(
             H, W, C, C1, C2,
             img1.ptr<float>(), img2.ptr<float>(),
@@ -1342,7 +1342,7 @@ namespace lfs::training::kernels {
                   N);
         dim3 block(BLOCK_X, BLOCK_Y);
 
-        cudaStream_t stream = ctx.img1.stream();
+        const cudaStream_t stream = ctx.img1.stream();
         fusedssim_backwardCUDA<<<grid, block, 0, stream>>>(
             ctx.original_h, ctx.original_w, static_cast<int>(C), C1, C2,
             ctx.img1.ptr<float>(),
@@ -1370,7 +1370,7 @@ namespace lfs::training::kernels {
                         (ctx.original_h + BLOCK_Y - 1) / BLOCK_Y, N);
         const dim3 block(BLOCK_X, BLOCK_Y);
 
-        cudaStream_t stream = ctx.img1.stream();
+        const cudaStream_t stream = ctx.img1.stream();
         fusedssim_backwardCUDA<<<grid, block, 0, stream>>>(
             ctx.original_h, ctx.original_w, static_cast<int>(C), C1, C2,
             ctx.img1.ptr<float>(), ctx.img2.ptr<float>(), dL_dmap.ptr<float>(),
@@ -1421,7 +1421,7 @@ namespace lfs::training::kernels {
         workspace.dm_dsigma1_sq.zero_();
         workspace.dm_dsigma12.zero_();
 
-        cudaStream_t stream = img1.stream();
+        const cudaStream_t stream = img1.stream();
         fusedssimCUDA<<<grid, block, 0, stream>>>(
             H, W, C, C1, C2,
             img1.ptr<float>(),
@@ -1516,7 +1516,7 @@ namespace lfs::training::kernels {
                   N);
         dim3 block(BLOCK_X, BLOCK_Y);
 
-        cudaStream_t stream = ctx.img1.stream();
+        const cudaStream_t stream = ctx.img1.stream();
         fusedssim_backwardCUDA<<<grid, block, 0, stream>>>(
             ctx.original_h, ctx.original_w, static_cast<int>(C), C1, C2,
             ctx.img1.ptr<float>(),
@@ -1562,7 +1562,7 @@ namespace lfs::training::kernels {
         const dim3 grid((W + BLOCK_X - 1) / BLOCK_X, (H + BLOCK_Y - 1) / BLOCK_Y, N);
         const dim3 block(BLOCK_X, BLOCK_Y);
 
-        cudaStream_t stream = img1.stream();
+        const cudaStream_t stream = img1.stream();
         fusedL1SSIMForwardCUDA<<<grid, block, 0, stream>>>(
             ssim_weight, H, W, C, C1, C2,
             img1.ptr<float>(), img2.ptr<float>(),
@@ -1638,7 +1638,7 @@ namespace lfs::training::kernels {
         const dim3 grid((ctx.W + BLOCK_X - 1) / BLOCK_X, (ctx.H + BLOCK_Y - 1) / BLOCK_Y, N);
         const dim3 block(BLOCK_X, BLOCK_Y);
 
-        cudaStream_t stream = ctx.img1.stream();
+        const cudaStream_t stream = ctx.img1.stream();
         fusedL1SSIMBackwardCUDA<<<grid, block, 0, stream>>>(
             ctx.ssim_weight, ctx.H, ctx.W, static_cast<int>(C), C1, C2,
             ctx.img1.ptr<float>(), ctx.img2.ptr<float>(),
@@ -1685,7 +1685,7 @@ namespace lfs::training::kernels {
         const dim3 grid((W + BLOCK_X - 1) / BLOCK_X, (H + BLOCK_Y - 1) / BLOCK_Y, N);
         const dim3 block(BLOCK_X, BLOCK_Y);
 
-        cudaStream_t stream = img1.stream();
+        const cudaStream_t stream = img1.stream();
         maskedFusedL1SSIMForwardCUDA<<<grid, block, 0, stream>>>(
             ssim_weight, H, W, C, C1, C2,
             img1.ptr<float>(), img2.ptr<float>(), mask_2d.ptr<float>(),
@@ -1733,7 +1733,7 @@ namespace lfs::training::kernels {
         const dim3 grid((ctx.W + BLOCK_X - 1) / BLOCK_X, (ctx.H + BLOCK_Y - 1) / BLOCK_Y, N);
         const dim3 block(BLOCK_X, BLOCK_Y);
 
-        cudaStream_t stream = ctx.img1.stream();
+        const cudaStream_t stream = ctx.img1.stream();
         maskedFusedL1SSIMBackwardCUDA<<<grid, block, 0, stream>>>(
             ctx.ssim_weight, inv_mask_sum, ctx.H, ctx.W, static_cast<int>(C), C1, C2,
             ctx.img1.ptr<float>(), ctx.img2.ptr<float>(), ctx.mask.ptr<float>(),

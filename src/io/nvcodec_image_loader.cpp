@@ -569,8 +569,7 @@ namespace lfs::io {
 
         const size_t decoder_idx = impl_->acquire_decoder();
         nvimgcodecDecoder_t decoder = impl_->decoder_pool[decoder_idx];
-        // Use decoder's dedicated stream for all operations
-        cudaStream_t decode_stream = impl_->decode_streams[decoder_idx];
+        const cudaStream_t decode_stream = impl_->decode_streams[decoder_idx];
 
         // Auto-release decoder on scope exit
         struct DecoderGuard {
@@ -745,7 +744,7 @@ namespace lfs::io {
             }
         }
 
-        // Sync only the decoder's stream, not the entire device
+        // Sync decoder's stream (not device)
         if (const cudaError_t err = cudaStreamSynchronize(decode_stream); err != cudaSuccess) {
             throw std::runtime_error(std::string("CUDA stream sync failed: ") + cudaGetErrorString(err));
         }
@@ -782,7 +781,7 @@ namespace lfs::io {
 
         const size_t decoder_idx = impl_->acquire_decoder();
         nvimgcodecDecoder_t decoder = impl_->decoder_pool[decoder_idx];
-        cudaStream_t decode_stream = impl_->decode_streams[decoder_idx];
+        const cudaStream_t decode_stream = impl_->decode_streams[decoder_idx];
 
         struct DecoderGuard {
             NvCodecImageLoader::Impl* impl;
@@ -917,7 +916,7 @@ namespace lfs::io {
             results.push_back(std::move(output));
         }
 
-        // Sync only the decoder's stream, not the entire device
+        // Sync decoder's stream (not device)
         cudaStreamSynchronize(decode_stream);
         uint8_tensors.clear();
 
@@ -940,7 +939,7 @@ namespace lfs::io {
 
         const size_t decoder_idx = impl_->acquire_decoder();
         nvimgcodecDecoder_t decoder = impl_->decoder_pool[decoder_idx];
-        cudaStream_t decode_stream = impl_->decode_streams[decoder_idx];
+        const cudaStream_t decode_stream = impl_->decode_streams[decoder_idx];
 
         struct DecoderGuard {
             NvCodecImageLoader::Impl* impl;
@@ -1077,7 +1076,7 @@ namespace lfs::io {
             results.push_back(std::move(output));
         }
 
-        // Sync only the decoder's stream, not the entire device
+        // Sync decoder's stream (not device)
         cudaStreamSynchronize(decode_stream);
         uint8_tensors.clear();
 

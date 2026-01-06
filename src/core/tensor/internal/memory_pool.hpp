@@ -120,7 +120,6 @@ namespace lfs::core {
             std::unordered_set<cudaStream_t> using_streams;
 
             if (lookup_allocation_full(ptr, method, size, alloc_stream, using_streams)) {
-                // Handle cross-stream usage by making deallocation stream wait for all using_streams
                 if (!using_streams.empty()) {
                     handle_cross_stream_sync(stream, using_streams);
                 }
@@ -129,15 +128,12 @@ namespace lfs::core {
 
                 switch (method) {
                 case AllocMethod::Slab:
-                    // Slab allocations can be recycled immediately (same memory pool)
                     GPUSlabAllocator::instance().deallocate(ptr, size);
                     return;
                 case AllocMethod::Bucketed:
-                    // Bucketed allocations can be cached for reuse
                     SizeBucketedPool::instance().cache_free(ptr, size);
                     return;
                 case AllocMethod::Direct:
-                    // Direct allocations need sync before free
                     if (!using_streams.empty()) {
                         cudaStreamSynchronize(stream ? stream : alloc_stream);
                     }
@@ -217,23 +213,18 @@ namespace lfs::core {
             }
         }
 
-        // Record that a memory block is being used on an additional stream.
-        // This ensures safe deallocation when memory is shared across streams.
+        // Record cross-stream memory usage for safe deallocation
         void record_stream(void* ptr, cudaStream_t stream) {
             if (!ptr || !stream)
                 return;
 
             std::lock_guard<std::mutex> lock(map_mutex_);
             auto it = allocation_map_.find(ptr);
-            if (it != allocation_map_.end()) {
-                // Only record if it's a different stream than the allocation stream
-                if (stream != it->second.alloc_stream) {
-                    it->second.using_streams.insert(stream);
-                }
+            if (it != allocation_map_.end() && stream != it->second.alloc_stream) {
+                it->second.using_streams.insert(stream);
             }
         }
 
-        // Check if a memory block has cross-stream usage
         bool has_cross_stream_usage(void* ptr) const {
             std::lock_guard<std::mutex> lock(map_mutex_);
             auto it = allocation_map_.find(ptr);
@@ -404,18 +395,14 @@ namespace lfs::core {
             return ptr;
         }
 
-        // Make target_stream wait for all using_streams to complete.
-        // This ensures memory is safe to free/reuse after this call returns.
+        // Sync target_stream with all using_streams via events
         void handle_cross_stream_sync(cudaStream_t target_stream,
                                       const std::unordered_set<cudaStream_t>& using_streams) {
-            for (cudaStream_t using_stream : using_streams) {
+            for (const cudaStream_t using_stream : using_streams) {
                 if (using_stream && using_stream != target_stream) {
-                    // Create a temporary event to sync streams
                     cudaEvent_t event;
                     if (cudaEventCreateWithFlags(&event, cudaEventDisableTiming) == cudaSuccess) {
-                        // Record on the using_stream
                         if (cudaEventRecord(event, using_stream) == cudaSuccess) {
-                            // Make target_stream wait for this event
                             cudaStreamWaitEvent(target_stream ? target_stream : nullptr, event, 0);
                         }
                         cudaEventDestroy(event);
@@ -445,7 +432,6 @@ namespace lfs::core {
             return false;
         }
 
-        // Lookup allocation info including stream usage, and atomically extract using_streams
         bool lookup_allocation_full(void* ptr, AllocMethod& method, size_t& size,
                                     cudaStream_t& alloc_stream,
                                     std::unordered_set<cudaStream_t>& using_streams) {
