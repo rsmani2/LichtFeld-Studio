@@ -120,6 +120,18 @@ namespace lfs::io {
          */
         static bool is_available();
 
+        /**
+         * @brief Get the CUDA stream associated with a decoder index
+         * @param decoder_idx Index of the decoder in the pool
+         * @return CUDA stream for async operations, or nullptr if invalid
+         */
+        cudaStream_t get_decoder_stream(size_t decoder_idx) const;
+
+        /**
+         * @brief Get the number of decoders in the pool
+         */
+        size_t decoder_pool_size() const;
+
     private:
         struct Impl;
         std::unique_ptr<Impl> impl_;

@@ -590,9 +590,8 @@ namespace lfs::io {
                             if (batch[i].mask_params.threshold > 0) {
                                 cuda::launch_mask_threshold(mask_ptr, H, W, batch[i].mask_params.threshold, nullptr);
                             }
-                            if (const cudaError_t err = cudaDeviceSynchronize(); err != cudaSuccess) {
-                                throw std::runtime_error(std::string("CUDA sync failed: ") + cudaGetErrorString(err));
-                            }
+                            // nvcodec already synced its stream, mask kernels on default stream see the data
+                            // No need for device-wide sync here
 
                             try_complete_pair(batch[i].sequence_id, std::nullopt, std::move(mask_tensor), nullptr);
 

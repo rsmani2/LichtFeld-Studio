@@ -93,6 +93,10 @@ namespace lfs::core {
             std::atomic<size_t> total_allocated{0};
             std::atomic<size_t> realloc_count{0};
             std::chrono::steady_clock::time_point last_log_time;
+
+            // Frame synchronization event (replaces cudaDeviceSynchronize)
+            cudaEvent_t frame_complete_event = nullptr;
+            bool event_recorded = false;
         };
 
         std::unordered_map<int, std::unique_ptr<Arena>> device_arenas_;

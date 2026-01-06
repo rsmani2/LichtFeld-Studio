@@ -63,6 +63,11 @@ namespace lfs::core {
             if (arena.fallback_buffer) {
                 cudaFree(arena.fallback_buffer);
             }
+
+            // Destroy frame synchronization event
+            if (arena.frame_complete_event) {
+                cudaEventDestroy(arena.frame_complete_event);
+            }
         }
 
         device_arenas_.clear();
@@ -136,10 +141,6 @@ namespace lfs::core {
 
         uint64_t frame_id = frame_counter_.fetch_add(1, std::memory_order_relaxed);
 
-        // Synchronize to ensure previous frame's GPU work is complete
-        // before we reset the arena offset and start overwriting memory
-        cudaDeviceSynchronize();
-
         // CRITICAL FIX: Reset arena offset at the beginning of each frame!
         int device;
         cudaError_t err = cudaGetDevice(&device);
@@ -147,9 +148,19 @@ namespace lfs::core {
             std::lock_guard<std::mutex> lock(arena_mutex_);
             auto it = device_arenas_.find(device);
             if (it != device_arenas_.end() && it->second) {
+                auto& arena = *it->second;
+
+                // Wait for previous frame's GPU work to complete using event
+                // This is much faster than cudaDeviceSynchronize() as it only
+                // waits for arena-related work, not all GPU operations
+                if (arena.frame_complete_event && arena.event_recorded) {
+                    cudaEventSynchronize(arena.frame_complete_event);
+                    arena.event_recorded = false;
+                }
+
                 // Reset the offset to reuse the buffer from the beginning
-                size_t old_offset = it->second->offset.load(std::memory_order_acquire);
-                it->second->offset.store(0, std::memory_order_release);
+                size_t old_offset = arena.offset.load(std::memory_order_acquire);
+                arena.offset.store(0, std::memory_order_release);
 
                 // Log memory status periodically (but not too often)
                 bool should_log = (frame_id == 1) || (frame_id % config_.log_interval == 0);
@@ -204,6 +215,14 @@ namespace lfs::core {
                     if (it->second->peak_usage_period.compare_exchange_weak(period_peak, frame_usage)) {
                         break;
                     }
+                }
+
+                // Record event to signal frame completion
+                // This allows begin_frame() to wait only for arena-related work
+                auto& arena = *it->second;
+                if (arena.frame_complete_event) {
+                    cudaEventRecord(arena.frame_complete_event, nullptr); // Record on default stream
+                    arena.event_recorded = true;
                 }
             }
         }
@@ -437,6 +456,8 @@ namespace lfs::core {
                     } else {
                         arena.generation = generation_counter_.fetch_add(1, std::memory_order_relaxed);
                         arena.offset.store(0, std::memory_order_release);
+                        // Create frame synchronization event (disable timing for performance)
+                        cudaEventCreateWithFlags(&arena.frame_complete_event, cudaEventDisableTiming);
                         return *arena_ptr;
                     }
                 }
@@ -486,6 +507,9 @@ namespace lfs::core {
             if (!allocated) {
                 throw std::runtime_error("Failed to allocate arena after multiple attempts");
             }
+
+            // Create frame synchronization event (disable timing for performance)
+            cudaEventCreateWithFlags(&arena.frame_complete_event, cudaEventDisableTiming);
         }
 
         return *arena_ptr;

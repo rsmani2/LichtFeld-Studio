@@ -484,13 +484,6 @@ namespace lfs::training {
             bg_ptr = ctx.bg_color.ptr<float>();
         }
 
-        // Debug: check for errors before gsplat backward
-        cudaDeviceSynchronize();
-        auto err_pre_gsplat = cudaGetLastError();
-        if (err_pre_gsplat != cudaSuccess) {
-            LOG_ERROR("CUDA error BEFORE gsplat backward: {}", cudaGetErrorString(err_pre_gsplat));
-        }
-
         // Call backward with raw pointers
         gsplat_lfs::rasterize_from_world_with_sh_bwd(
             ctx.means.ptr<float>(),
@@ -542,14 +535,6 @@ namespace lfs::training {
             v_sh_coeffs_ptr,
             stream);
 
-
-        // Debug: check for errors after gsplat backward
-        cudaDeviceSynchronize();
-        auto err_post_gsplat = cudaGetLastError();
-        if (err_post_gsplat != cudaSuccess) {
-            LOG_ERROR("CUDA error AFTER gsplat backward: {}", cudaGetErrorString(err_post_gsplat));
-        }
-
         // ============ Chain rule for activation functions ============
         // gsplat backward returns gradients w.r.t. activated parameters
         // We need to chain rule back to raw parameters
@@ -559,21 +544,9 @@ namespace lfs::training {
         // In-place: v_scales_ptr *= scales
         kernels::launch_exp_backward(v_scales_ptr, ctx.scales.ptr<float>(), N, stream);
 
-        cudaDeviceSynchronize();
-        auto err_exp = cudaGetLastError();
-        if (err_exp != cudaSuccess) {
-            LOG_ERROR("CUDA error AFTER exp_backward: {}", cudaGetErrorString(err_exp));
-        }
-
         // Opacities: sigmoid(raw) -> v_opacities_raw = v_opacities * sigmoid * (1 - sigmoid)
         // In-place: v_opacities_ptr *= sigmoid * (1 - sigmoid)
         kernels::launch_sigmoid_backward(v_opacities_ptr, ctx.opacities.ptr<float>(), N, stream);
-
-        cudaDeviceSynchronize();
-        auto err_sigmoid = cudaGetLastError();
-        if (err_sigmoid != cudaSuccess) {
-            LOG_ERROR("CUDA error AFTER sigmoid_backward: {}", cudaGetErrorString(err_sigmoid));
-        }
 
         // Quaternions: normalize(raw) -> need Jacobian of normalization
         // v_raw = (v_activated - q_norm * dot(q_norm, v_activated)) / ||q_raw||
@@ -585,12 +558,6 @@ namespace lfs::training {
             raw_quats.ptr<float>(),
             N,
             stream);
-
-        cudaDeviceSynchronize();
-        auto err_quat = cudaGetLastError();
-        if (err_quat != cudaSuccess) {
-            LOG_ERROR("CUDA error AFTER quat_normalize_backward: {}", cudaGetErrorString(err_quat));
-        }
 
         // ============ Accumulate gradients into optimizer using CUDA kernels ============
         // This avoids any tensor operations that might allocate from memory pool
@@ -635,13 +602,6 @@ namespace lfs::training {
             }
         }
 
-        // Debug: sync and check for errors before SH kernel
-        cudaDeviceSynchronize();
-        auto err_pre = cudaGetLastError();
-        if (err_pre != cudaSuccess) {
-            LOG_ERROR("CUDA error BEFORE SH kernel: {}", cudaGetErrorString(err_pre));
-        }
-
         kernels::launch_grad_accumulate_sh(
             optimizer.get_grad(ParamType::Sh0).ptr<float>(),
             dst_shN,
@@ -650,14 +610,6 @@ namespace lfs::training {
             K,     // K_src: active SH coefficients
             K_dst, // K_dst: destination buffer width
             stream);
-
-        // Debug: sync and check for errors after SH kernel
-        cudaDeviceSynchronize();
-        auto err_post = cudaGetLastError();
-        if (err_post != cudaSuccess) {
-            LOG_ERROR("CUDA error AFTER SH kernel: {} (N={}, K={}, K_dst={}, dst_shN={})",
-                      cudaGetErrorString(err_post), N, K, K_dst, (void*)dst_shN);
-        }
 
         // Update densification info if available (shape is [2, N])
         const bool update_densification_info =
@@ -672,12 +624,6 @@ namespace lfs::training {
                 v_means_ptr,
                 N,
                 stream);
-
-            cudaDeviceSynchronize();
-            auto err_dens = cudaGetLastError();
-            if (err_dens != cudaSuccess) {
-                LOG_ERROR("CUDA error AFTER grad_norm_accumulate: {}", cudaGetErrorString(err_dens));
-            }
         }
 
         // Free internally allocated buffers from forward
@@ -688,22 +634,8 @@ namespace lfs::training {
             cudaFree(ctx.flatten_ids_ptr);
         }
 
-        // Extra sync after cudaFree to catch any lingering errors
-        cudaDeviceSynchronize();
-        auto err_free = cudaGetLastError();
-        if (err_free != cudaSuccess) {
-            LOG_ERROR("CUDA error AFTER cudaFree: {}", cudaGetErrorString(err_free));
-        }
-
         // End arena frame to release memory from forward pass
         arena.end_frame(ctx.frame_id);
-
-        // Final final sync
-        cudaDeviceSynchronize();
-        auto err_arena = cudaGetLastError();
-        if (err_arena != cudaSuccess) {
-            LOG_ERROR("CUDA error AFTER end_frame: {}", cudaGetErrorString(err_arena));
-        }
     }
 
 } // namespace lfs::training

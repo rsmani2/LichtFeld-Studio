@@ -327,6 +327,8 @@ namespace lfs::io {
     struct NvCodecImageLoader::Impl {
         nvimgcodecInstance_t instance = nullptr;
         std::vector<nvimgcodecDecoder_t> decoder_pool;
+        std::vector<cudaStream_t> decode_streams;   // Dedicated stream per decoder
+        std::vector<cudaEvent_t> decode_events;     // Event per decoder for sync
         std::vector<bool> decoder_available;
         std::mutex pool_mutex;
         std::condition_variable pool_cv;
@@ -380,6 +382,23 @@ namespace lfs::io {
                 decoder_pool.clear();
                 decoder_available.clear();
 
+                // Destroy decode streams and events
+                for (auto& stream : decode_streams) {
+                    if (stream) {
+                        cudaStreamDestroy(stream);
+                        stream = nullptr;
+                    }
+                }
+                decode_streams.clear();
+
+                for (auto& event : decode_events) {
+                    if (event) {
+                        cudaEventDestroy(event);
+                        event = nullptr;
+                    }
+                }
+                decode_events.clear();
+
                 // Destroy the instance last
                 if (instance) {
                     nvimgcodecInstanceDestroy(instance);
@@ -428,7 +447,22 @@ namespace lfs::io {
 
         const size_t pool_size = options.decoder_pool_size > 0 ? options.decoder_pool_size : DECODER_POOL_SIZE;
         impl_->decoder_pool.resize(pool_size);
+        impl_->decode_streams.resize(pool_size);
+        impl_->decode_events.resize(pool_size);
         impl_->decoder_available.resize(pool_size, true);
+
+        // Create dedicated streams and events for each decoder
+        for (size_t i = 0; i < pool_size; ++i) {
+            cudaError_t err = cudaStreamCreateWithFlags(&impl_->decode_streams[i], cudaStreamNonBlocking);
+            if (err != cudaSuccess) {
+                throw std::runtime_error("Failed to create decode stream: " + std::string(cudaGetErrorString(err)));
+            }
+            err = cudaEventCreateWithFlags(&impl_->decode_events[i], cudaEventDisableTiming);
+            if (err != cudaSuccess) {
+                throw std::runtime_error("Failed to create decode event: " + std::string(cudaGetErrorString(err)));
+            }
+        }
+        LOG_DEBUG("[NvCodecImageLoader] Created {} decode streams", pool_size);
 
         const nvimgcodecExecutionParams_t exec_params{
             NVIMGCODEC_STRUCTURE_TYPE_EXECUTION_PARAMS,
@@ -458,6 +492,17 @@ namespace lfs::io {
     bool NvCodecImageLoader::is_available() {
         // Run comprehensive diagnostics - this will log all relevant info
         return check_nvimgcodec_availability_with_diagnostics();
+    }
+
+    cudaStream_t NvCodecImageLoader::get_decoder_stream(size_t decoder_idx) const {
+        if (decoder_idx < impl_->decode_streams.size()) {
+            return impl_->decode_streams[decoder_idx];
+        }
+        return nullptr;
+    }
+
+    size_t NvCodecImageLoader::decoder_pool_size() const {
+        return impl_->decoder_pool.size();
     }
 
     std::vector<uint8_t> NvCodecImageLoader::read_file(const std::filesystem::path& path) {
@@ -524,6 +569,8 @@ namespace lfs::io {
 
         const size_t decoder_idx = impl_->acquire_decoder();
         nvimgcodecDecoder_t decoder = impl_->decoder_pool[decoder_idx];
+        // Use decoder's dedicated stream for all operations
+        cudaStream_t decode_stream = impl_->decode_streams[decoder_idx];
 
         // Auto-release decoder on scope exit
         struct DecoderGuard {
@@ -574,9 +621,8 @@ namespace lfs::io {
         LOG_DEBUG("Image info: {}x{} -> {}x{} (resize_factor={}, max_width={})",
                   src_width, src_height, target_width, target_height, resize_factor, max_width);
 
-        CUcontext saved_context = nullptr;
-        cuCtxGetCurrent(&saved_context);
-        cudaSetDevice(0);
+        // No context save/restore needed for single-GPU
+        cudaSetDevice(impl_->device_id);
 
         using namespace lfs::core;
         Tensor uint8_tensor;
@@ -616,7 +662,7 @@ namespace lfs::io {
         output_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
         output_info.buffer = gpu_uint8_buffer;
         output_info.buffer_size = decoded_size;
-        output_info.cuda_stream = static_cast<cudaStream_t>(cuda_stream);
+        output_info.cuda_stream = decode_stream;  // Use decoder's dedicated stream
 
         status = nvimgcodecImageCreate(impl_->instance, &nv_image, &output_info);
         if (status != NVIMGCODEC_STATUS_SUCCESS) {
@@ -674,42 +720,37 @@ namespace lfs::io {
         if (needs_resize) {
             if (is_grayscale) {
                 output_tensor = lanczos_resize_grayscale(uint8_tensor, target_height, target_width,
-                                                         LANCZOS_KERNEL_SIZE, static_cast<cudaStream_t>(cuda_stream));
+                                                         LANCZOS_KERNEL_SIZE, decode_stream);
             } else {
                 output_tensor = lanczos_resize(uint8_tensor, target_height, target_width,
-                                               LANCZOS_KERNEL_SIZE, static_cast<cudaStream_t>(cuda_stream));
+                                               LANCZOS_KERNEL_SIZE, decode_stream);
             }
         } else {
             if (is_grayscale) {
                 const auto shape = uint8_tensor.shape();
                 const size_t H = shape[0], W = shape[1];
-                output_tensor = Tensor::zeros(TensorShape({H, W}), Device::CUDA, DataType::Float32);
+                output_tensor = Tensor::zeros(TensorShape({H, W}), Device::CUDA, DataType::Float32, decode_stream);
                 cuda::launch_uint8_hw_to_float32_hw(
                     reinterpret_cast<const uint8_t*>(uint8_tensor.data_ptr()),
                     reinterpret_cast<float*>(output_tensor.data_ptr()),
-                    H, W, static_cast<cudaStream_t>(cuda_stream));
+                    H, W, decode_stream);
             } else {
                 const auto shape = uint8_tensor.shape();
                 const size_t H = shape[0], W = shape[1], C = shape[2];
-                output_tensor = Tensor::zeros(TensorShape({C, H, W}), Device::CUDA, DataType::Float32);
+                output_tensor = Tensor::zeros(TensorShape({C, H, W}), Device::CUDA, DataType::Float32, decode_stream);
                 cuda::launch_uint8_hwc_to_float32_chw(
                     reinterpret_cast<const uint8_t*>(uint8_tensor.data_ptr()),
                     reinterpret_cast<float*>(output_tensor.data_ptr()),
-                    H, W, C, static_cast<cudaStream_t>(cuda_stream));
+                    H, W, C, decode_stream);
             }
         }
 
-        if (const cudaError_t err = cudaDeviceSynchronize(); err != cudaSuccess) {
-            if (saved_context) {
-                cuCtxSetCurrent(saved_context);
-            }
-            throw std::runtime_error(std::string("CUDA sync failed: ") + cudaGetErrorString(err));
+        // Sync only the decoder's stream, not the entire device
+        if (const cudaError_t err = cudaStreamSynchronize(decode_stream); err != cudaSuccess) {
+            throw std::runtime_error(std::string("CUDA stream sync failed: ") + cudaGetErrorString(err));
         }
         uint8_tensor = Tensor();
 
-        if (saved_context) {
-            cuCtxSetCurrent(saved_context);
-        }
         return output_tensor;
     }
 
@@ -741,6 +782,7 @@ namespace lfs::io {
 
         const size_t decoder_idx = impl_->acquire_decoder();
         nvimgcodecDecoder_t decoder = impl_->decoder_pool[decoder_idx];
+        cudaStream_t decode_stream = impl_->decode_streams[decoder_idx];
 
         struct DecoderGuard {
             NvCodecImageLoader::Impl* impl;
@@ -748,8 +790,6 @@ namespace lfs::io {
             ~DecoderGuard() { impl->release_decoder(idx); }
         } guard{impl_.get(), decoder_idx};
 
-        CUcontext saved_context = nullptr;
-        cuCtxGetCurrent(&saved_context);
         cudaSetDevice(impl_->device_id);
 
         std::vector<nvimgcodecCodeStream_t> code_streams(batch_size);
@@ -804,7 +844,7 @@ namespace lfs::io {
             output_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
             output_info.buffer = uint8_tensors[i].data_ptr();
             output_info.buffer_size = height * width * 3;
-            output_info.cuda_stream = static_cast<cudaStream_t>(cuda_stream);
+            output_info.cuda_stream = decode_stream;
 
             const auto status = nvimgcodecImageCreate(impl_->instance, &nv_images[i], &output_info);
             if (status != NVIMGCODEC_STATUS_SUCCESS) {
@@ -867,22 +907,19 @@ namespace lfs::io {
 
             const auto shape = uint8_tensors[i].shape();
             const size_t H = shape[0], W = shape[1], C = shape[2];
-            auto output = Tensor::zeros(TensorShape({C, H, W}), Device::CUDA, DataType::Float32);
+            auto output = Tensor::zeros(TensorShape({C, H, W}), Device::CUDA, DataType::Float32, decode_stream);
 
             cuda::launch_uint8_hwc_to_float32_chw(
                 reinterpret_cast<const uint8_t*>(uint8_tensors[i].data_ptr()),
                 reinterpret_cast<float*>(output.data_ptr()),
-                H, W, C, nullptr);
+                H, W, C, decode_stream);
 
             results.push_back(std::move(output));
         }
 
-        cudaDeviceSynchronize();
+        // Sync only the decoder's stream, not the entire device
+        cudaStreamSynchronize(decode_stream);
         uint8_tensors.clear();
-
-        if (saved_context) {
-            cuCtxSetCurrent(saved_context);
-        }
 
         LOG_DEBUG("[NvCodecImageLoader] Batch decode complete: {}", batch_size);
         return results;
@@ -903,6 +940,7 @@ namespace lfs::io {
 
         const size_t decoder_idx = impl_->acquire_decoder();
         nvimgcodecDecoder_t decoder = impl_->decoder_pool[decoder_idx];
+        cudaStream_t decode_stream = impl_->decode_streams[decoder_idx];
 
         struct DecoderGuard {
             NvCodecImageLoader::Impl* impl;
@@ -910,8 +948,6 @@ namespace lfs::io {
             ~DecoderGuard() { impl->release_decoder(idx); }
         } guard{impl_.get(), decoder_idx};
 
-        CUcontext saved_context = nullptr;
-        cuCtxGetCurrent(&saved_context);
         cudaSetDevice(impl_->device_id);
 
         std::vector<nvimgcodecCodeStream_t> code_streams(batch_size);
@@ -969,7 +1005,7 @@ namespace lfs::io {
             out_info.buffer = uint8_tensors[i].data_ptr();
             out_info.buffer_size = uint8_tensors[i].bytes();
             out_info.buffer_kind = NVIMGCODEC_IMAGE_BUFFER_KIND_STRIDED_DEVICE;
-            out_info.cuda_stream = static_cast<cudaStream_t>(cuda_stream);
+            out_info.cuda_stream = decode_stream;
 
             const auto status = nvimgcodecImageCreate(impl_->instance, &nv_images[i], &out_info);
             if (status != NVIMGCODEC_STATUS_SUCCESS) {
@@ -1031,22 +1067,20 @@ namespace lfs::io {
 
             const auto shape = uint8_tensors[i].shape();
             const size_t H = shape[0], W = shape[1], C = shape[2];
-            auto output = Tensor::zeros(TensorShape({C, H, W}), Device::CUDA, DataType::Float32);
+            auto output = Tensor::zeros(TensorShape({C, H, W}), Device::CUDA, DataType::Float32, decode_stream);
 
             cuda::launch_uint8_hwc_to_float32_chw(
                 reinterpret_cast<const uint8_t*>(uint8_tensors[i].data_ptr()),
                 reinterpret_cast<float*>(output.data_ptr()),
-                H, W, C, nullptr);
+                H, W, C, decode_stream);
 
             results.push_back(std::move(output));
         }
 
-        cudaDeviceSynchronize();
+        // Sync only the decoder's stream, not the entire device
+        cudaStreamSynchronize(decode_stream);
         uint8_tensors.clear();
 
-        if (saved_context) {
-            cuCtxSetCurrent(saved_context);
-        }
         return results;
     }
 
