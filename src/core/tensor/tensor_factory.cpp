@@ -5,12 +5,13 @@
 
 namespace lfs::core {
 
-    Tensor Tensor::empty(TensorShape shape, Device device, DataType dtype, bool use_pinned) {
+    Tensor Tensor::empty(TensorShape shape, Device device, DataType dtype, bool use_pinned, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
         args.use_pinned = use_pinned;
+        args.stream = stream;
         args.args = std::monostate{};
         return load(LoadOp::Empty, args);
     }
@@ -25,100 +26,110 @@ namespace lfs::core {
         return load(LoadOp::Empty, args);
     }
 
-    Tensor Tensor::zeros(TensorShape shape, Device device, DataType dtype) {
+    Tensor Tensor::zeros(TensorShape shape, Device device, DataType dtype, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
+        args.stream = stream;
         args.args = 0.0f;
         return load(LoadOp::Const, args);
     }
 
-    Tensor Tensor::ones(TensorShape shape, Device device, DataType dtype) {
+    Tensor Tensor::ones(TensorShape shape, Device device, DataType dtype, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
+        args.stream = stream;
         args.args = 1.0f;
         return load(LoadOp::Const, args);
     }
 
-    Tensor Tensor::full(TensorShape shape, float value, Device device, DataType dtype) {
+    Tensor Tensor::full(TensorShape shape, float value, Device device, DataType dtype, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
+        args.stream = stream;
         args.args = value;
         return load(LoadOp::Const, args);
     }
 
-    Tensor Tensor::full_bool(TensorShape shape, bool value, Device device) {
+    Tensor Tensor::full_bool(TensorShape shape, bool value, Device device, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = DataType::Bool;
+        args.stream = stream;
         args.args = value ? 1.0f : 0.0f;
         return load(LoadOp::Const, args);
     }
 
-    Tensor Tensor::zeros_bool(TensorShape shape, Device device) {
-        return full_bool(shape, false, device);
+    Tensor Tensor::zeros_bool(TensorShape shape, Device device, cudaStream_t stream) {
+        return full_bool(shape, false, device, stream);
     }
 
-    Tensor Tensor::ones_bool(TensorShape shape, Device device) {
-        return full_bool(shape, true, device);
+    Tensor Tensor::ones_bool(TensorShape shape, Device device, cudaStream_t stream) {
+        return full_bool(shape, true, device, stream);
     }
 
-    Tensor Tensor::rand(TensorShape shape, Device device, DataType dtype) {
+    Tensor Tensor::rand(TensorShape shape, Device device, DataType dtype, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
+        args.stream = stream;
         args.args = std::pair<float, float>{0.0f, 1.0f};
         return load(LoadOp::Random, args);
     }
 
-    Tensor Tensor::randn(TensorShape shape, Device device, DataType dtype) {
+    Tensor Tensor::randn(TensorShape shape, Device device, DataType dtype, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
+        args.stream = stream;
         args.args = std::pair<float, float>{0.0f, 1.0f};
         return load(LoadOp::Normal, args);
     }
 
-    Tensor Tensor::uniform(TensorShape shape, float low, float high, Device device, DataType dtype) {
+    Tensor Tensor::uniform(TensorShape shape, float low, float high, Device device, DataType dtype, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
+        args.stream = stream;
         args.args = std::pair<float, float>{low, high};
         return load(LoadOp::Random, args);
     }
 
-    Tensor Tensor::normal(TensorShape shape, float mean, float std, Device device, DataType dtype) {
+    Tensor Tensor::normal(TensorShape shape, float mean, float std, Device device, DataType dtype, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
+        args.stream = stream;
         args.args = std::pair<float, float>{mean, std};
         return load(LoadOp::Normal, args);
     }
 
-    Tensor Tensor::randint(TensorShape shape, int low, int high, Device device, DataType dtype) {
+    Tensor Tensor::randint(TensorShape shape, int low, int high, Device device, DataType dtype, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
+        args.stream = stream;
         args.args = std::pair<int, int>{low, high};
         return load(LoadOp::Randint, args);
     }
 
-    Tensor Tensor::bernoulli(TensorShape shape, float p, Device device, DataType dtype) {
+    Tensor Tensor::bernoulli(TensorShape shape, float p, Device device, DataType dtype, cudaStream_t stream) {
         LoadArgs args;
         args.shape = shape;
         args.device = device;
         args.dtype = dtype;
+        args.stream = stream;
         args.args = p;
         return load(LoadOp::Bernoulli, args);
     }

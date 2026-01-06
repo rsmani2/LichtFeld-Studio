@@ -207,6 +207,8 @@ set(TEST_FILES
     test_torch_conversion.cpp
     test_fastgs_kernels.cpp
     test_fastgs_fuzz.cpp
+    test_pipelined_loader_streams.cpp
+    test_nvcodec_stress.cpp
 )
 
 # Build test sources list

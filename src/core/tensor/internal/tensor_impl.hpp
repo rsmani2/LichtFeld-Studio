@@ -218,6 +218,7 @@ namespace lfs::core {
         Device device = Device::CUDA;
         DataType dtype = DataType::Float32;
         bool use_pinned = true;
+        cudaStream_t stream = nullptr;  // nullptr = use getCurrentCUDAStream()
         std::variant<
             std::monostate,
             float,
@@ -735,31 +736,41 @@ namespace lfs::core {
         Tensor ternary(const Tensor& b, const Tensor& c) const;
 
         // ============= FACTORY METHODS =============
+        // All factory methods accept an optional stream parameter.
+        // nullptr = use getCurrentCUDAStream() (thread-local default)
         static Tensor empty(TensorShape shape, Device device = Device::CUDA,
-                            DataType dtype = DataType::Float32, bool use_pinned = true);
+                            DataType dtype = DataType::Float32, bool use_pinned = true,
+                            cudaStream_t stream = nullptr);
         static Tensor empty_unpinned(TensorShape shape, DataType dtype = DataType::Float32);
         static Tensor zeros(TensorShape shape, Device device = Device::CUDA,
-                            DataType dtype = DataType::Float32);
+                            DataType dtype = DataType::Float32, cudaStream_t stream = nullptr);
         static Tensor zeros_direct(TensorShape shape, size_t capacity, Device device = Device::CUDA);
         static Tensor ones(TensorShape shape, Device device = Device::CUDA,
-                           DataType dtype = DataType::Float32);
+                           DataType dtype = DataType::Float32, cudaStream_t stream = nullptr);
         static Tensor full(TensorShape shape, float value, Device device = Device::CUDA,
-                           DataType dtype = DataType::Float32);
-        static Tensor full_bool(TensorShape shape, bool value, Device device = Device::CUDA);
-        static Tensor zeros_bool(TensorShape shape, Device device = Device::CUDA);
-        static Tensor ones_bool(TensorShape shape, Device device = Device::CUDA);
+                           DataType dtype = DataType::Float32, cudaStream_t stream = nullptr);
+        static Tensor full_bool(TensorShape shape, bool value, Device device = Device::CUDA,
+                                cudaStream_t stream = nullptr);
+        static Tensor zeros_bool(TensorShape shape, Device device = Device::CUDA,
+                                 cudaStream_t stream = nullptr);
+        static Tensor ones_bool(TensorShape shape, Device device = Device::CUDA,
+                                cudaStream_t stream = nullptr);
         static Tensor rand(TensorShape shape, Device device = Device::CUDA,
-                           DataType dtype = DataType::Float32);
+                           DataType dtype = DataType::Float32, cudaStream_t stream = nullptr);
         static Tensor randn(TensorShape shape, Device device = Device::CUDA,
-                            DataType dtype = DataType::Float32);
+                            DataType dtype = DataType::Float32, cudaStream_t stream = nullptr);
         static Tensor uniform(TensorShape shape, float low = 0.0f, float high = 1.0f,
-                              Device device = Device::CUDA, DataType dtype = DataType::Float32);
+                              Device device = Device::CUDA, DataType dtype = DataType::Float32,
+                              cudaStream_t stream = nullptr);
         static Tensor normal(TensorShape shape, float mean = 0.0f, float std = 1.0f,
-                             Device device = Device::CUDA, DataType dtype = DataType::Float32);
+                             Device device = Device::CUDA, DataType dtype = DataType::Float32,
+                             cudaStream_t stream = nullptr);
         static Tensor randint(TensorShape shape, int low, int high,
-                              Device device = Device::CUDA, DataType dtype = DataType::Int32);
+                              Device device = Device::CUDA, DataType dtype = DataType::Int32,
+                              cudaStream_t stream = nullptr);
         static Tensor bernoulli(TensorShape shape, float p = 0.5f,
-                                Device device = Device::CUDA, DataType dtype = DataType::Float32);
+                                Device device = Device::CUDA, DataType dtype = DataType::Float32,
+                                cudaStream_t stream = nullptr);
         static Tensor multinomial(const Tensor& weights, int num_samples,
                                   bool replacement = false);
         static Tensor arange(float end);
