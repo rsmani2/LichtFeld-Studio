@@ -256,6 +256,7 @@ namespace fast_lfs::rasterization::kernels::forward {
         collected_screen_bounds[block.thread_rank()] = screen_bounds;
         collected_mean2d_shifted[block.thread_rank()] = primitive_mean2d[primitive_idx] - 0.5f;
         collected_conic_opacity[block.thread_rank()] = primitive_conic_opacity[primitive_idx];
+        __syncthreads();
 
         uint current_write_offset = primitive_offsets[idx];
 

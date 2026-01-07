@@ -131,7 +131,7 @@ namespace lfs::core {
                     GPUSlabAllocator::instance().deallocate(ptr, size);
                     return;
                 case AllocMethod::Bucketed:
-                    SizeBucketedPool::instance().cache_free(ptr, size);
+                    SizeBucketedPool::instance().cache_free(ptr, size, alloc_stream);
                     return;
                 case AllocMethod::Direct:
                     if (!using_streams.empty()) {
@@ -179,7 +179,7 @@ namespace lfs::core {
                     GPUSlabAllocator::instance().deallocate(ptr, size);
                     return;
                 case AllocMethod::Bucketed:
-                    SizeBucketedPool::instance().cache_free(ptr, size);
+                    SizeBucketedPool::instance().cache_free(ptr, size, alloc_stream);
                     return;
                 case AllocMethod::Direct:
                     if (!using_streams.empty()) {
@@ -347,7 +347,7 @@ namespace lfs::core {
         struct AllocationInfo {
             size_t size;
             AllocMethod method;
-            cudaStream_t alloc_stream;                     // Stream where allocated
+            cudaStream_t alloc_stream;                      // Stream where allocated
             std::unordered_set<cudaStream_t> using_streams; // Additional streams using this block
         };
 

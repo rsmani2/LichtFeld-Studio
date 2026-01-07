@@ -90,10 +90,16 @@ namespace lfs::core {
             return nullptr;
         }
 
-        bool cache_free(void* ptr, size_t bytes) {
+        bool cache_free(void* ptr, size_t bytes, cudaStream_t stream = nullptr) {
             const size_t bucket_size = get_bucket_size(bytes);
             const size_t bucket_idx = get_bucket_index(bucket_size);
             if (bucket_idx >= NUM_BUCKETS)
+                return false;
+
+            // Only cache memory from the default stream. Non-default streams may be destroyed
+            // during shutdown causing cudaStreamSynchronize to crash. Memory from non-default
+            // streams will be freed directly instead of cached.
+            if (stream != nullptr)
                 return false;
 
             std::lock_guard<std::mutex> lock(buckets_[bucket_idx].mutex);
@@ -134,7 +140,7 @@ namespace lfs::core {
         void deallocate(void* ptr, size_t bytes, cudaStream_t stream = nullptr) {
             if (!ptr)
                 return;
-            if (!cache_free(ptr, bytes)) {
+            if (!cache_free(ptr, bytes, stream)) {
                 cudaFreeAsync(ptr, stream);
             }
         }
