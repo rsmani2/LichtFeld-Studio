@@ -18,6 +18,9 @@
 
 namespace lfs::python {
 
+    static std::function<lfs::vis::Scene*()> g_scene_provider;
+    static std::mutex g_scene_mutex;
+
 #ifdef LFS_BUILD_PYTHON_BINDINGS
     static std::once_flag g_py_init_once;
     static std::function<void(const std::string&, bool)> g_output_callback;
@@ -85,6 +88,19 @@ sys.stderr = OutputCapture(True)
 #else
         (void)callback;
 #endif
+    }
+
+    void set_scene_provider(std::function<lfs::vis::Scene*()> provider) {
+        std::lock_guard lock(g_scene_mutex);
+        g_scene_provider = std::move(provider);
+    }
+
+    lfs::vis::Scene* get_scene_from_provider() {
+        std::lock_guard lock(g_scene_mutex);
+        if (g_scene_provider) {
+            return g_scene_provider();
+        }
+        return nullptr;
     }
 
 #ifdef LFS_BUILD_PYTHON_BINDINGS

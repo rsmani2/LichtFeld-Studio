@@ -10,7 +10,22 @@
 #include <string>
 #include <vector>
 
+namespace lfs::vis {
+    class Scene;
+}
+
 namespace lfs::python {
+
+    /**
+     * @brief Set the scene provider function. Call from main app to allow Python module
+     *        to access the scene across the shared library boundary.
+     */
+    void set_scene_provider(std::function<lfs::vis::Scene*()> provider);
+
+    /**
+     * @brief Get scene from the registered provider. Used by the Python module.
+     */
+    lfs::vis::Scene* get_scene_from_provider();
 
     /**
      * @brief Execute a list of Python script files. Each script is expected to import `lichtfeld`

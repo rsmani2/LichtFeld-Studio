@@ -15,12 +15,18 @@
 #include "control/command_api.hpp"
 #include "control/control_boundary.hpp"
 #include "core/logger.hpp"
+#include "python/runner.hpp"
 #include "training/strategies/istrategy.hpp"
 #include "training/trainer.hpp"
-#include "visualizer/core/services.hpp"
 #include "visualizer/scene/scene_manager.hpp"
 
+#include <filesystem>
+#include <format>
+#include <fstream>
+#include <functional>
+#include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace nb = nanobind;
@@ -283,18 +289,14 @@ namespace {
         });
     }
 
-    // Get Scene from current trainer (for use in hooks) or services (for GUI)
+    // Get Scene from current trainer (for use in hooks) or scene provider (for GUI)
     lfs::vis::Scene* get_scene_internal() {
-        // First try the current trainer (headless mode)
+        // First try the current trainer (headless mode during hooks)
         if (g_current_trainer) {
             return g_current_trainer->getScene();
         }
-        // Fall back to services (GUI mode)
-        auto* const scene_manager = lfs::vis::services().sceneOrNull();
-        if (scene_manager) {
-            return &scene_manager->getScene();
-        }
-        return nullptr;
+        // Fall back to scene provider (registered by main app for GUI mode)
+        return lfs::python::get_scene_from_provider();
     }
 
 } // namespace
@@ -483,4 +485,142 @@ NB_MODULE(lichtfeld, m) {
             return lfs::python::PyCameraDataset(dataset);
         },
         "Get validation cameras (None if not available)");
+
+    // Run a Python script file
+    m.def(
+        "run", [](const std::string& path) {
+            const std::filesystem::path script_path(path);
+            if (!std::filesystem::exists(script_path)) {
+                throw std::runtime_error("Script not found: " + path);
+            }
+
+            std::ifstream file(script_path);
+            if (!file) {
+                throw std::runtime_error("Cannot open script: " + path);
+            }
+
+            std::stringstream buffer;
+            buffer << file.rdbuf();
+            const std::string code = buffer.str();
+
+            // Add script directory to sys.path and set __file__
+            const auto parent = script_path.parent_path().string();
+            const auto abs_path = std::filesystem::absolute(script_path).string();
+
+            // Get Python's exec function
+            nb::object builtins = nb::module_::import_("builtins");
+            nb::object py_exec = builtins.attr("exec");
+
+            std::string setup_code = std::format(
+                "import sys\n"
+                "if '{}' not in sys.path: sys.path.insert(0, '{}')\n"
+                "__file__ = '{}'\n",
+                parent, parent, abs_path);
+
+            py_exec(setup_code);
+            py_exec(code);
+
+            LOG_INFO("Executed script: {}", path);
+        },
+        nb::arg("path"), "Execute a Python script file");
+
+    // List scene contents
+    m.def(
+        "list_scene", []() {
+            auto* scene = get_scene_internal();
+            if (!scene) {
+                nb::print("No scene available");
+                return;
+            }
+
+            const auto nodes = scene->getNodes();
+            nb::print(nb::str("Scene: {} nodes, {} gaussians\n").format(nodes.size(), scene->getTotalGaussianCount()));
+
+            // Build id->node map
+            std::unordered_map<int32_t, const lfs::vis::SceneNode*> node_map;
+            for (const auto* n : nodes) {
+                node_map[n->id] = n;
+            }
+
+            // Recursive print function
+            std::function<void(const lfs::vis::SceneNode*, int)> print_node =
+                [&](const lfs::vis::SceneNode* node, int depth) {
+                    std::string indent(depth * 2, ' ');
+                    char vis = node->visible ? '+' : '-';
+                    char lock = node->locked ? 'L' : ' ';
+
+                    std::string type_name;
+                    switch (node->type) {
+                    case lfs::vis::NodeType::SPLAT: type_name = "SPLAT"; break;
+                    case lfs::vis::NodeType::POINTCLOUD: type_name = "POINTCLOUD"; break;
+                    case lfs::vis::NodeType::GROUP: type_name = "GROUP"; break;
+                    case lfs::vis::NodeType::CROPBOX: type_name = "CROPBOX"; break;
+                    case lfs::vis::NodeType::DATASET: type_name = "DATASET"; break;
+                    case lfs::vis::NodeType::CAMERA_GROUP: type_name = "CAMERA_GROUP"; break;
+                    case lfs::vis::NodeType::CAMERA: type_name = "CAMERA"; break;
+                    case lfs::vis::NodeType::IMAGE_GROUP: type_name = "IMAGE_GROUP"; break;
+                    case lfs::vis::NodeType::IMAGE: type_name = "IMAGE"; break;
+                    default: type_name = "UNKNOWN"; break;
+                    }
+
+                    std::string info = std::format("[{}{}] {} ({}, id={})",
+                                                   vis, lock, node->name, type_name, node->id);
+
+                    if (node->gaussian_count > 0) {
+                        info += std::format(" [{} splats]", node->gaussian_count);
+                    }
+
+                    nb::print(nb::str("{}{}").format(indent, info));
+
+                    for (int32_t child_id : node->children) {
+                        auto it = node_map.find(child_id);
+                        if (it != node_map.end()) {
+                            print_node(it->second, depth + 1);
+                        }
+                    }
+                };
+
+            // Print root nodes
+            for (const auto* node : nodes) {
+                if (node->parent_id == lfs::vis::NULL_NODE) {
+                    print_node(node, 0);
+                }
+            }
+        },
+        "Print the scene graph tree");
+
+    // Quick help
+    m.def(
+        "help", []() {
+            nb::print(R"(LichtFeld Python API
+
+Scene:
+  lf.get_scene()      - Get the scene object (None if unavailable)
+  lf.list_scene()     - Print scene graph tree
+  lf.train_cameras()  - Get training camera dataset
+  lf.val_cameras()    - Get validation camera dataset
+
+Training:
+  lf.context()        - Get training context (iteration, loss, etc.)
+  lf.gaussians()      - Get gaussians info (count, sh_degree)
+  lf.session()        - Get session for pause/resume/optimizer control
+
+Hooks (decorators):
+  @lf.on_training_start
+  @lf.on_iteration_start
+  @lf.on_post_step
+  @lf.on_pre_optimizer_step
+  @lf.on_training_end
+
+Utilities:
+  lf.run("script.py") - Execute a Python script file
+  lf.help()           - Show this help
+
+Example:
+  scene = lf.get_scene()
+  for node in scene.get_nodes():
+      print(node.name, node.type)
+)");
+        },
+        "Show help for lichtfeld module");
 }

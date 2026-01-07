@@ -15,11 +15,23 @@
 #include <filesystem>
 #include <mutex>
 
+#include "core/services.hpp"
 #include "python/runner.hpp"
+#include "scene/scene_manager.hpp"
 
 namespace {
     std::once_flag g_console_init_once;
     std::once_flag g_syspath_init_once;
+    std::once_flag g_scene_provider_once;
+
+    void setup_scene_provider() {
+        std::call_once(g_scene_provider_once, [] {
+            lfs::python::set_scene_provider([]() -> lfs::vis::Scene* {
+                auto* sm = lfs::vis::services().sceneOrNull();
+                return sm ? &sm->getScene() : nullptr;
+            });
+        });
+    }
 
     void setup_sys_path() {
         std::call_once(g_syspath_init_once, [] {
@@ -161,6 +173,7 @@ namespace lfs::vis::gui::panels {
         lfs::python::install_output_redirect();
         setup_sys_path();
         setup_console_output_capture();
+        setup_scene_provider();
 
         auto& state = PythonConsoleState::getInstance();
         const auto& t = theme();
