@@ -108,6 +108,7 @@ set(TEST_FILES
     test_tensor_basic.cpp
     test_tensor_ops.cpp
     test_tensor_memory.cpp
+    test_stream_race_conditions.cpp
     test_tensor_reduction.cpp
     test_isolation.cpp
     test_tensor_views.cpp
