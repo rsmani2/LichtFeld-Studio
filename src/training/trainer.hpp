@@ -93,9 +93,9 @@ namespace lfs::training {
         const lfs::core::param::TrainingParameters& getParams() const { return params_; }
         void setParams(const lfs::core::param::TrainingParameters& params) { params_ = params; }
 
-        // Checkpoint methods
         std::expected<void, std::string> save_checkpoint(int iteration);
         std::expected<int, std::string> load_checkpoint(const std::filesystem::path& checkpoint_path);
+        void save_final_ply_and_checkpoint(int iteration);
 
         // Orderly shutdown - GPU sync, wait for async saves, release resources. Idempotent.
         void shutdown();
@@ -198,7 +198,6 @@ namespace lfs::training {
 
         lfs::core::Tensor background_{};
         lfs::core::Tensor bg_mix_buffer_;
-        float* bg_rgb_pinned_ = nullptr; // Pinned host buffer for async copy
         std::unique_ptr<TrainingProgress> progress_;
         size_t train_dataset_size_ = 0;
 
@@ -240,8 +239,5 @@ namespace lfs::training {
         std::function<void()> callback_;
         std::atomic<bool> callback_busy_{false};
         cudaStream_t callback_stream_ = nullptr;
-
-        // GPU-side synchronization event (reusable, avoids CPU blocking)
-        cudaEvent_t img_sync_event_ = nullptr;
     };
 } // namespace lfs::training

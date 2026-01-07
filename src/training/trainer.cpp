@@ -14,6 +14,7 @@
 #include "core/splat_data_transform.hpp"
 #include "core/tensor/internal/memory_pool.hpp"
 #include "io/cache_image_loader.hpp"
+#include "io/exporter.hpp"
 #include "io/filesystem_utils.hpp"
 #include "lfs/kernels/ssim.cuh"
 #include "losses/losses.hpp"
@@ -306,9 +307,6 @@ namespace lfs::training {
 
         cudaStreamCreateWithFlags(&callback_stream_, cudaStreamNonBlocking);
 
-        // Create reusable event for GPU-side sync (avoids CPU blocking)
-        cudaEventCreateWithFlags(&img_sync_event_, cudaEventDisableTiming);
-
         LOG_DEBUG("Trainer constructed with {} cameras", base_dataset_->get_cameras().size());
     }
 
@@ -323,9 +321,6 @@ namespace lfs::training {
         }
 
         cudaStreamCreateWithFlags(&callback_stream_, cudaStreamNonBlocking);
-
-        // Create reusable event for GPU-side sync (avoids CPU blocking)
-        cudaEventCreateWithFlags(&img_sync_event_, cudaEventDisableTiming);
 
         // Datasets will be created in initialize() from Scene cameras
         if (!scene.getTrainCameras()) {
@@ -528,12 +523,6 @@ namespace lfs::training {
         }
         callback_busy_ = false;
 
-        // Destroy GPU sync event
-        if (img_sync_event_) {
-            cudaEventDestroy(img_sync_event_);
-            img_sync_event_ = nullptr;
-        }
-
         cudaDeviceSynchronize();
 
         strategy_.reset();
@@ -541,12 +530,6 @@ namespace lfs::training {
         sparsity_optimizer_.reset();
         evaluator_.reset();
         progress_.reset();
-
-        // Free pinned buffer
-        if (bg_rgb_pinned_ != nullptr) {
-            cudaFreeHost(bg_rgb_pinned_);
-            bg_rgb_pinned_ = nullptr;
-        }
         train_dataset_.reset();
         val_dataset_.reset();
 
@@ -584,14 +567,14 @@ namespace lfs::training {
             LOG_INFO("Training resumed at iteration {}", iter);
         }
 
-        // Handle save request - save a real checkpoint (not just PLY)
         if (save_requested_.exchange(false)) {
-            LOG_INFO("Saving checkpoint at iteration {}...", iter);
+            LOG_INFO("Saving checkpoint and PLY at iteration {}...", iter);
+            save_ply(params_.dataset.output_path, iter, /*join=*/false);
             auto result = save_checkpoint(iter);
             if (result) {
                 auto checkpoint_path = params_.dataset.output_path / "checkpoints" /
                                        std::format("checkpoint_{}.resume", iter);
-                LOG_INFO("Checkpoint saved to {}", lfs::core::path_to_utf8(checkpoint_path));
+                LOG_INFO("Checkpoint and PLY saved to {}", lfs::core::path_to_utf8(params_.dataset.output_path));
             } else {
                 LOG_ERROR("Failed to save checkpoint: {}", result.error());
             }
@@ -649,24 +632,21 @@ namespace lfs::training {
             return background_;
         }
 
-        // Lazy allocate pinned + GPU buffer
-        if (bg_rgb_pinned_ == nullptr)
-            cudaHostAlloc(&bg_rgb_pinned_, 3 * sizeof(float), cudaHostAllocDefault);
-        if (bg_mix_buffer_.is_empty())
-            bg_mix_buffer_ = lfs::core::Tensor::empty({3}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
-
-        // Sine-based RGB with prime periods
+        // Sine-based RGB with prime periods for color diversity
         const float pr = TWO_PI * static_cast<float>(iter % BG_PERIOD_R) / BG_PERIOD_R;
         const float pg = TWO_PI * static_cast<float>(iter % BG_PERIOD_G) / BG_PERIOD_G;
         const float pb = TWO_PI * static_cast<float>(iter % BG_PERIOD_B) / BG_PERIOD_B;
 
-        bg_rgb_pinned_[0] = std::clamp(0.5f * (1.0f + std::sin(pr)) * w, CLAMP_EPS, 1.0f - CLAMP_EPS);
-        bg_rgb_pinned_[1] = std::clamp(0.5f * (1.0f + std::sin(pg + PHASE_OFFSET_G)) * w, CLAMP_EPS, 1.0f - CLAMP_EPS);
-        bg_rgb_pinned_[2] = std::clamp(0.5f * (1.0f + std::sin(pb + PHASE_OFFSET_B)) * w, CLAMP_EPS, 1.0f - CLAMP_EPS);
+        const float result[3] = {
+            std::clamp(0.5f * (1.0f + std::sin(pr)) * w, CLAMP_EPS, 1.0f - CLAMP_EPS),
+            std::clamp(0.5f * (1.0f + std::sin(pg + PHASE_OFFSET_G)) * w, CLAMP_EPS, 1.0f - CLAMP_EPS),
+            std::clamp(0.5f * (1.0f + std::sin(pb + PHASE_OFFSET_B)) * w, CLAMP_EPS, 1.0f - CLAMP_EPS)};
 
-        // Async copy from persistent pinned buffer
-        cudaMemcpyAsync(bg_mix_buffer_.ptr<float>(), bg_rgb_pinned_, 3 * sizeof(float),
-                        cudaMemcpyHostToDevice, bg_mix_buffer_.stream());
+        if (bg_mix_buffer_.is_empty()) {
+            bg_mix_buffer_ = lfs::core::Tensor::empty({3}, lfs::core::Device::CUDA, lfs::core::DataType::Float32);
+        }
+
+        cudaMemcpyAsync(bg_mix_buffer_.ptr<float>(), result, sizeof(result), cudaMemcpyHostToDevice, nullptr);
         return bg_mix_buffer_;
     }
 
@@ -1219,24 +1199,8 @@ namespace lfs::training {
                 lfs::core::Camera* cam = example.data.camera;
                 lfs::core::Tensor gt_image = std::move(example.data.image);
 
-                // GPU-side sync: make default stream wait for image loading stream
-                // This avoids CPU blocking - the GPU handles synchronization
-                if (cudaStream_t img_stream = gt_image.stream(); img_stream != nullptr) {
-                    cudaEventRecord(img_sync_event_, img_stream);
-                    cudaStreamWaitEvent(nullptr, img_sync_event_, 0); // default stream waits
-                }
-
                 // Store pipelined mask for use in train_step
                 pipelined_mask_ = example.mask.has_value() ? std::move(*example.mask) : lfs::core::Tensor();
-
-                // GPU-side sync for mask stream if different from image stream
-                if (pipelined_mask_.is_valid()) {
-                    if (cudaStream_t mask_stream = pipelined_mask_.stream();
-                        mask_stream != nullptr && mask_stream != gt_image.stream()) {
-                        cudaEventRecord(img_sync_event_, mask_stream);
-                        cudaStreamWaitEvent(nullptr, img_sync_event_, 0);
-                    }
-                }
 
                 auto step_result = train_step(iter, cam, gt_image, render_mode, stop_token);
                 if (!step_result) {
@@ -1352,9 +1316,28 @@ namespace lfs::training {
         }
     }
 
-    void Trainer::save_ply(const std::filesystem::path& save_path, int iter_num, bool join_threads) {
-        // Save PLY format - join_threads controls sync vs async
-        lfs::core::save_ply(strategy_->get_model(), save_path, iter_num, join_threads);
+    void Trainer::save_ply(const std::filesystem::path& save_path, const int iter_num, const bool join_threads) {
+        const lfs::io::PlySaveOptions ply_options{
+            .output_path = save_path / ("splat_" + std::to_string(iter_num) + ".ply"),
+            .binary = true,
+            .async = !join_threads};
+
+        const auto ply_result = lfs::io::save_ply(strategy_->get_model(), ply_options);
+        if (!ply_result) {
+            if (ply_result.error().code == lfs::io::ErrorCode::INSUFFICIENT_DISK_SPACE) {
+                lfs::core::events::state::DiskSpaceSaveFailed{
+                    .iteration = iter_num,
+                    .path = ply_options.output_path,
+                    .error = ply_result.error().message,
+                    .required_bytes = ply_result.error().required_bytes,
+                    .available_bytes = ply_result.error().available_bytes,
+                    .is_disk_space_error = true,
+                    .is_checkpoint = false}
+                    .emit();
+            }
+            LOG_WARN("Failed to save PLY: {}", ply_result.error().message);
+            return; // Don't save checkpoint if PLY failed
+        }
 
         // Save checkpoint alongside PLY for training resumption
         auto ckpt_result = lfs::training::save_checkpoint(
@@ -1374,6 +1357,10 @@ namespace lfs::training {
         return lfs::training::save_checkpoint(
             params_.dataset.output_path, iteration, *strategy_, params_,
             bilateral_grid_.get());
+    }
+
+    void Trainer::save_final_ply_and_checkpoint(const int iteration) {
+        save_ply(params_.dataset.output_path, iteration, /*join=*/true);
     }
 
     std::expected<int, std::string> Trainer::load_checkpoint(const std::filesystem::path& checkpoint_path) {
