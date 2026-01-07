@@ -926,31 +926,34 @@ namespace lfs::training::mcmc {
 
         cudaStream_t cuda_stream = stream ? static_cast<cudaStream_t>(stream) : nullptr;
 
-        // Compute sum using custom reduction kernel (ZERO Thrust allocations!)
-        int threads = 256;
-        int blocks = (n_alive + threads - 1) / threads;
-        size_t shared_mem_size = threads * sizeof(float);
+        // Block-level reduction
+        constexpr int THREADS = 256;
+        const int blocks = (n_alive + THREADS - 1) / THREADS;
+        const size_t shared_mem_size = THREADS * sizeof(float);
 
-        // Allocate a small temp buffer for partial sums (only O(num_blocks) floats)
         float* d_partial_sums = nullptr;
         cudaMallocAsync(&d_partial_sums, blocks * sizeof(float), cuda_stream);
 
-        // Launch block-level reduction
-        reduce_opacities_kernel<<<blocks, threads, shared_mem_size, cuda_stream>>>(
+        reduce_opacities_kernel<<<blocks, THREADS, shared_mem_size, cuda_stream>>>(
             opacities, alive_indices, n_alive, d_partial_sums, N);
 
-        // Final reduction on CPU (small array)
-        std::vector<float> h_partial_sums(blocks);
-        cudaMemcpyAsync(h_partial_sums.data(), d_partial_sums, blocks * sizeof(float), cudaMemcpyDeviceToHost, cuda_stream);
-        cudaStreamSynchronize(cuda_stream); // Wait for copy to complete
+        // Final reduction with CUB on GPU
+        float* d_prob_sum = nullptr;
+        cudaMallocAsync(&d_prob_sum, sizeof(float), cuda_stream);
+
+        void* d_reduce_temp = nullptr;
+        size_t reduce_temp_bytes = 0;
+        cub::DeviceReduce::Sum(d_reduce_temp, reduce_temp_bytes, d_partial_sums, d_prob_sum, blocks, cuda_stream);
+        cudaMallocAsync(&d_reduce_temp, reduce_temp_bytes, cuda_stream);
+        cub::DeviceReduce::Sum(d_reduce_temp, reduce_temp_bytes, d_partial_sums, d_prob_sum, blocks, cuda_stream);
+        cudaFreeAsync(d_reduce_temp, cuda_stream);
 
         float prob_sum = 0.0f;
-        for (int i = 0; i < blocks; ++i) {
-            prob_sum += h_partial_sums[i];
-        }
+        cudaMemcpyAsync(&prob_sum, d_prob_sum, sizeof(float), cudaMemcpyDeviceToHost, cuda_stream);
+        cudaStreamSynchronize(cuda_stream);
 
-        // Free temp buffer
         cudaFreeAsync(d_partial_sums, cuda_stream);
+        cudaFreeAsync(d_prob_sum, cuda_stream);
 
         if (prob_sum <= 0.0f) {
             // All zero probabilities - just sample uniformly
