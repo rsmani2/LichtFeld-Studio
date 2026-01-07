@@ -96,11 +96,11 @@ namespace lfs::core {
             if (bucket_idx >= NUM_BUCKETS)
                 return false;
 
-            // Only cache memory from the default stream. Non-default streams may be destroyed
-            // during shutdown causing cudaStreamSynchronize to crash. Memory from non-default
-            // streams will be freed directly instead of cached.
-            if (stream != nullptr)
-                return false;
+            // For non-default streams, sync to ensure memory operations are complete
+            // before caching. This allows memory reuse across streams.
+            if (stream != nullptr) {
+                cudaStreamSynchronize(stream);
+            }
 
             std::lock_guard<std::mutex> lock(buckets_[bucket_idx].mutex);
             if (buckets_[bucket_idx].cache.size() >= CACHE_SIZE_PER_BUCKET) {
