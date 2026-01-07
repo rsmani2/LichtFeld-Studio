@@ -5,12 +5,12 @@
 #include "buffer_utils.h"
 #include "forward.h"
 #include "helper_math.h"
-#include "kernels_forward.cuh"
 #include "rasterization_config.h"
 #include "utils.h"
 #include <cub/cub.cuh>
 #include <functional>
 
+// Selection colors (__constant__ must be defined before kernels_forward.cuh)
 namespace lfs::rendering::config {
     __constant__ float3 SELECTION_GROUP_COLORS[MAX_SELECTION_GROUPS] = {
         {0.0f, 0.604f, 0.733f}, // 0: center marker (cyan)
@@ -36,6 +36,8 @@ namespace lfs::rendering::config {
         cudaMemcpyToSymbol(SELECTION_COLOR_PREVIEW, &color, sizeof(float3));
     }
 } // namespace lfs::rendering::config
+
+#include "kernels_forward.cuh"
 
 // Initialize mean2d buffer with invalid marker values
 __global__ void init_mean2d_kernel(float2* data, int n) {
@@ -339,7 +341,8 @@ void lfs::rendering::forward(
     bool desaturate_unselected,
     float selection_flash_intensity,
     bool orthographic,
-    float ortho_scale) {
+    float ortho_scale,
+    bool mip_filter) {
 
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
     const dim3 block(config::tile_width, config::tile_height, 1);
@@ -435,7 +438,8 @@ void lfs::rendering::forward(
         num_selected_nodes,
         desaturate_unselected,
         orthographic,
-        ortho_scale);
+        ortho_scale,
+        mip_filter);
     CHECK_CUDA(config::debug, "preprocess")
 
     // Copy screen positions if requested (for brush tool selection)

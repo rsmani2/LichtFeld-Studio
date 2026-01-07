@@ -10,11 +10,15 @@
 #include "gui/gui_manager.hpp"
 #include "command/command_history.hpp"
 #include "command/commands/sequencer_command.hpp"
+#include "core/cuda_version.hpp"
 #include "core/image_io.hpp"
 #include "core/logger.hpp"
+#include "core/path_utils.hpp"
 #include "core/sogs.hpp"
 #include "core/splat_data_export.hpp"
+#include "gui/dpi_scale.hpp"
 #include "gui/html_viewer_export.hpp"
+#include "gui/localization_manager.hpp"
 #include "gui/panels/main_panel.hpp"
 #include "gui/panels/scene_panel.hpp"
 #include "gui/panels/sequencer_settings_panel.hpp"
@@ -23,17 +27,22 @@
 #include "gui/panels/training_panel.hpp"
 #include "gui/panels/python_console_panel.hpp"
 #include "gui/panels/python_scripts_panel.hpp"
+#include "gui/string_keys.hpp"
 #include "gui/ui_widgets.hpp"
 #include "gui/utils/windows_utils.hpp"
 #include "gui/windows/file_browser.hpp"
 #include "io/exporter.hpp"
 #include "io/video/video_encoder.hpp"
+#include "io/loader.hpp"
 
 #include "input/input_controller.hpp"
 #include "internal/resource_paths.hpp"
 #include "tools/align_tool.hpp"
 
+#include "core/data_loading_service.hpp"
 #include "core/events.hpp"
+#include "core/parameters.hpp"
+#include "core/services.hpp"
 #include "rendering/rendering.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "scene/scene.hpp"
@@ -62,8 +71,17 @@ namespace lfs::vis::gui {
     using ToolType = lfs::vis::ToolType;
     using ExportFormat = lfs::core::ExportFormat;
 
-    // Gizmo axis/plane visibility threshold (near-zero to always show)
+    // Gizmo axis/plane visibility threshold
     constexpr float GIZMO_AXIS_LIMIT = 0.0001f;
+
+    // Returns display name for dataset type
+    [[nodiscard]] const char* getDatasetTypeName(const std::filesystem::path& path) {
+        switch (lfs::io::Loader::getDatasetType(path)) {
+        case lfs::io::DatasetType::COLMAP: return "COLMAP";
+        case lfs::io::DatasetType::Transforms: return "NeRF/Blender";
+        default: return "Dataset";
+        }
+    }
 
     // Truncate SH to target degree. shN has (d+1)²-1 coefficients for degree d.
     void truncateSHDegree(lfs::core::SplatData& splat, const int target_degree) {
@@ -99,6 +117,9 @@ namespace lfs::vis::gui {
         notification_popup_ = std::make_unique<NotificationPopup>();
         save_directory_popup_ = std::make_unique<SaveDirectoryPopup>();
         sequencer_panel_ = std::make_unique<SequencerPanel>(sequencer_controller_);
+        resume_checkpoint_popup_ = std::make_unique<ResumeCheckpointPopup>();
+        exit_confirmation_popup_ = std::make_unique<ExitConfirmationPopup>();
+        disk_space_error_dialog_ = std::make_unique<DiskSpaceErrorDialog>();
 
         // Initialize window states
         window_states_["file_browser"] = false;
@@ -117,6 +138,22 @@ namespace lfs::vis::gui {
         viewport_has_focus_ = false;
 
         setupEventHandlers();
+        checkCudaVersionAndNotify();
+    }
+
+    void GuiManager::checkCudaVersionAndNotify() {
+        using namespace lfs::core;
+        const auto info = check_cuda_version();
+        if (!info.query_failed && !info.supported) {
+            constexpr int MIN_MAJOR = MIN_CUDA_VERSION / 1000;
+            constexpr int MIN_MINOR = (MIN_CUDA_VERSION % 1000) / 10;
+            events::state::CudaVersionUnsupported{
+                .major = info.major,
+                .minor = info.minor,
+                .min_major = MIN_MAJOR,
+                .min_minor = MIN_MINOR}
+                .emit();
+        }
     }
 
     GuiManager::~GuiManager() {
@@ -145,8 +182,40 @@ namespace lfs::vis::gui {
             }
         });
 
+        menu_bar_->setOnImportCheckpoint([this]() {
+            const auto path = OpenCheckpointFileDialog();
+            if (!path.empty()) {
+                resume_checkpoint_popup_->show(path);
+            }
+        });
+
+        menu_bar_->setOnImportConfig([]() {
+            const auto path = OpenJsonFileDialog();
+            if (!path.empty()) {
+                lfs::core::events::cmd::LoadConfigFile{.path = path}.emit();
+            }
+        });
+
         menu_bar_->setOnExport([this]() {
             window_states_["export_dialog"] = true;
+        });
+
+        menu_bar_->setOnExportConfig([]() {
+            const auto* const param_manager = services().paramsOrNull();
+            if (!param_manager)
+                return;
+
+            const auto path = SaveJsonFileDialog("training_config");
+            if (path.empty())
+                return;
+
+            lfs::core::param::TrainingParameters params;
+            params.dataset = param_manager->getDatasetConfig();
+            params.optimization = param_manager->getActiveParams();
+
+            if (const auto result = lfs::core::param::save_training_parameters_to_json(params, path); !result) {
+                LOG_ERROR("Failed to export config: {}", result.error());
+            }
         });
 
         menu_bar_->setOnShowPythonConsole([this]() {
@@ -218,7 +287,7 @@ namespace lfs::vis::gui {
         });
 
         menu_bar_->setOnExit([this]() {
-            glfwSetWindowShouldClose(viewer_->getWindow(), true);
+            requestExitConfirmation();
         });
 
         menu_bar_->setOnNewProject([this]() {
@@ -247,11 +316,24 @@ namespace lfs::vis::gui {
         ImGui_ImplGlfw_InitForOpenGL(viewer_->getWindow(), true);
         ImGui_ImplOpenGL3_Init("#version 430");
 
+        // Initialize localization system
+        auto& loc = lichtfeld::LocalizationManager::getInstance();
+        const std::string locale_path = lfs::core::path_to_utf8(lfs::core::getLocalesDir());
+        if (!loc.initialize(locale_path)) {
+            LOG_WARN("Failed to initialize localization system, using default strings");
+        } else {
+            LOG_INFO("Localization initialized with language: {}", loc.getCurrentLanguageName());
+        }
+
         float xscale, yscale;
         glfwGetWindowContentScale(viewer_->getWindow(), &xscale, &yscale);
 
-        // some clamping / safety net for weird DPI values
-        xscale = std::clamp(xscale, 1.0f, 2.0f);
+        // Clamping / safety net for weird DPI values
+        // Support up to 4.0x scale for high-DPI displays (e.g., 6K monitors)
+        xscale = std::clamp(xscale, 1.0f, 4.0f);
+
+        // Store DPI scale for use by UI components
+        setDpiScale(xscale);
 
         // Set application icon - use the resource path helper
         try {
@@ -273,21 +355,58 @@ namespace lfs::vis::gui {
         try {
             const auto regular_path = lfs::vis::getAssetPath("fonts/" + t.fonts.regular_path);
             const auto bold_path = lfs::vis::getAssetPath("fonts/" + t.fonts.bold_path);
+            const auto japanese_path = lfs::vis::getAssetPath("fonts/NotoSansJP-Regular.ttf");
+            const auto korean_path = lfs::vis::getAssetPath("fonts/NotoSansKR-Regular.ttf");
 
-            constexpr size_t MIN_FONT_FILE_SIZE = 100;
-            const auto load_font = [&](const std::filesystem::path& path, const float size) -> ImFont* {
-                if (!std::filesystem::exists(path) || std::filesystem::file_size(path) < MIN_FONT_FILE_SIZE) {
-                    LOG_WARN("Font file invalid: {}", path.string());
-                    return nullptr;
-                }
-                return io.Fonts->AddFontFromFileTTF(path.string().c_str(), size);
+            // Helper to check if font file is valid
+            const auto is_font_valid = [](const std::filesystem::path& path) -> bool {
+                constexpr size_t MIN_FONT_FILE_SIZE = 100;
+                return std::filesystem::exists(path) && std::filesystem::file_size(path) >= MIN_FONT_FILE_SIZE;
             };
 
-            font_regular_ = load_font(regular_path, t.fonts.base_size * xscale);
-            font_bold_ = load_font(bold_path, t.fonts.base_size * xscale);
-            font_heading_ = load_font(bold_path, t.fonts.heading_size * xscale);
-            font_small_ = load_font(regular_path, t.fonts.small_size * xscale);
-            font_section_ = load_font(bold_path, t.fonts.section_size * xscale);
+            // Load font with optional CJK glyph merging (Japanese + Korean)
+            const auto load_font_with_cjk =
+                [&](const std::filesystem::path& path, const float size) -> ImFont* {
+                if (!is_font_valid(path)) {
+                    LOG_WARN("Font file invalid: {}", lfs::core::path_to_utf8(path));
+                    return nullptr;
+                }
+
+                // Load base font (Latin characters)
+                const std::string path_utf8 = lfs::core::path_to_utf8(path);
+                ImFont* font = io.Fonts->AddFontFromFileTTF(path_utf8.c_str(), size);
+                if (!font)
+                    return nullptr;
+
+                // Merge Japanese + Chinese glyphs if available (NotoSansJP contains both)
+                if (is_font_valid(japanese_path)) {
+                    ImFontConfig config;
+                    config.MergeMode = true;
+                    const std::string japanese_path_utf8 = lfs::core::path_to_utf8(japanese_path);
+                    io.Fonts->AddFontFromFileTTF(japanese_path_utf8.c_str(), size, &config,
+                                                 io.Fonts->GetGlyphRangesJapanese());
+                    // Chinese glyphs are also in NotoSansJP, just need to load the ranges
+                    io.Fonts->AddFontFromFileTTF(japanese_path_utf8.c_str(), size, &config,
+                                                 io.Fonts->GetGlyphRangesChineseFull());
+                }
+
+                // Merge Korean glyphs if available
+                if (is_font_valid(korean_path)) {
+                    ImFontConfig config;
+                    config.MergeMode = true;
+                    const std::string korean_path_utf8 = lfs::core::path_to_utf8(korean_path);
+                    io.Fonts->AddFontFromFileTTF(korean_path_utf8.c_str(), size, &config,
+                                                 io.Fonts->GetGlyphRangesKorean());
+                }
+
+                return font;
+            };
+
+            font_regular_ = load_font_with_cjk(regular_path, t.fonts.base_size * xscale);
+            font_bold_ = load_font_with_cjk(bold_path, t.fonts.base_size * xscale);
+            font_heading_ = load_font_with_cjk(bold_path, t.fonts.heading_size * xscale);
+            font_small_ = load_font_with_cjk(regular_path, t.fonts.small_size * xscale);
+            font_section_ = load_font_with_cjk(bold_path, t.fonts.section_size * xscale);
 
             const bool all_loaded = font_regular_ && font_bold_ && font_heading_ && font_small_ && font_section_;
             if (!all_loaded) {
@@ -305,6 +424,12 @@ namespace lfs::vis::gui {
                     font_section_ = fallback;
             } else {
                 LOG_INFO("Loaded fonts: {} and {}", t.fonts.regular_path, t.fonts.bold_path);
+                if (is_font_valid(japanese_path)) {
+                    LOG_INFO("Japanese + Chinese font support enabled");
+                }
+                if (is_font_valid(korean_path)) {
+                    LOG_INFO("Korean font support enabled");
+                }
             }
         } catch (const std::exception& e) {
             LOG_ERROR("Font loading failed: {}", e.what());
@@ -312,16 +437,30 @@ namespace lfs::vis::gui {
             font_regular_ = font_bold_ = font_heading_ = font_small_ = font_section_ = fallback;
         }
 
-        save_directory_popup_->setOnConfirm([this](const std::filesystem::path& dataset_path,
-                                                   const std::filesystem::path& output_path) {
+        save_directory_popup_->setOnConfirm([this](const DatasetLoadParams& load_params) {
             if (const auto result = services().params().ensureLoaded(); !result) {
                 LOG_ERROR("Failed to load parameter files: {}", result.error());
                 return;
             }
             services().params().resetToDefaults();
-            const auto params = services().params().createForDataset(dataset_path, output_path);
+            auto params = services().params().createForDataset(load_params.dataset_path, load_params.output_path);
+            if (load_params.init_path) {
+                params.init_path = lfs::core::path_to_utf8(*load_params.init_path);
+            }
             viewer_->setParameters(params);
-            lfs::core::events::cmd::LoadFile{.path = dataset_path, .is_dataset = true}.emit();
+            lfs::core::events::cmd::LoadFile{.path = load_params.dataset_path, .is_dataset = true}.emit();
+        });
+
+        resume_checkpoint_popup_->setOnConfirm([](const CheckpointLoadParams& params) {
+            lfs::core::events::cmd::LoadCheckpointForTraining{
+                .checkpoint_path = params.checkpoint_path,
+                .dataset_path = params.dataset_path,
+                .output_path = params.output_path}
+                .emit();
+        });
+
+        lfs::core::events::cmd::ShowResumeCheckpointPopup::when([this](const auto& e) {
+            resume_checkpoint_popup_->show(e.checkpoint_path);
         });
 
         setFileSelectedCallback([this](const std::filesystem::path& path, const bool is_dataset) {
@@ -343,16 +482,53 @@ namespace lfs::vis::gui {
 
         initMenuBar();
         menu_bar_->setFonts({font_regular_, font_bold_, font_heading_, font_small_, font_section_});
-        drag_drop_.init(viewer_->getWindow());
+
+        // Load startup overlay textures
+        const auto loadOverlayTexture = [](const std::filesystem::path& path, unsigned int& tex, int& w, int& h) {
+            try {
+                const auto [data, width, height, channels] = lfs::core::load_image_with_alpha(path);
+                glGenTextures(1, &tex);
+                glBindTexture(GL_TEXTURE_2D, tex);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0,
+                             channels == 4 ? GL_RGBA : GL_RGB, GL_UNSIGNED_BYTE, data);
+                lfs::core::free_image(data);
+                glBindTexture(GL_TEXTURE_2D, 0);
+                w = width;
+                h = height;
+            } catch (const std::exception& e) {
+                LOG_WARN("Failed to load overlay texture {}: {}", lfs::core::path_to_utf8(path), e.what());
+            }
+        };
+        loadOverlayTexture(lfs::vis::getAssetPath("lichtfeld-splash-logo.png"),
+                           startup_logo_texture_, startup_logo_width_, startup_logo_height_);
+        loadOverlayTexture(lfs::vis::getAssetPath("core11-logo.png"),
+                           startup_core11_texture_, startup_core11_width_, startup_core11_height_);
+
+        if (!drag_drop_.init(viewer_->getWindow())) {
+            LOG_WARN("Native drag-drop initialization failed, falling back to GLFW");
+        }
         drag_drop_.setFileDropCallback([this](const std::vector<std::string>& paths) {
-            if (auto* const ic = viewer_->getInputController())
+            LOG_INFO("Files dropped via native drag-drop: {} file(s)", paths.size());
+            if (auto* const ic = viewer_->getInputController()) {
                 ic->handleFileDrop(paths);
+            } else {
+                LOG_ERROR("InputController not available for file drop handling");
+            }
         });
     }
 
     void GuiManager::shutdown() {
         drag_drop_.shutdown();
         panels::ShutdownGizmoToolbar(gizmo_toolbar_state_);
+
+        if (startup_logo_texture_)
+            glDeleteTextures(1, &startup_logo_texture_);
+        if (startup_core11_texture_)
+            glDeleteTextures(1, &startup_core11_texture_);
 
         if (ImGui::GetCurrentContext()) {
             ImGui_ImplOpenGL3_Shutdown();
@@ -374,6 +550,9 @@ namespace lfs::vis::gui {
         bool mouse_in_viewport = isPositionInViewport(mouse_pos.x, mouse_pos.y);
 
         ImGui::NewFrame();
+
+        // Check for async import completion (must happen on main thread)
+        checkAsyncImportCompletion();
 
         // Hot-reload themes (check once per second)
         {
@@ -515,13 +694,14 @@ namespace lfs::vis::gui {
 
             if (ImGui::Begin("##RightPanel", nullptr, PANEL_FLAGS)) {
                 const float avail_h = ImGui::GetContentRegionAvail().y;
-                constexpr float SPLITTER_H = 6.0f, MIN_H = 80.0f;
+                const float scale = getDpiScale();
+                const float SPLITTER_H = 6.0f * scale, MIN_H = 80.0f * scale;
 
                 // Scene panel
                 const float scene_h = std::max(MIN_H, avail_h * scene_panel_ratio_ - SPLITTER_H * 0.5f);
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, {0, 0, 0, 0});
                 if (ImGui::BeginChild("##ScenePanel", {0, scene_h}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
-                    widgets::SectionHeader("SCENE", ctx.fonts);
+                    widgets::SectionHeader(LOC(lichtfeld::Strings::Window::SCENE), ctx.fonts);
                     scene_panel_->renderContent(&ctx);
                 }
                 ImGui::EndChild();
@@ -552,32 +732,40 @@ namespace lfs::vis::gui {
 
                 // Rendering panel
                 ImGui::PushStyleColor(ImGuiCol_ChildBg, {0, 0, 0, 0});
-                if (ImGui::BeginChild("##RenderingPanel", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
-                    if (viewer_->getTrainer()) {
-                        if (ImGui::BeginTabBar("##BottomTabs")) {
-                            if (ImGui::BeginTabItem("Rendering")) {
+                if (viewer_->getTrainer()) {
+                    if (ImGui::BeginTabBar("##BottomTabs")) {
+                        if (ImGui::BeginTabItem(LOC(lichtfeld::Strings::Window::RENDERING))) {
+                            if (ImGui::BeginChild("##RenderingPanel", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
                                 draw_rendering();
-                                ImGui::EndTabItem();
                             }
-                            const ImGuiTabItemFlags flags = focus_training_panel_
-                                                                ? ImGuiTabItemFlags_SetSelected
-                                                                : ImGuiTabItemFlags_None;
-                            if (focus_training_panel_)
-                                focus_training_panel_ = false;
-                            if (ImGui::BeginTabItem("Training", nullptr, flags)) {
-                                panels::DrawTrainingControls(ctx);
+                            ImGui::EndChild();
+                            ImGui::EndTabItem();
+                        }
+                        const ImGuiTabItemFlags flags = focus_training_panel_
+                                                            ? ImGuiTabItemFlags_SetSelected
+                                                            : ImGuiTabItemFlags_None;
+                        if (focus_training_panel_)
+                            focus_training_panel_ = false;
+                        if (ImGui::BeginTabItem(LOC(lichtfeld::Strings::Window::TRAINING), nullptr, flags)) {
+                            panels::DrawTrainingControls(ctx);
+                            if (ImGui::BeginChild("##TrainingPanel", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
+                                panels::DrawTrainingParams(ctx);
+                                panels::DrawTrainingStatus(ctx);
                                 ImGui::Separator();
                                 panels::DrawProgressInfo(ctx);
-                                ImGui::EndTabItem();
                             }
-                            ImGui::EndTabBar();
+                            ImGui::EndChild();
+                            ImGui::EndTabItem();
                         }
-                    } else {
-                        widgets::SectionHeader("RENDERING", ctx.fonts);
+                        ImGui::EndTabBar();
+                    }
+                } else {
+                    widgets::SectionHeader(LOC(lichtfeld::Strings::Window::RENDERING), ctx.fonts);
+                    if (ImGui::BeginChild("##RenderingPanel", {0, 0}, ImGuiChildFlags_None, ImGuiWindowFlags_NoBackground)) {
                         draw_rendering();
                     }
+                    ImGui::EndChild();
                 }
-                ImGui::EndChild();
                 ImGui::PopStyleColor();
             }
             ImGui::End();
@@ -817,7 +1005,7 @@ namespace lfs::vis::gui {
             const auto& t = theme();
             const float r = t.viewport.corner_radius;
             if (r > 0.0f) {
-                auto* const dl = ImGui::GetForegroundDrawList();
+                auto* const dl = ImGui::GetBackgroundDrawList();
                 const ImU32 bg = toU32(t.palette.background);
                 const float x1 = viewport_pos_.x, y1 = viewport_pos_.y;
                 const float x2 = x1 + viewport_size_.x, y2 = y1 + viewport_size_.y;
@@ -950,14 +1138,20 @@ namespace lfs::vis::gui {
         renderExportOverlay();
         renderVideoExportOverlay();
 
+        // Render import progress overlay
+        renderImportOverlay();
+
         // Render empty state welcome screen when no content loaded
         renderEmptyStateOverlay();
 
-        // Render drag-drop overlay when files are being dragged over the window
         renderDragDropOverlay();
+        renderStartupOverlay();
 
         if (save_directory_popup_) {
             save_directory_popup_->render(viewport_pos_, viewport_size_);
+        }
+        if (resume_checkpoint_popup_) {
+            resume_checkpoint_popup_->render(viewport_pos_, viewport_size_);
         }
 
         // Render keyframe context menu (needs to be at end of frame for proper z-order)
@@ -1029,10 +1223,14 @@ namespace lfs::vis::gui {
             }
         }
 
-        // Render notification popups (errors, warnings, etc.)
-        if (notification_popup_) {
-            notification_popup_->render();
-        }
+        if (disk_space_error_dialog_)
+            disk_space_error_dialog_->render();
+
+        if (notification_popup_ && !disk_space_error_dialog_->isOpen())
+            notification_popup_->render(viewport_pos_, viewport_size_);
+
+        if (exit_confirmation_popup_)
+            exit_confirmation_popup_->render();
 
         // End frame
         ImGui::Render();
@@ -1827,9 +2025,9 @@ namespace lfs::vis::gui {
                     if (ctx.fonts.bold)
                         ImGui::PushFont(ctx.fonts.bold);
                     if (visible == total)
-                        ImGui::Text("%s Gaussians", fmt(total).c_str());
+                        ImGui::Text(LOC(lichtfeld::Strings::Progress::GAUSSIANS_COUNT), fmt(total).c_str());
                     else
-                        ImGui::Text("%s / %s Gaussians", fmt(visible).c_str(), fmt(total).c_str());
+                        ImGui::Text("%s / %s", fmt(visible).c_str(), fmt(total).c_str());
                     if (ctx.fonts.bold)
                         ImGui::PopFont();
                 }
@@ -1848,7 +2046,7 @@ namespace lfs::vis::gui {
                     if (cam) {
                         // Image filename and extension
                         const auto& path = cam->image_path();
-                        const std::string filename = path.filename().string();
+                        const std::string filename = lfs::core::path_to_utf8(path.filename());
                         std::string ext = path.extension().string();
                         if (!ext.empty() && ext[0] == '.')
                             ext = ext.substr(1);
@@ -1972,7 +2170,7 @@ namespace lfs::vis::gui {
                 ImGui::PushFont(ctx.fonts.bold);
             ImGui::TextColored(fps_color, "%s", fps_buf);
             ImGui::SameLine(0.0f, 0.0f);
-            ImGui::TextColored(t.palette.text_dim, " FPS");
+            ImGui::TextColored(t.palette.text_dim, " %s", LOC(lichtfeld::Strings::Status::FPS));
             if (ctx.fonts.bold)
                 ImGui::PopFont();
 
@@ -2067,13 +2265,21 @@ namespace lfs::vis::gui {
     void GuiManager::setupEventHandlers() {
         using namespace lfs::core::events;
 
+        ui::FileDropReceived::when([this](const auto&) {
+            show_startup_overlay_ = false;
+        });
+
         cmd::ShowWindow::when([this](const auto& e) {
             showWindow(e.window_name, e.show);
         });
 
         cmd::ShowDatasetLoadPopup::when([this](const auto& e) {
+            std::filesystem::path output_dir = e.dataset_path;
+            if (std::filesystem::is_regular_file(output_dir)) {
+                output_dir = output_dir.parent_path();
+            }
             if (save_directory_popup_) {
-                save_directory_popup_->show(e.dataset_path);
+                save_directory_popup_->show(output_dir);
             }
         });
 
@@ -2255,6 +2461,144 @@ namespace lfs::vis::gui {
             options.crf = evt.crf;
             startVideoExport(path, options);
         });
+
+        state::DiskSpaceSaveFailed::when([this](const auto& e) {
+            if (!e.is_disk_space_error) {
+                if (notification_popup_) {
+                    const std::string title = e.is_checkpoint ? "Checkpoint Save Failed" : "Export Failed";
+                    const std::string msg = e.is_checkpoint
+                                                ? std::format("Failed to save checkpoint at iteration {}:\n\n{}", e.iteration, e.error)
+                                                : std::format("Failed to export:\n\n{}", e.error);
+                    notification_popup_->show(NotificationPopup::Type::FAILURE, title, msg);
+                }
+                return;
+            }
+
+            if (!disk_space_error_dialog_)
+                return;
+
+            const DiskSpaceErrorDialog::ErrorInfo info{
+                .path = e.path,
+                .error_message = e.error,
+                .required_bytes = e.required_bytes,
+                .available_bytes = e.available_bytes,
+                .iteration = e.iteration,
+                .is_checkpoint = e.is_checkpoint};
+
+            if (e.is_checkpoint) {
+                auto on_retry = [this, iteration = e.iteration]() {
+                    if (auto* tm = viewer_->getTrainerManager()) {
+                        if (tm->isFinished() || !tm->isTrainingActive()) {
+                            if (auto* trainer = tm->getTrainer()) {
+                                LOG_INFO("Retrying save at iteration {}", iteration);
+                                trainer->save_final_ply_and_checkpoint(iteration);
+                            }
+                        } else {
+                            tm->requestSaveCheckpoint();
+                        }
+                    }
+                };
+
+                auto on_change_location = [this, iteration = e.iteration](const std::filesystem::path& new_path) {
+                    if (auto* tm = viewer_->getTrainerManager()) {
+                        if (auto* trainer = tm->getTrainer()) {
+                            auto params = trainer->getParams();
+                            params.dataset.output_path = new_path;
+                            trainer->setParams(params);
+                            LOG_INFO("Output path changed to: {}", lfs::core::path_to_utf8(new_path));
+
+                            if (tm->isFinished() || !tm->isTrainingActive()) {
+                                trainer->save_final_ply_and_checkpoint(iteration);
+                            } else {
+                                tm->requestSaveCheckpoint();
+                            }
+                        }
+                    }
+                };
+
+                auto on_cancel = []() {
+                    LOG_WARN("Checkpoint save cancelled by user");
+                };
+
+                disk_space_error_dialog_->show(info, on_retry, on_change_location, on_cancel);
+            } else {
+                auto on_retry = []() {};
+
+                auto on_change_location = [](const std::filesystem::path& new_path) {
+                    LOG_INFO("Re-export manually using File > Export to: {}", lfs::core::path_to_utf8(new_path));
+                };
+
+                auto on_cancel = []() {
+                    LOG_INFO("Export cancelled by user");
+                };
+
+                disk_space_error_dialog_->show(info, on_retry, on_change_location, on_cancel);
+            }
+        });
+
+        // Async dataset import
+        cmd::LoadFile::when([this](const auto& cmd) {
+            if (!cmd.is_dataset) {
+                return;
+            }
+            const auto* const data_loader = viewer_->getDataLoader();
+            if (!data_loader) {
+                LOG_ERROR("No data loader service");
+                return;
+            }
+            startAsyncImport(cmd.path, data_loader->getParameters());
+        });
+
+        // Fallback sync import progress handlers
+        state::DatasetLoadStarted::when([this](const auto& e) {
+            if (import_state_.active.load()) {
+                return;
+            }
+            const std::lock_guard lock(import_state_.mutex);
+            import_state_.active.store(true);
+            import_state_.progress.store(0.0f);
+            import_state_.path = e.path;
+            import_state_.stage = "Initializing...";
+            import_state_.error.clear();
+            import_state_.num_images = 0;
+            import_state_.num_points = 0;
+            import_state_.success = false;
+            import_state_.dataset_type = getDatasetTypeName(e.path);
+        });
+
+        state::DatasetLoadProgress::when([this](const auto& e) {
+            import_state_.progress.store(e.progress / 100.0f);
+            const std::lock_guard lock(import_state_.mutex);
+            import_state_.stage = e.step;
+        });
+
+        state::DatasetLoadCompleted::when([this](const auto& e) {
+            if (import_state_.show_completion.load()) {
+                return;
+            }
+            {
+                const std::lock_guard lock(import_state_.mutex);
+                import_state_.success = e.success;
+                import_state_.num_images = e.num_images;
+                import_state_.num_points = e.num_points;
+                import_state_.completion_time = std::chrono::steady_clock::now();
+                import_state_.error = e.error.value_or("");
+                import_state_.stage = e.success ? "Complete" : "Failed";
+                import_state_.progress.store(1.0f);
+            }
+            import_state_.active.store(false);
+            import_state_.show_completion.store(true);
+
+            // Focus training panel on successful dataset load
+            if (e.success) {
+                focus_training_panel_ = true;
+            }
+        });
+
+        // Focus training panel when trainer is ready (dataset or checkpoint loaded)
+        internal::TrainerReady::when([this](const auto&) {
+            focus_training_panel_ = true;
+        });
     }
 
     void GuiManager::setSelectionSubMode(panels::SelectionSubMode mode) {
@@ -2272,7 +2616,26 @@ namespace lfs::vis::gui {
     }
 
     bool GuiManager::isModalWindowOpen() const {
-        return menu_bar_ && menu_bar_->isInputSettingsOpen();
+        // Check exit confirmation popup
+        if (exit_confirmation_popup_ && exit_confirmation_popup_->isOpen())
+            return true;
+
+        // Check save directory popup
+        if (save_directory_popup_ && save_directory_popup_->isOpen())
+            return true;
+
+        // Check export dialog
+        if (window_states_.contains("export_dialog") && window_states_.at("export_dialog"))
+            return true;
+
+        // Check menu bar dialog windows
+        if (!menu_bar_)
+            return false;
+
+        return menu_bar_->isInputSettingsOpen() ||
+               menu_bar_->isAboutWindowOpen() ||
+               menu_bar_->isGettingStartedWindowOpen() ||
+               menu_bar_->isDebugWindowOpen();
     }
 
     void GuiManager::captureKey(int key, int mods) {
@@ -2327,9 +2690,6 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::renderCropBoxGizmo(const UIContext& ctx) {
-        if (isModalWindowOpen())
-            return;
-
         auto* const render_manager = ctx.viewer->getRenderingManager();
         auto* const scene_manager = ctx.viewer->getSceneManager();
         if (!render_manager || !scene_manager)
@@ -2393,8 +2753,8 @@ namespace lfs::vis::gui {
             }
         }
 
-        // Clip to viewport
-        ImDrawList* overlay_drawlist = ImGui::GetForegroundDrawList();
+        // Clip to viewport - use background drawlist when modal is open to render below dialogs
+        ImDrawList* overlay_drawlist = isModalWindowOpen() ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
         const ImVec2 clip_min(viewport_pos_.x, viewport_pos_.y);
         const ImVec2 clip_max(clip_min.x + viewport_size_.x, clip_min.y + viewport_size_.y);
         overlay_drawlist->PushClipRect(clip_min, clip_max, true);
@@ -2514,8 +2874,6 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::renderNodeTransformGizmo(const UIContext& ctx) {
-        if (isModalWindowOpen())
-            return;
         if (!show_node_gizmo_)
             return;
 
@@ -2587,7 +2945,8 @@ namespace lfs::vis::gui {
             ImGuizmo::SetAxisMask(s_node_hovered_axis, s_node_hovered_axis, s_node_hovered_axis);
         }
 
-        ImDrawList* overlay_drawlist = ImGui::GetForegroundDrawList();
+        // Use background drawlist when modal is open to render below dialogs
+        ImDrawList* overlay_drawlist = isModalWindowOpen() ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
         const ImVec2 clip_min(viewport_pos_.x, viewport_pos_.y);
         const ImVec2 clip_max(clip_min.x + viewport_size_.x, clip_min.y + viewport_size_.y);
         overlay_drawlist->PushClipRect(clip_min, clip_max, true);
@@ -2728,7 +3087,7 @@ namespace lfs::vis::gui {
         }
 
         auto splat_data = std::make_shared<lfs::core::SplatData>(std::move(*data));
-        LOG_INFO("Export started: {} (format: {})", path.string(), static_cast<int>(format));
+        LOG_INFO("Export started: {} (format: {})", lfs::core::path_to_utf8(path), static_cast<int>(format));
 
         export_state_.thread = std::make_unique<std::jthread>(
             [this, format, path, splat_data](std::stop_token stop_token) {
@@ -2751,9 +3110,29 @@ namespace lfs::vis::gui {
                 switch (format) {
                 case ExportFormat::PLY: {
                     update_progress(0.1f, "Writing PLY");
-                    lfs::core::save_ply(*splat_data, path.parent_path(), 0, true, path.stem().string());
-                    success = true;
-                    update_progress(1.0f, "Complete");
+                    const lfs::io::PlySaveOptions options{
+                        .output_path = path,
+                        .binary = true,
+                        .async = false};
+                    if (auto result = lfs::io::save_ply(*splat_data, options); result) {
+                        success = true;
+                        update_progress(1.0f, "Complete");
+                    } else {
+                        error_msg = result.error().message;
+                        // Check if this is a disk space error
+                        if (result.error().code == lfs::io::ErrorCode::INSUFFICIENT_DISK_SPACE) {
+                            // Emit event for disk space error dialog
+                            lfs::core::events::state::DiskSpaceSaveFailed{
+                                .iteration = 0,
+                                .path = path,
+                                .error = result.error().message,
+                                .required_bytes = result.error().required_bytes,
+                                .available_bytes = result.error().available_bytes,
+                                .is_disk_space_error = true,
+                                .is_checkpoint = false}
+                                .emit();
+                        }
+                    }
                     break;
                 }
                 case ExportFormat::SOG: {
@@ -2795,7 +3174,7 @@ namespace lfs::vis::gui {
                 }
 
                 if (success) {
-                    LOG_INFO("Export completed: {}", path.string());
+                    LOG_INFO("Export completed: {}", lfs::core::path_to_utf8(path));
                     const std::lock_guard lock(export_state_.mutex);
                     export_state_.stage = "Complete";
                 } else {
@@ -2820,6 +3199,164 @@ namespace lfs::vis::gui {
         }
     }
 
+    void GuiManager::startAsyncImport(const std::filesystem::path& path,
+                                      const lfs::core::param::TrainingParameters& params) {
+        if (import_state_.active.load()) {
+            LOG_WARN("Import already in progress");
+            return;
+        }
+
+        import_state_.active.store(true);
+        import_state_.load_complete.store(false);
+        import_state_.show_completion.store(false);
+        import_state_.progress.store(0.0f);
+        {
+            const std::lock_guard lock(import_state_.mutex);
+            import_state_.path = path;
+            import_state_.stage = "Initializing...";
+            import_state_.error.clear();
+            import_state_.num_images = 0;
+            import_state_.num_points = 0;
+            import_state_.success = false;
+            import_state_.load_result.reset();
+            import_state_.params = params;
+            import_state_.dataset_type = getDatasetTypeName(path);
+        }
+
+        LOG_INFO("Async import: {}", lfs::core::path_to_utf8(path));
+
+        import_state_.thread = std::make_unique<std::jthread>(
+            [this, path](const std::stop_token stop_token) {
+                lfs::core::param::TrainingParameters local_params;
+                {
+                    const std::lock_guard lock(import_state_.mutex);
+                    local_params = import_state_.params;
+                }
+
+                const lfs::io::LoadOptions load_options{
+                    .resize_factor = local_params.dataset.resize_factor,
+                    .max_width = local_params.dataset.max_width,
+                    .images_folder = local_params.dataset.images,
+                    .validate_only = false,
+                    .progress = [this, &stop_token](const float pct, const std::string& msg) {
+                        if (stop_token.stop_requested())
+                            return;
+                        import_state_.progress.store(pct / 100.0f);
+                        const std::lock_guard lock(import_state_.mutex);
+                        import_state_.stage = msg;
+                    }};
+
+                auto loader = lfs::io::Loader::create();
+                auto result = loader->load(path, load_options);
+
+                if (stop_token.stop_requested()) {
+                    import_state_.active.store(false);
+                    return;
+                }
+
+                const std::lock_guard lock(import_state_.mutex);
+                if (result) {
+                    import_state_.load_result = std::move(*result);
+                    import_state_.success = true;
+                    import_state_.stage = "Applying...";
+                    std::visit([this](const auto& data) {
+                        using T = std::decay_t<decltype(data)>;
+                        if constexpr (std::is_same_v<T, std::shared_ptr<lfs::core::SplatData>>) {
+                            import_state_.num_points = data->size();
+                            import_state_.num_images = 0;
+                        } else if constexpr (std::is_same_v<T, lfs::io::LoadedScene>) {
+                            import_state_.num_images = data.cameras ? data.cameras->size() : 0;
+                            import_state_.num_points = data.point_cloud ? data.point_cloud->size() : 0;
+                        }
+                    },
+                               import_state_.load_result->data);
+                } else {
+                    import_state_.success = false;
+                    import_state_.error = result.error().format();
+                    import_state_.stage = "Failed";
+                    LOG_ERROR("Import failed: {}", import_state_.error);
+                }
+                import_state_.progress.store(1.0f);
+                import_state_.load_complete.store(true);
+            });
+    }
+
+    void GuiManager::checkAsyncImportCompletion() {
+        if (!import_state_.load_complete.load()) {
+            return;
+        }
+        import_state_.load_complete.store(false);
+
+        bool success;
+        {
+            const std::lock_guard lock(import_state_.mutex);
+            success = import_state_.success;
+        }
+
+        if (success) {
+            applyLoadedDataToScene();
+        } else {
+            import_state_.active.store(false);
+            import_state_.show_completion.store(true);
+            const std::lock_guard lock(import_state_.mutex);
+            import_state_.completion_time = std::chrono::steady_clock::now();
+        }
+
+        if (import_state_.thread && import_state_.thread->joinable()) {
+            import_state_.thread->join();
+            import_state_.thread.reset();
+        }
+    }
+
+    void GuiManager::applyLoadedDataToScene() {
+        auto* const scene_manager = viewer_->getSceneManager();
+        if (!scene_manager) {
+            LOG_ERROR("No scene manager");
+            import_state_.active.store(false);
+            return;
+        }
+
+        std::optional<lfs::io::LoadResult> load_result;
+        lfs::core::param::TrainingParameters params;
+        std::filesystem::path path;
+        {
+            const std::lock_guard lock(import_state_.mutex);
+            load_result = std::move(import_state_.load_result);
+            params = import_state_.params;
+            path = import_state_.path;
+            import_state_.load_result.reset();
+        }
+
+        if (!load_result) {
+            LOG_ERROR("No load result");
+            import_state_.active.store(false);
+            return;
+        }
+
+        const auto result = scene_manager->applyLoadedDataset(path, params, std::move(*load_result));
+
+        {
+            const std::lock_guard lock(import_state_.mutex);
+            import_state_.completion_time = std::chrono::steady_clock::now();
+            import_state_.success = result.has_value();
+            import_state_.stage = result ? "Complete" : "Failed";
+            if (!result) {
+                import_state_.error = result.error();
+            }
+        }
+
+        import_state_.active.store(false);
+        import_state_.show_completion.store(true);
+
+        lfs::core::events::state::DatasetLoadCompleted{
+            .path = path,
+            .success = import_state_.success,
+            .error = import_state_.success ? std::nullopt : std::optional<std::string>(import_state_.error),
+            .num_images = import_state_.num_images,
+            .num_points = import_state_.num_points}
+            .emit();
+    }
+
     void GuiManager::renderExportOverlay() {
         if (!export_state_.active.load()) {
             if (export_state_.thread && export_state_.thread->joinable()) {
@@ -2829,16 +3366,17 @@ namespace lfs::vis::gui {
             return;
         }
 
-        constexpr float OVERLAY_WIDTH = 350.0f;
-        constexpr float OVERLAY_HEIGHT = 100.0f;
-        constexpr float BUTTON_WIDTH = 100.0f;
-        constexpr float BUTTON_HEIGHT = 30.0f;
-        constexpr float PROGRESS_BAR_HEIGHT = 20.0f;
+        const float scale = getDpiScale();
+        const float OVERLAY_WIDTH = 350.0f * scale;
+        const float OVERLAY_HEIGHT = 100.0f * scale;
+        const float BUTTON_WIDTH = 100.0f * scale;
+        const float BUTTON_HEIGHT = 30.0f * scale;
+        const float PROGRESS_BAR_HEIGHT = 20.0f * scale;
 
-        const ImGuiViewport* const viewport = ImGui::GetMainViewport();
+        // Center in 3D viewport, not the main window
         const ImVec2 overlay_pos(
-            viewport->WorkPos.x + (viewport->WorkSize.x - OVERLAY_WIDTH) * 0.5f,
-            viewport->WorkPos.y + (viewport->WorkSize.y - OVERLAY_HEIGHT) * 0.5f);
+            viewport_pos_.x + (viewport_size_.x - OVERLAY_WIDTH) * 0.5f,
+            viewport_pos_.y + (viewport_size_.y - OVERLAY_HEIGHT) * 0.5f);
 
         ImGui::SetNextWindowPos(overlay_pos, ImGuiCond_Always);
         ImGui::SetNextWindowSize(ImVec2(OVERLAY_WIDTH, 0), ImGuiCond_Always);
@@ -2851,8 +3389,8 @@ namespace lfs::vis::gui {
                                            ImGuiWindowFlags_AlwaysAutoResize;
 
         ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 0.95f));
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20, 15));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20 * scale, 15 * scale));
 
         if (ImGui::Begin("##ExportProgress", nullptr, FLAGS)) {
             ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
@@ -2865,7 +3403,7 @@ namespace lfs::vis::gui {
                 case ExportFormat::SPZ: format_name = "SPZ"; break;
                 case ExportFormat::HTML_VIEWER: format_name = "HTML"; break;
                 }
-                ImGui::Text("Exporting %s...", format_name);
+                ImGui::Text(LOC(lichtfeld::Strings::Progress::EXPORTING), format_name);
             }
             ImGui::PopFont();
 
@@ -2885,7 +3423,7 @@ namespace lfs::vis::gui {
             ImGui::Spacing();
 
             ImGui::SetCursorPosX((OVERLAY_WIDTH - BUTTON_WIDTH) * 0.5f - ImGui::GetStyle().WindowPadding.x);
-            if (ImGui::Button("Cancel", ImVec2(BUTTON_WIDTH, BUTTON_HEIGHT))) {
+            if (ImGui::Button(LOC(lichtfeld::Strings::Common::CANCEL), ImVec2(BUTTON_WIDTH, BUTTON_HEIGHT))) {
                 cancelExport();
             }
 
@@ -2895,12 +3433,134 @@ namespace lfs::vis::gui {
         ImGui::PopStyleVar(2);
         ImGui::PopStyleColor();
 
+        // Dim viewport background during export
         ImDrawList* const draw_list = ImGui::GetBackgroundDrawList();
         draw_list->AddRectFilled(
-            viewport->WorkPos,
-            ImVec2(viewport->WorkPos.x + viewport->WorkSize.x,
-                   viewport->WorkPos.y + viewport->WorkSize.y),
+            viewport_pos_,
+            ImVec2(viewport_pos_.x + viewport_size_.x,
+                   viewport_pos_.y + viewport_size_.y),
             IM_COL32(0, 0, 0, 100));
+    }
+
+    void GuiManager::renderImportOverlay() {
+        const bool is_active = import_state_.active.load();
+        const bool show_completion = import_state_.show_completion.load();
+
+        // Auto-hide completion after 2 seconds
+        if (show_completion && !is_active) {
+            std::chrono::steady_clock::time_point completion_time;
+            {
+                const std::lock_guard lock(import_state_.mutex);
+                completion_time = import_state_.completion_time;
+            }
+            if (std::chrono::steady_clock::now() - completion_time > std::chrono::seconds(2)) {
+                import_state_.show_completion.store(false);
+                return;
+            }
+        }
+
+        if (!is_active && !show_completion) {
+            return;
+        }
+
+        const float scale = getDpiScale();
+        const float overlay_width = 400.0f * scale;
+        const float progress_bar_height = 20.0f * scale;
+        const float btn_width = 80.0f * scale;
+        const float btn_height = 28.0f * scale;
+
+        const ImVec2 overlay_pos(
+            viewport_pos_.x + (viewport_size_.x - overlay_width) * 0.5f,
+            viewport_pos_.y + viewport_size_.y * 0.4f);
+
+        ImGui::SetNextWindowPos(overlay_pos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(overlay_width, 0), ImGuiCond_Always);
+
+        constexpr ImGuiWindowFlags OVERLAY_FLAGS = ImGuiWindowFlags_NoTitleBar |
+                                                   ImGuiWindowFlags_NoResize |
+                                                   ImGuiWindowFlags_NoMove |
+                                                   ImGuiWindowFlags_NoScrollbar |
+                                                   ImGuiWindowFlags_NoCollapse |
+                                                   ImGuiWindowFlags_AlwaysAutoResize;
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0.1f, 0.1f, 0.1f, 0.95f));
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 8.0f * scale);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(20.0f * scale, 15.0f * scale));
+
+        if (ImGui::Begin("##ImportProgress", nullptr, OVERLAY_FLAGS)) {
+            std::string dataset_type, stage, path_str, error;
+            size_t num_images = 0, num_points = 0;
+            bool success = false;
+            {
+                const std::lock_guard lock(import_state_.mutex);
+                dataset_type = import_state_.dataset_type;
+                stage = import_state_.stage;
+                path_str = lfs::core::path_to_utf8(import_state_.path.filename());
+                num_images = import_state_.num_images;
+                num_points = import_state_.num_points;
+                success = import_state_.success;
+                error = import_state_.error;
+            }
+
+            // Title
+            ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
+            if (show_completion && !is_active) {
+                constexpr ImVec4 GREEN(0.4f, 0.9f, 0.4f, 1.0f);
+                constexpr ImVec4 RED(1.0f, 0.4f, 0.4f, 1.0f);
+                ImGui::TextColored(success ? GREEN : RED,
+                                   success ? LOC(lichtfeld::Strings::Progress::IMPORT_COMPLETE_TITLE)
+                                           : LOC(lichtfeld::Strings::Progress::IMPORT_FAILED_TITLE));
+            } else {
+                const char* type = dataset_type.empty() ? "dataset" : dataset_type.c_str();
+                ImGui::Text(LOC(lichtfeld::Strings::Progress::IMPORTING), type);
+            }
+            ImGui::PopFont();
+
+            ImGui::Spacing();
+            if (!path_str.empty()) {
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", path_str.c_str());
+            }
+            ImGui::Spacing();
+
+            const float progress = import_state_.progress.load();
+            ImGui::ProgressBar(progress, ImVec2(-1, progress_bar_height), "");
+
+            if (is_active) {
+                ImGui::Text("%.0f%%", progress * 100.0f);
+                ImGui::SameLine();
+                ImGui::TextUnformatted(stage.c_str());
+            }
+
+            if (show_completion && (num_images > 0 || num_points > 0)) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(0.5f, 0.8f, 0.5f, 1.0f),
+                                   "%zu images, %zu points", num_images, num_points);
+            }
+
+            if (!error.empty()) {
+                ImGui::Spacing();
+                ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), "%s", error.c_str());
+            }
+
+            if (show_completion && !is_active) {
+                ImGui::Spacing();
+                ImGui::SetCursorPosX((overlay_width - btn_width) * 0.5f - ImGui::GetStyle().WindowPadding.x);
+                if (ImGui::Button(LOC(lichtfeld::Strings::Common::OK), ImVec2(btn_width, btn_height))) {
+                    import_state_.show_completion.store(false);
+                }
+            }
+            ImGui::End();
+        }
+
+        ImGui::PopStyleVar(2);
+        ImGui::PopStyleColor();
+
+        if (is_active) {
+            ImGui::GetBackgroundDrawList()->AddRectFilled(
+                viewport_pos_,
+                ImVec2(viewport_pos_.x + viewport_size_.x, viewport_pos_.y + viewport_size_.y),
+                IM_COL32(0, 0, 0, 100));
+        }
     }
 
     void GuiManager::renderEmptyStateOverlay() {
@@ -2976,29 +3636,29 @@ namespace lfs::vis::gui {
             return size;
         };
 
-        static constexpr const char* TITLE = "Drop files here to get started";
-        static constexpr const char* SUBTITLE = "PLY, SOG, COLMAP dataset, or Project file";
-        static constexpr const char* HINT = "Or use File > Import Dataset / Import Ply";
+        const char* title = LOC(lichtfeld::Strings::Startup::DROP_FILES_TITLE);
+        const char* subtitle = LOC(lichtfeld::Strings::Startup::DROP_FILES_SUBTITLE);
+        const char* hint = LOC(lichtfeld::Strings::Startup::DROP_FILES_HINT);
 
-        const ImVec2 title_size = calcTextSize(TITLE, font_heading_);
-        const ImVec2 subtitle_size = calcTextSize(SUBTITLE, font_bold_);
-        const ImVec2 hint_size = calcTextSize(HINT, font_heading_);
+        const ImVec2 title_size = calcTextSize(title, font_heading_);
+        const ImVec2 subtitle_size = calcTextSize(subtitle, font_bold_);
+        const ImVec2 hint_size = calcTextSize(hint, font_heading_);
 
         if (font_heading_)
             ImGui::PushFont(font_heading_);
-        draw_list->AddText({center_x - title_size.x * 0.5f, center_y + 10.0f}, TITLE_COLOR, TITLE);
+        draw_list->AddText({center_x - title_size.x * 0.5f, center_y + 10.0f}, TITLE_COLOR, title);
         if (font_heading_)
             ImGui::PopFont();
 
         if (font_bold_)
             ImGui::PushFont(font_bold_);
-        draw_list->AddText({center_x - subtitle_size.x * 0.5f, center_y + 40.0f}, SUBTITLE_COLOR, SUBTITLE);
+        draw_list->AddText({center_x - subtitle_size.x * 0.5f, center_y + 40.0f}, SUBTITLE_COLOR, subtitle);
         if (font_bold_)
             ImGui::PopFont();
 
         if (font_heading_)
             ImGui::PushFont(font_heading_);
-        draw_list->AddText({center_x - hint_size.x * 0.5f, center_y + 70.0f}, HINT_COLOR, HINT);
+        draw_list->AddText({center_x - hint_size.x * 0.5f, center_y + 70.0f}, HINT_COLOR, hint);
         if (font_heading_)
             ImGui::PopFont();
     }
@@ -3059,21 +3719,21 @@ namespace lfs::vis::gui {
             return size;
         };
 
-        static constexpr const char* TITLE = "Drop to Import";
-        static constexpr const char* SUBTITLE = "PLY, SOG, COLMAP dataset, or Project";
+        const char* title = LOC(lichtfeld::Strings::Startup::DROP_TO_IMPORT);
+        const char* subtitle = LOC(lichtfeld::Strings::Startup::DROP_TO_IMPORT_SUBTITLE);
 
-        const ImVec2 title_size = calcTextSize(TITLE, font_heading_);
-        const ImVec2 subtitle_size = calcTextSize(SUBTITLE, font_small_);
+        const ImVec2 title_size = calcTextSize(title, font_heading_);
+        const ImVec2 subtitle_size = calcTextSize(subtitle, font_small_);
 
         if (font_heading_)
             ImGui::PushFont(font_heading_);
-        draw_list->AddText({center_x - title_size.x * 0.5f, center_y + 5.0f}, TITLE_COLOR, TITLE);
+        draw_list->AddText({center_x - title_size.x * 0.5f, center_y + 5.0f}, TITLE_COLOR, title);
         if (font_heading_)
             ImGui::PopFont();
 
         if (font_small_)
             ImGui::PushFont(font_small_);
-        draw_list->AddText({center_x - subtitle_size.x * 0.5f, center_y + 35.0f}, SUBTITLE_COLOR, SUBTITLE);
+        draw_list->AddText({center_x - subtitle_size.x * 0.5f, center_y + 35.0f}, SUBTITLE_COLOR, subtitle);
         if (font_small_)
             ImGui::PopFont();
     }
@@ -3307,6 +3967,199 @@ namespace lfs::vis::gui {
 
                 video_export_state_.active.store(false);
             });
+    }
+
+    void GuiManager::renderStartupOverlay() {
+        if (!show_startup_overlay_)
+            return;
+
+        static constexpr float MIN_VIEWPORT_SIZE = 100.0f;
+        if (viewport_size_.x < MIN_VIEWPORT_SIZE || viewport_size_.y < MIN_VIEWPORT_SIZE)
+            return;
+
+        // Layout constants
+        static constexpr float MAIN_LOGO_SCALE = 1.3f;
+        static constexpr float CORE11_LOGO_SCALE = 0.5f;
+        static constexpr float CORNER_RADIUS = 12.0f;
+        static constexpr float PADDING_X = 40.0f;
+        static constexpr float PADDING_Y = 28.0f;
+        static constexpr float GAP_LOGO_TEXT = 20.0f;
+        static constexpr float GAP_TEXT_CORE11 = 10.0f;
+        static constexpr float GAP_CORE11_HINT = 16.0f;
+        static constexpr float GAP_LANG_HINT = 12.0f;
+        static constexpr float LANG_COMBO_WIDTH = 140.0f;
+
+        // Theme colors
+        const auto& t = theme();
+
+        // Logo dimensions
+        const float main_logo_w = static_cast<float>(startup_logo_width_) * MAIN_LOGO_SCALE;
+        const float main_logo_h = static_cast<float>(startup_logo_height_) * MAIN_LOGO_SCALE;
+        const float core11_w = static_cast<float>(startup_core11_width_) * CORE11_LOGO_SCALE;
+        const float core11_h = static_cast<float>(startup_core11_height_) * CORE11_LOGO_SCALE;
+
+        // Text sizes (use localized strings)
+        const char* supported_text = LOC(lichtfeld::Strings::Startup::SUPPORTED_BY);
+        const char* click_hint = LOC(lichtfeld::Strings::Startup::CLICK_TO_CONTINUE);
+        if (font_small_)
+            ImGui::PushFont(font_small_);
+        const ImVec2 supported_size = ImGui::CalcTextSize(supported_text);
+        const ImVec2 hint_size = ImGui::CalcTextSize(click_hint);
+        const ImVec2 lang_label_size = ImGui::CalcTextSize(LOC(lichtfeld::Strings::Preferences::LANGUAGE));
+        if (font_small_)
+            ImGui::PopFont();
+
+        // Overlay dimensions (include language selector height)
+        const float lang_row_height = ImGui::GetFrameHeight() + 4.0f;
+        const float content_width = std::max({main_logo_w, core11_w, supported_size.x, hint_size.x, LANG_COMBO_WIDTH + lang_label_size.x + 8.0f});
+        const float content_height = main_logo_h + GAP_LOGO_TEXT + supported_size.y + GAP_TEXT_CORE11 +
+                                     core11_h + GAP_CORE11_HINT + lang_row_height + GAP_LANG_HINT + hint_size.y;
+        const float overlay_width = content_width + PADDING_X * 2.0f;
+        const float overlay_height = content_height + PADDING_Y * 2.0f;
+
+        // Center in viewport
+        const float center_x = viewport_pos_.x + viewport_size_.x * 0.5f;
+        const float center_y = viewport_pos_.y + viewport_size_.y * 0.5f;
+        const ImVec2 overlay_pos(center_x - overlay_width * 0.5f, center_y - overlay_height * 0.5f);
+
+        // Style the overlay window
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, CORNER_RADIUS);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {PADDING_X, PADDING_Y});
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 1.5f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, t.palette.surface);
+        ImGui::PushStyleColor(ImGuiCol_Border, t.palette.border);
+        ImGui::PushStyleColor(ImGuiCol_FrameBg, t.palette.background);
+        ImGui::PushStyleColor(ImGuiCol_FrameBgHovered, lighten(t.palette.background, 0.05f));
+        ImGui::PushStyleColor(ImGuiCol_FrameBgActive, lighten(t.palette.background, 0.08f));
+        ImGui::PushStyleColor(ImGuiCol_PopupBg, t.palette.surface);
+        ImGui::PushStyleColor(ImGuiCol_Header, t.palette.primary);
+        ImGui::PushStyleColor(ImGuiCol_HeaderHovered, lighten(t.palette.primary, 0.1f));
+        ImGui::PushStyleColor(ImGuiCol_HeaderActive, t.palette.primary);
+
+        ImGui::SetNextWindowPos(overlay_pos);
+        ImGui::SetNextWindowSize({overlay_width, overlay_height});
+
+        bool overlay_hovered = false;
+        if (ImGui::Begin("##StartupOverlay", nullptr,
+                         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+                             ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoDocking |
+                             ImGuiWindowFlags_NoCollapse)) {
+
+            ImDrawList* draw_list = ImGui::GetWindowDrawList();
+            const ImVec2 window_pos = ImGui::GetWindowPos();
+            const float window_center_x = window_pos.x + overlay_width * 0.5f;
+            float y = window_pos.y + PADDING_Y;
+
+            // Main logo
+            if (startup_logo_texture_ && startup_logo_width_ > 0) {
+                const float x = window_center_x - main_logo_w * 0.5f;
+                draw_list->AddImage(static_cast<ImTextureID>(startup_logo_texture_),
+                                    {x, y}, {x + main_logo_w, y + main_logo_h});
+                y += main_logo_h + GAP_LOGO_TEXT;
+            }
+
+            // Supported by text
+            if (font_small_)
+                ImGui::PushFont(font_small_);
+            draw_list->AddText({window_center_x - supported_size.x * 0.5f, y},
+                               toU32WithAlpha(t.palette.text_dim, 0.85f), supported_text);
+            y += supported_size.y + GAP_TEXT_CORE11;
+
+            // Core11 logo
+            if (startup_core11_texture_ && startup_core11_width_ > 0) {
+                const float x = window_center_x - core11_w * 0.5f;
+                draw_list->AddImage(static_cast<ImTextureID>(startup_core11_texture_),
+                                    {x, y}, {x + core11_w, y + core11_h});
+                y += core11_h + GAP_CORE11_HINT;
+            }
+
+            // Language selector - center the row in content area
+            const float lang_total_width = lang_label_size.x + 8.0f + LANG_COMBO_WIDTH;
+            const float content_area_width = overlay_width - 2.0f * PADDING_X;
+            const float lang_indent = (content_area_width - lang_total_width) * 0.5f;
+            ImGui::SetCursorPosY(y - window_pos.y);
+            ImGui::SetCursorPosX(lang_indent);
+            ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::Preferences::LANGUAGE));
+            ImGui::SameLine(0.0f, 8.0f);
+            ImGui::SetNextItemWidth(LANG_COMBO_WIDTH);
+
+            auto& loc = lichtfeld::LocalizationManager::getInstance();
+            const auto& current_lang = loc.getCurrentLanguage();
+            const auto available_langs = loc.getAvailableLanguages();
+            const auto lang_names = loc.getAvailableLanguageNames();
+
+            // Find current language name for preview
+            std::string current_name = current_lang;
+            for (size_t i = 0; i < available_langs.size(); ++i) {
+                if (available_langs[i] == current_lang) {
+                    current_name = lang_names[i];
+                    break;
+                }
+            }
+
+            if (ImGui::BeginCombo("##LangCombo", current_name.c_str())) {
+                for (size_t i = 0; i < available_langs.size(); ++i) {
+                    const bool is_selected = (available_langs[i] == current_lang);
+                    if (ImGui::Selectable(lang_names[i].c_str(), is_selected)) {
+                        loc.setLanguage(available_langs[i]);
+                    }
+                    if (is_selected) {
+                        ImGui::SetItemDefaultFocus();
+                    }
+                }
+                ImGui::EndCombo();
+            }
+
+            y += lang_row_height + GAP_LANG_HINT;
+
+            // Dismiss hint
+            draw_list->AddText({window_center_x - hint_size.x * 0.5f, y},
+                               toU32WithAlpha(t.palette.text_dim, 0.5f), click_hint);
+            if (font_small_)
+                ImGui::PopFont();
+
+            overlay_hovered = ImGui::IsWindowHovered(ImGuiHoveredFlags_AllowWhenBlockedByActiveItem |
+                                                     ImGuiHoveredFlags_ChildWindows);
+        }
+        ImGui::End();
+        ImGui::PopStyleColor(9);
+        ImGui::PopStyleVar(5);
+
+        // Dismiss on user interaction (but not when interacting with language combo or modals)
+        const auto& io = ImGui::GetIO();
+        const bool modal_open = (save_directory_popup_ && save_directory_popup_->isOpen()) ||
+                                (exit_confirmation_popup_ && exit_confirmation_popup_->isOpen());
+        const bool mouse_action = ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
+                                  ImGui::IsMouseClicked(ImGuiMouseButton_Right) ||
+                                  ImGui::IsMouseClicked(ImGuiMouseButton_Middle) ||
+                                  std::abs(io.MouseWheel) > 0.0f || std::abs(io.MouseWheelH) > 0.0f;
+        const bool key_action = io.InputQueueCharacters.Size > 0 ||
+                                ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                                ImGui::IsKeyPressed(ImGuiKey_Space) ||
+                                ImGui::IsKeyPressed(ImGuiKey_Enter);
+
+        // Don't dismiss if interacting with language combo or any popup/modal
+        const bool any_popup_open = ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId | ImGuiPopupFlags_AnyPopupLevel);
+        const bool any_item_active = ImGui::IsAnyItemActive();
+        if (!any_popup_open && !any_item_active && !modal_open && !drag_drop_hovering_ && (mouse_action || key_action)) {
+            show_startup_overlay_ = false;
+        }
+    }
+
+    void GuiManager::requestExitConfirmation() {
+        if (!exit_confirmation_popup_)
+            return;
+        exit_confirmation_popup_->show([this]() {
+            force_exit_ = true;
+            glfwSetWindowShouldClose(viewer_->getWindow(), true);
+        });
+    }
+
+    bool GuiManager::isExitConfirmationPending() const {
+        return exit_confirmation_popup_ && exit_confirmation_popup_->isOpen();
     }
 
 } // namespace lfs::vis::gui

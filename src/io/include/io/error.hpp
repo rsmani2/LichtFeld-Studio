@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include "core/path_utils.hpp"
 #include <expected>
 #include <filesystem>
 #include <format>
@@ -32,6 +33,7 @@ namespace lfs::io {
         EMPTY_DATASET = 204,
         INVALID_HEADER = 205,
         MALFORMED_JSON = 206,
+        MASK_SIZE_MISMATCH = 207,
 
         // Save/Export (300-399)
         WRITE_FAILURE = 300,
@@ -63,6 +65,7 @@ namespace lfs::io {
         case ErrorCode::EMPTY_DATASET: return "Empty dataset";
         case ErrorCode::INVALID_HEADER: return "Invalid header";
         case ErrorCode::MALFORMED_JSON: return "Malformed JSON";
+        case ErrorCode::MASK_SIZE_MISMATCH: return "Mask size mismatch";
         case ErrorCode::WRITE_FAILURE: return "Write failed";
         case ErrorCode::ENCODING_FAILED: return "Encoding failed";
         case ErrorCode::ARCHIVE_CREATION_FAILED: return "Archive creation failed";
@@ -79,6 +82,8 @@ namespace lfs::io {
         ErrorCode code;
         std::string message;
         std::filesystem::path path;
+        size_t required_bytes = 0;
+        size_t available_bytes = 0;
 
         Error(ErrorCode c, std::string msg)
             : code(c),
@@ -89,11 +94,18 @@ namespace lfs::io {
               message(std::move(msg)),
               path(std::move(p)) {}
 
+        Error(ErrorCode c, std::string msg, std::filesystem::path p, size_t req, size_t avail)
+            : code(c),
+              message(std::move(msg)),
+              path(std::move(p)),
+              required_bytes(req),
+              available_bytes(avail) {}
+
         [[nodiscard]] std::string format() const {
             if (path.empty()) {
                 return std::format("[{}] {}", error_code_to_string(code), message);
             }
-            return std::format("[{}] {}: {}", error_code_to_string(code), message, path.string());
+            return std::format("[{}] {}: {}", error_code_to_string(code), message, lfs::core::path_to_utf8(path));
         }
 
         [[nodiscard]] bool is(ErrorCode c) const { return code == c; }
@@ -170,11 +182,14 @@ namespace lfs::io {
 
         if (space_info.available < required_with_margin) {
             constexpr double MB = 1024.0 * 1024.0;
-            return make_error(ErrorCode::INSUFFICIENT_DISK_SPACE,
-                              std::format("Need {:.1f} MB but only {:.1f} MB available",
-                                          static_cast<double>(required_with_margin) / MB,
-                                          static_cast<double>(space_info.available) / MB),
-                              check_path);
+            return std::unexpected(Error{
+                ErrorCode::INSUFFICIENT_DISK_SPACE,
+                std::format("Need {:.1f} MB but only {:.1f} MB available",
+                            static_cast<double>(required_with_margin) / MB,
+                            static_cast<double>(space_info.available) / MB),
+                check_path,
+                required_with_margin,
+                static_cast<size_t>(space_info.available)});
         }
 
         return space_info.available;

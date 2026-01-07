@@ -5,6 +5,9 @@
 #include "gui/panels/crop_box_panel.hpp"
 #include "command/command_history.hpp"
 #include "command/commands/cropbox_command.hpp"
+#include "gui/dpi_scale.hpp"
+#include "gui/localization_manager.hpp"
+#include "gui/string_keys.hpp"
 #include "gui/ui_widgets.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "scene/scene_manager.hpp"
@@ -19,6 +22,7 @@
 namespace lfs::vis::gui::panels {
 
     using namespace lfs::core::events;
+    using namespace lichtfeld::Strings;
 
     namespace {
         constexpr float POSITION_STEP = 0.01f;
@@ -26,7 +30,7 @@ namespace lfs::vis::gui::panels {
         constexpr float ROTATION_STEP = 1.0f;
         constexpr float ROTATION_STEP_FAST = 15.0f;
         constexpr float MIN_SIZE = 0.001f;
-        constexpr float INPUT_WIDTH_PADDING = 40.0f;
+        constexpr float BASE_INPUT_WIDTH_PADDING = 40.0f;
 
         std::optional<command::CropBoxState> s_state_before_edit;
         std::string s_editing_cropbox_name;
@@ -83,25 +87,25 @@ namespace lfs::vis::gui::panels {
         if (!sm || !rm)
             return;
 
-        if (!ImGui::CollapsingHeader("Crop Box", ImGuiTreeNodeFlags_DefaultOpen))
+        if (!ImGui::CollapsingHeader(LOC(CropBox::TITLE), ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
         const auto& settings = rm->getSettings();
         if (!settings.show_crop_box) {
-            ImGui::TextDisabled("Crop box not visible");
+            ImGui::TextDisabled("%s", LOC(CropBox::NOT_VISIBLE));
             return;
         }
 
         // Get selected cropbox node
         const NodeId cropbox_id = sm->getSelectedNodeCropBoxId();
         if (cropbox_id == NULL_NODE) {
-            ImGui::TextDisabled("No cropbox selected");
+            ImGui::TextDisabled("%s", LOC(CropBox::NO_SELECTION));
             return;
         }
 
         auto* node = sm->getScene().getMutableNode(sm->getScene().getNodeById(cropbox_id)->name);
         if (!node || !node->cropbox) {
-            ImGui::TextDisabled("Invalid cropbox");
+            ImGui::TextDisabled("%s", LOC(CropBox::INVALID));
             return;
         }
 
@@ -109,7 +113,7 @@ namespace lfs::vis::gui::panels {
         bool any_active = false;
         bool any_deactivated = false;
 
-        const float width = ImGui::CalcTextSize("-000.000").x + ImGui::GetStyle().FramePadding.x * 2.0f + INPUT_WIDTH_PADDING;
+        const float width = ImGui::CalcTextSize("-000.000").x + ImGui::GetStyle().FramePadding.x * 2.0f + BASE_INPUT_WIDTH_PADDING * getDpiScale();
 
         // Decompose local_transform
         glm::vec3 translation, scale, skew;
@@ -119,7 +123,7 @@ namespace lfs::vis::gui::panels {
         glm::vec3 euler = matrixToEulerDegrees(glm::mat3_cast(rotation));
 
         // Position (translation)
-        if (ImGui::TreeNodeEx("Position", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::TreeNodeEx(LOC(CropBox::POSITION), ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Text("X:");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(width);
@@ -144,7 +148,7 @@ namespace lfs::vis::gui::panels {
         }
 
         // Rotation (euler angles)
-        if (ImGui::TreeNodeEx("Rotation", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::TreeNodeEx(LOC(CropBox::ROTATION), ImGuiTreeNodeFlags_DefaultOpen)) {
             ImGui::Text("X:");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(width);
@@ -169,7 +173,7 @@ namespace lfs::vis::gui::panels {
         }
 
         // Size (bounds)
-        if (ImGui::TreeNodeEx("Size", ImGuiTreeNodeFlags_DefaultOpen)) {
+        if (ImGui::TreeNodeEx(LOC(CropBox::SIZE), ImGuiTreeNodeFlags_DefaultOpen)) {
             glm::vec3 size = node->cropbox->max - node->cropbox->min;
             const glm::vec3 center = (node->cropbox->min + node->cropbox->max) * 0.5f;
 
@@ -204,13 +208,13 @@ namespace lfs::vis::gui::panels {
         }
 
         // Appearance
-        if (ImGui::TreeNode("Appearance")) {
+        if (ImGui::TreeNode(LOC(CropBox::APPEARANCE))) {
             float color[3] = {node->cropbox->color.x, node->cropbox->color.y, node->cropbox->color.z};
-            if (ImGui::ColorEdit3("Color", color)) {
+            if (ImGui::ColorEdit3(LOC(MainPanel::COLOR), color)) {
                 node->cropbox->color = glm::vec3(color[0], color[1], color[2]);
                 changed = true;
             }
-            changed |= ImGui::SliderFloat("Line Width", &node->cropbox->line_width, 0.5f, 10.0f);
+            changed |= ImGui::SliderFloat(LOC(CropBox::LINE_WIDTH), &node->cropbox->line_width, 0.5f, 10.0f);
             ImGui::TreePop();
         }
 
@@ -242,7 +246,7 @@ namespace lfs::vis::gui::panels {
 
         ImGui::Spacing();
         ImGui::Separator();
-        ImGui::TextDisabled("Enter: Commit crop | Ctrl+C: Copy contents");
+        ImGui::TextDisabled("%s", LOC(CropBox::INSTRUCTIONS));
     }
 
     const CropBoxState& getCropBoxState() {

@@ -10,7 +10,8 @@
 
 namespace lfs::rendering::config {
     DEF bool debug = false;
-    DEF float dilation = 0.3f;
+    DEF float dilation = 0.3f;            // Standard dilation when mip_filter OFF
+    DEF float dilation_mip_filter = 0.1f; // Smaller dilation when mip_filter ON
     DEF float min_alpha_threshold_rcp = 255.0f;
     DEF float min_alpha_threshold = 1.0f / min_alpha_threshold_rcp;
     DEF float max_fragment_alpha = 0.999f;
@@ -26,10 +27,8 @@ namespace lfs::rendering::config {
     DEF int block_size_blend = tile_width * tile_height;
     DEF int n_sequential_threshold = 4;
 
-    // Selection group colors: index 0 = center marker, 1-255 = group colors
+    // Selection group colors (0 = center marker, 1-255 = groups). Defined in forward.cu.
     constexpr int MAX_SELECTION_GROUPS = 256;
-    extern __constant__ float3 SELECTION_GROUP_COLORS[MAX_SELECTION_GROUPS];
-    extern __constant__ float3 SELECTION_COLOR_PREVIEW;
 
     void setSelectionGroupColor(int group_id, float3 color);
     void setSelectionPreviewColor(float3 color);

@@ -3,20 +3,26 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "gui/windows/export_dialog.hpp"
+#include "gui/dpi_scale.hpp"
+#include "gui/localization_manager.hpp"
+#include "gui/string_keys.hpp"
 #include "scene/scene_manager.hpp"
 #include "theme/theme.hpp"
 #include <imgui.h>
 
 namespace lfs::vis::gui {
 
+    using namespace lichtfeld::Strings;
+
     namespace {
-        constexpr float WINDOW_WIDTH = 380.0f;
+        // Base sizes (will be scaled by DPI factor)
+        constexpr float BASE_WINDOW_WIDTH = 380.0f;
         constexpr float FRAME_DARKEN = 0.1f;
         constexpr float BUTTON_LIGHTEN = 0.1f;
-        constexpr ImVec2 WINDOW_PADDING = {16.0f, 12.0f};
-        constexpr ImVec2 ITEM_SPACING = {8.0f, 6.0f};
-        constexpr ImVec2 EXPORT_BUTTON_SIZE = {130.0f, 28.0f};
-        constexpr ImVec2 CANCEL_BUTTON_SIZE = {80.0f, 28.0f};
+        constexpr ImVec2 BASE_WINDOW_PADDING = {16.0f, 12.0f};
+        constexpr ImVec2 BASE_ITEM_SPACING = {8.0f, 6.0f};
+        constexpr ImVec2 BASE_EXPORT_BUTTON_SIZE = {130.0f, 28.0f};
+        constexpr ImVec2 BASE_CANCEL_BUTTON_SIZE = {80.0f, 28.0f};
 
         void pushInputStyle(const Theme& t) {
             ImGui::PushStyleColor(ImGuiCol_CheckMark, t.palette.primary);
@@ -47,20 +53,21 @@ namespace lfs::vis::gui {
             return;
 
         const auto& t = theme();
+        const float scale = getDpiScale();
 
         constexpr ImGuiWindowFlags WINDOW_FLAGS =
             ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoDocking;
 
-        ImGui::SetNextWindowSize(ImVec2(WINDOW_WIDTH, 0), ImGuiCond_FirstUseEver);
+        ImGui::SetNextWindowSize(ImVec2(BASE_WINDOW_WIDTH * scale, 0), ImGuiCond_FirstUseEver);
 
         ImGui::PushStyleColor(ImGuiCol_WindowBg, t.palette.surface);
         ImGui::PushStyleColor(ImGuiCol_TitleBg, t.palette.surface);
         ImGui::PushStyleColor(ImGuiCol_TitleBgActive, t.palette.surface_bright);
         ImGui::PushStyleColor(ImGuiCol_Border, t.palette.border);
-        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, WINDOW_PADDING);
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ITEM_SPACING);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(BASE_WINDOW_PADDING.x * scale, BASE_WINDOW_PADDING.y * scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(BASE_ITEM_SPACING.x * scale, BASE_ITEM_SPACING.y * scale));
 
-        if (!ImGui::Begin("Export", p_open, WINDOW_FLAGS)) {
+        if (!ImGui::Begin(LOC(Export::TITLE), p_open, WINDOW_FLAGS)) {
             ImGui::End();
             ImGui::PopStyleVar(2);
             ImGui::PopStyleColor(4);
@@ -100,15 +107,15 @@ namespace lfs::vis::gui {
         }
 
         // Format selection
-        ImGui::TextColored(t.palette.text_dim, "FORMAT");
+        ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::ExportDialog::FORMAT));
         ImGui::Spacing();
 
         pushInputStyle(t);
         int format_idx = static_cast<int>(selected_format_);
-        ImGui::RadioButton("PLY (Standard)", &format_idx, static_cast<int>(ExportFormat::PLY));
-        ImGui::RadioButton("SOG (SuperSplat)", &format_idx, static_cast<int>(ExportFormat::SOG));
-        ImGui::RadioButton("SPZ (Niantic)", &format_idx, static_cast<int>(ExportFormat::SPZ));
-        ImGui::RadioButton("HTML Viewer", &format_idx, static_cast<int>(ExportFormat::HTML_VIEWER));
+        ImGui::RadioButton(LOC(Export::FORMAT_PLY_STANDARD), &format_idx, static_cast<int>(ExportFormat::PLY));
+        ImGui::RadioButton(LOC(Export::FORMAT_SOG_SUPERSPLAT), &format_idx, static_cast<int>(ExportFormat::SOG));
+        ImGui::RadioButton(LOC(Export::FORMAT_SPZ_NIANTIC), &format_idx, static_cast<int>(ExportFormat::SPZ));
+        ImGui::RadioButton(LOC(Export::FORMAT_HTML_VIEWER), &format_idx, static_cast<int>(ExportFormat::HTML_VIEWER));
         selected_format_ = static_cast<ExportFormat>(format_idx);
         popInputStyle();
 
@@ -116,21 +123,21 @@ namespace lfs::vis::gui {
         ImGui::Spacing();
 
         // Model selection
-        ImGui::TextColored(t.palette.text_dim, "MODELS");
+        ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::ExportDialog::MODELS));
         ImGui::Spacing();
 
         if (splat_nodes.empty()) {
-            ImGui::TextColored(t.palette.text_dim, "No models in scene");
+            ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::ExportDialog::NO_MODELS));
         } else {
             pushButtonStyle(t);
-            if (ImGui::SmallButton("All")) {
+            if (ImGui::SmallButton(LOC(Export::ALL))) {
                 for (const auto* node : splat_nodes) {
                     selected_nodes_.insert(node->name);
                 }
                 updateMaxSHDegree();
             }
             ImGui::SameLine();
-            if (ImGui::SmallButton("None")) {
+            if (ImGui::SmallButton(LOC(Export::NONE))) {
                 selected_nodes_.clear();
                 updateMaxSHDegree();
             }
@@ -159,7 +166,7 @@ namespace lfs::vis::gui {
         ImGui::Spacing();
 
         // SH Degree selection
-        ImGui::TextColored(t.palette.text_dim, "SH DEGREE");
+        ImGui::TextColored(t.palette.text_dim, "%s", LOC(lichtfeld::Strings::ExportDialog::SH_DEGREE));
         ImGui::Spacing();
 
         pushInputStyle(t);
@@ -180,7 +187,7 @@ namespace lfs::vis::gui {
         const bool can_export = !selected_nodes_.empty();
 
         if (!can_export) {
-            ImGui::TextColored(t.palette.error, "Select at least one model");
+            ImGui::TextColored(t.palette.error, "%s", LOC(Export::SELECT_AT_LEAST_ONE));
             ImGui::Spacing();
         }
 
@@ -195,8 +202,8 @@ namespace lfs::vis::gui {
         ImGui::PushStyleColor(ImGuiCol_Text, btn_text);
 
         ImGui::BeginDisabled(!can_export);
-        const char* label = selected_nodes_.size() > 1 ? "Export Merged..." : "Export...";
-        if (ImGui::Button(label, EXPORT_BUTTON_SIZE)) {
+        const char* label = selected_nodes_.size() > 1 ? LOC(lichtfeld::Strings::ExportDialog::EXPORT_MERGED) : LOC(Export::EXPORT);
+        if (ImGui::Button(label, ImVec2(BASE_EXPORT_BUTTON_SIZE.x * scale, BASE_EXPORT_BUTTON_SIZE.y * scale))) {
             if (on_browse_) {
                 const std::string default_name = selected_nodes_.size() == 1
                                                      ? *selected_nodes_.begin()
@@ -213,7 +220,7 @@ namespace lfs::vis::gui {
         ImGui::SameLine();
 
         pushButtonStyle(t);
-        if (ImGui::Button("Cancel", CANCEL_BUTTON_SIZE)) {
+        if (ImGui::Button(LOC(Export::CANCEL), ImVec2(BASE_CANCEL_BUTTON_SIZE.x * scale, BASE_CANCEL_BUTTON_SIZE.y * scale))) {
             *p_open = false;
             initialized_ = false;
         }

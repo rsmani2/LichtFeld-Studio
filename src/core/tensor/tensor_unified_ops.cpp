@@ -625,6 +625,86 @@ namespace lfs::core {
 
         validate_unary_op();
 
+        // FAST PATH: 2D dim=0 reduction (column sums) - use specialized kernel
+        // This is faster than transpose+contiguous+reduce because it avoids the copy
+        if (args.axes.size() == 1 && device_ == Device::CUDA && shape_.rank() == 2 &&
+            dtype_ == DataType::Float32 && is_contiguous_) {
+            int dim = args.axes[0];
+            if (dim < 0)
+                dim += 2;
+            if (dim == 0 && (op == ReduceOp::Sum || op == ReduceOp::Mean ||
+                             op == ReduceOp::Max || op == ReduceOp::Min)) {
+                size_t M = shape_[0]; // rows (reduction dim)
+                size_t N = shape_[1]; // cols (output size)
+
+                std::vector<size_t> out_shape = args.keepdim ? std::vector<size_t>{1, N} : std::vector<size_t>{N};
+                auto result = Tensor::empty(TensorShape(out_shape), device_, dtype_);
+
+                LOG_DEBUG("[COLUMN REDUCE] M={}, N={}, op={}", M, N, static_cast<int>(op));
+                tensor_ops::launch_column_reduce(ptr<float>(), result.ptr<float>(), M, N, op, nullptr);
+                return result;
+            }
+        }
+
+        // OPTIMIZATION: For single-axis reduction where the reduction dimension is NOT the last,
+        // it's faster to transpose the tensor so the reduction dim becomes contiguous, then reduce.
+        // This trades a memory copy for much better memory coalescing in the reduction kernel.
+        //
+        // Example: [1024, 1024].sum({0}) with row-major layout:
+        //   - Strided: Each output element reads 1024 values with stride=1024 → ~74 us
+        //   - Transposed: Copy to column-major, then contiguous reduce → ~15 us
+        //
+        // Threshold: Only use this optimization when inner_size >= 256 (strided access hurts)
+        if (args.axes.size() == 1 && device_ == Device::CUDA && shape_.rank() >= 2) {
+            int dim = args.axes[0];
+            if (dim < 0)
+                dim += static_cast<int>(shape_.rank());
+
+            if (dim >= 0 && dim < static_cast<int>(shape_.rank()) - 1) {
+                // Calculate inner_size (product of dims after the reduction dim)
+                size_t inner_size = 1;
+                for (size_t i = dim + 1; i < shape_.rank(); ++i) {
+                    inner_size *= shape_[i];
+                }
+
+                // Transpose+contiguous+reduce is faster than strided segmented reduce
+                // The copy overhead is offset by better memory coalescing in reduction
+                if (inner_size >= 256) {
+                    // Build permutation to move dim to the last position
+                    // e.g., for dim=0, rank=2: [0,1] → [1,0]
+                    // e.g., for dim=1, rank=3: [0,1,2] → [0,2,1]
+                    std::vector<int> perm;
+                    for (size_t i = 0; i < shape_.rank(); ++i) {
+                        if (static_cast<int>(i) != dim) {
+                            perm.push_back(static_cast<int>(i));
+                        }
+                    }
+                    perm.push_back(dim); // dim goes to the last position
+
+                    LOG_DEBUG("[REDUCE TRANSPOSE] dim={}, inner_size={}, perm=[{}], shape=[{}]",
+                              dim, inner_size,
+                              perm.size() > 0 ? std::to_string(perm[0]) + (perm.size() > 1 ? "," + std::to_string(perm[1]) : "") + (perm.size() > 2 ? "," + std::to_string(perm[2]) : "") : "",
+                              shape_.rank() > 0 ? std::to_string(shape_[0]) + (shape_.rank() > 1 ? "," + std::to_string(shape_[1]) : "") + (shape_.rank() > 2 ? "," + std::to_string(shape_[2]) : "") : "");
+
+                    // Permute and make contiguous (this does the transpose copy)
+                    Tensor transposed = this->permute(perm).contiguous();
+
+                    LOG_DEBUG("[REDUCE TRANSPOSE] transposed shape=[{}], is_contiguous={}",
+                              transposed.shape().rank() > 0 ? std::to_string(transposed.shape()[0]) + (transposed.shape().rank() > 1 ? "," + std::to_string(transposed.shape()[1]) : "") + (transposed.shape().rank() > 2 ? "," + std::to_string(transposed.shape()[2]) : "") : "",
+                              transposed.is_contiguous() ? "true" : "false");
+
+                    // Verify transposed tensor has expected number of elements
+                    LOG_DEBUG("[REDUCE TRANSPOSE] orig numel={}, transposed numel={}", numel(), transposed.numel());
+
+                    // Now reduce along the LAST dimension (which is contiguous)
+                    ReduceArgs new_args = args;
+                    new_args.axes = {static_cast<int>(transposed.shape().rank()) - 1}; // Use transposed.shape()!
+
+                    return transposed.reduce(op, new_args);
+                }
+            }
+        }
+
         // Reduce kernel expects contiguous memory
         const Tensor* input = this;
         Tensor contiguous_copy;
@@ -816,6 +896,149 @@ namespace lfs::core {
                 return result;
             }
 
+            // Handle Bool dtype for Any/All operations
+            if (input->dtype_ == DataType::Bool && (op == ReduceOp::Any || op == ReduceOp::All)) {
+                // For non-contiguous tensors, make contiguous first for correct linear access
+                const Tensor* src_tensor = input;
+                Tensor contiguous_copy;
+                if (!input->is_contiguous_) {
+                    contiguous_copy = input->contiguous();
+                    src_tensor = &contiguous_copy;
+                }
+
+                const unsigned char* src = static_cast<const unsigned char*>(src_tensor->data_ptr());
+                unsigned char* dst = static_cast<unsigned char*>(result.data_ptr());
+
+                // Full reduction to scalar
+                if (axes.size() == input->shape_.rank()) {
+                    if (op == ReduceOp::Any) {
+                        bool any_true = false;
+                        for (size_t i = 0; i < src_tensor->numel(); ++i) {
+                            if (src[i]) {
+                                any_true = true;
+                                break;
+                            }
+                        }
+                        dst[0] = any_true ? 1 : 0;
+                    } else { // ReduceOp::All
+                        bool all_true = true;
+                        for (size_t i = 0; i < src_tensor->numel(); ++i) {
+                            if (!src[i]) {
+                                all_true = false;
+                                break;
+                            }
+                        }
+                        dst[0] = all_true ? 1 : 0;
+                    }
+                    return result;
+                }
+
+                // Axis-specific reduction for Bool
+                // Build mask of which dimensions are reduced
+                std::vector<bool> is_reduced_dim(input->shape_.rank(), false);
+                for (int ax : axes) {
+                    int resolved = input->resolve_dim(ax);
+                    if (resolved >= 0 && resolved < static_cast<int>(input->shape_.rank())) {
+                        is_reduced_dim[resolved] = true;
+                    }
+                }
+
+                const auto& input_strides = input->strides_;
+                std::vector<size_t> out_shape_vec;
+                for (size_t i = 0; i < input->shape_.rank(); ++i) {
+                    if (!is_reduced_dim[i]) {
+                        out_shape_vec.push_back(input->shape_[i]);
+                    }
+                }
+
+                std::vector<size_t> output_strides;
+                if (!out_shape_vec.empty()) {
+                    output_strides.resize(out_shape_vec.size());
+                    output_strides.back() = 1;
+                    for (int i = static_cast<int>(out_shape_vec.size()) - 2; i >= 0; --i) {
+                        output_strides[i] = output_strides[i + 1] * out_shape_vec[i + 1];
+                    }
+                }
+
+                size_t output_elements = result.numel();
+
+                // Calculate how many elements to reduce per output element
+                size_t reduce_count = 1;
+                std::vector<size_t> reduced_dims;
+                for (size_t i = 0; i < input->shape_.rank(); ++i) {
+                    if (is_reduced_dim[i]) {
+                        reduced_dims.push_back(i);
+                        reduce_count *= input->shape_[i];
+                    }
+                }
+
+                // Perform reduction
+                for (size_t out_idx = 0; out_idx < output_elements; ++out_idx) {
+                    // Convert output linear index to coordinates in output space
+                    std::vector<size_t> out_coords;
+                    if (!out_shape_vec.empty()) {
+                        out_coords.resize(out_shape_vec.size());
+                        size_t temp = out_idx;
+                        for (size_t i = 0; i < out_shape_vec.size(); ++i) {
+                            out_coords[i] = temp / output_strides[i];
+                            temp %= output_strides[i];
+                        }
+                    }
+
+                    // Map output coords back to base input coords
+                    std::vector<size_t> base_input_coords(input->shape_.rank());
+                    size_t out_coord_idx = 0;
+                    for (size_t i = 0; i < input->shape_.rank(); ++i) {
+                        if (!is_reduced_dim[i]) {
+                            base_input_coords[i] = out_coords[out_coord_idx++];
+                        } else {
+                            base_input_coords[i] = 0;
+                        }
+                    }
+
+                    // Initialize result with identity value
+                    bool result_val = (op == ReduceOp::All); // All starts true, Any starts false
+
+                    // Iterate through all combinations of reduced dimensions
+                    for (size_t r = 0; r < reduce_count; ++r) {
+                        // Compute coordinates in the reduced dimensions
+                        size_t temp_r = r;
+                        std::vector<size_t> full_input_coords = base_input_coords;
+
+                        // Fill in reduced dimensions - work backwards for row-major order
+                        for (int rd_idx = static_cast<int>(reduced_dims.size()) - 1; rd_idx >= 0; --rd_idx) {
+                            size_t dim = reduced_dims[rd_idx];
+                            full_input_coords[dim] = temp_r % input->shape_[dim];
+                            temp_r /= input->shape_[dim];
+                        }
+
+                        // Calculate linear input index
+                        size_t in_idx = 0;
+                        for (size_t i = 0; i < input->shape_.rank(); ++i) {
+                            in_idx += full_input_coords[i] * input_strides[i];
+                        }
+
+                        // Apply reduction operation
+                        bool val = src[in_idx] != 0;
+                        if (op == ReduceOp::Any) {
+                            if (val) {
+                                result_val = true;
+                                break; // Short-circuit: found a true value
+                            }
+                        } else { // ReduceOp::All
+                            if (!val) {
+                                result_val = false;
+                                break; // Short-circuit: found a false value
+                            }
+                        }
+                    }
+
+                    dst[out_idx] = result_val ? 1 : 0;
+                }
+
+                return result;
+            }
+
             // Float32 implementation
             const float* src = static_cast<const float*>(input->data_ptr());
             float* dst = static_cast<float*>(result.data_ptr());
@@ -868,10 +1091,8 @@ namespace lfs::core {
                 }
             }
 
-            // Calculate input strides
-            auto input_strides = input->shape_.strides();
+            const auto& input_strides = input->strides_;
 
-            // Calculate output strides
             std::vector<size_t> out_shape_vec;
             for (size_t i = 0; i < input->shape_.rank(); ++i) {
                 if (!is_reduced_dim[i]) {

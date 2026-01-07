@@ -8,6 +8,7 @@
 #include "command/commands/cropbox_command.hpp"
 #include "command/commands/transform_command.hpp"
 #include "core/events.hpp"
+#include "core/parameters.hpp"
 #include "gui/panels/gizmo_toolbar.hpp"
 #include "gui/panels/menu_bar.hpp"
 #include "gui/panels/sequencer_settings_panel.hpp"
@@ -17,12 +18,17 @@
 #include "gui/utils/drag_drop_native.hpp"
 #include "sequencer/sequencer_controller.hpp"
 #include "sequencer/sequencer_panel.hpp"
+#include "io/loader.hpp"
+#include "windows/disk_space_error_dialog.hpp"
+#include "windows/exit_confirmation_popup.hpp"
 #include "windows/export_dialog.hpp"
 #include "windows/notification_popup.hpp"
+#include "windows/resume_checkpoint_popup.hpp"
 #include "windows/save_directory_popup.hpp"
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include <atomic>
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -93,6 +99,10 @@ namespace lfs::vis {
             [[nodiscard]] SequencerController& sequencer() { return sequencer_controller_; }
             [[nodiscard]] const SequencerController& sequencer() const { return sequencer_controller_; }
 
+            // Exit confirmation
+            void requestExitConfirmation();
+            bool isExitConfirmationPending() const;
+
             // Input capture for key rebinding
             bool isCapturingInput() const;
             bool isModalWindowOpen() const;
@@ -101,6 +111,7 @@ namespace lfs::vis {
 
         private:
             void setupEventHandlers();
+            void checkCudaVersionAndNotify();
             void applyDefaultStyle();
             void updateViewportRegion();
             void updateViewportFocus();
@@ -115,6 +126,9 @@ namespace lfs::vis {
             std::unique_ptr<ExportDialog> export_dialog_;
             std::unique_ptr<NotificationPopup> notification_popup_;
             std::unique_ptr<SaveDirectoryPopup> save_directory_popup_;
+            std::unique_ptr<ResumeCheckpointPopup> resume_checkpoint_popup_;
+            std::unique_ptr<ExitConfirmationPopup> exit_confirmation_popup_;
+            std::unique_ptr<DiskSpaceErrorDialog> disk_space_error_dialog_;
 
             // UI state only
             std::unordered_map<std::string, bool> window_states_;
@@ -274,10 +288,46 @@ namespace lfs::vis {
             // Sequencer UI state
             panels::SequencerUIState sequencer_ui_state_;
 
+            // Async dataset import state
+            struct ImportState {
+                std::atomic<bool> active{false};
+                std::atomic<bool> show_completion{false};
+                std::atomic<bool> load_complete{false};
+                std::atomic<float> progress{0.0f};
+                std::mutex mutex;
+                // Protected by mutex:
+                std::filesystem::path path;
+                std::string stage;
+                std::string dataset_type;
+                std::string error;
+                size_t num_images{0};
+                size_t num_points{0};
+                bool success{false};
+                std::chrono::steady_clock::time_point completion_time;
+                std::optional<lfs::io::LoadResult> load_result;
+                lfs::core::param::TrainingParameters params;
+                std::unique_ptr<std::jthread> thread;
+            };
+            ImportState import_state_;
+
+            void startAsyncImport(const std::filesystem::path& path,
+                                  const lfs::core::param::TrainingParameters& params);
+            void checkAsyncImportCompletion();
+            void applyLoadedDataToScene();
+
             void renderExportOverlay();
             void renderVideoExportOverlay();
+            void renderImportOverlay();
             void renderEmptyStateOverlay();
             void renderDragDropOverlay();
+            void renderStartupOverlay();
+
+            // Startup overlay state
+            bool show_startup_overlay_ = true;
+            unsigned int startup_logo_texture_ = 0;
+            unsigned int startup_core11_texture_ = 0;
+            int startup_logo_width_ = 0, startup_logo_height_ = 0;
+            int startup_core11_width_ = 0, startup_core11_height_ = 0;
             void startAsyncExport(lfs::core::ExportFormat format,
                                   const std::filesystem::path& path,
                                   std::unique_ptr<lfs::core::SplatData> data);
@@ -288,7 +338,7 @@ namespace lfs::vis {
             bool isExporting() const { return export_state_.active.load(); }
             bool isExportingVideo() const { return video_export_state_.active.load(); }
 
-            // Native drag-drop handler for visual feedback
+            // Native drag-drop handler
             NativeDragDrop drag_drop_;
             bool drag_drop_hovering_ = false;
         };

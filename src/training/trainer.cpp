@@ -11,10 +11,12 @@
 #include "core/events.hpp"
 #include "core/image_io.hpp"
 #include "core/logger.hpp"
+#include "core/path_utils.hpp"
 #include "core/splat_data_export.hpp"
 #include "core/splat_data_transform.hpp"
 #include "core/tensor/internal/memory_pool.hpp"
 #include "io/cache_image_loader.hpp"
+#include "io/exporter.hpp"
 #include "io/filesystem_utils.hpp"
 #include "lfs/kernels/ssim.cuh"
 #include "losses/losses.hpp"
@@ -24,14 +26,14 @@
 #endif
 #include "rasterization/fast_rasterizer.hpp"
 #include "rasterization/gsplat_rasterizer.hpp"
-#include "strategies/default_strategy.hpp"
+#include "strategies/adc.hpp"
 #include "strategies/mcmc.hpp"
 #include "visualizer/scene/scene.hpp"
 
 #include <filesystem>
 
 #include <atomic>
-#include <chrono>
+#include <cmath>
 #include <cuda_runtime.h>
 #include <expected>
 #include <memory>
@@ -142,7 +144,7 @@ namespace lfs::training {
         if (masks_found == 0) {
             return std::unexpected(std::format(
                 "Mask mode enabled but no masks found in {}/masks/",
-                params_.dataset.data_path.string()));
+                lfs::core::path_to_utf8(params_.dataset.data_path)));
         }
 
         LOG_INFO("Found {} masks{}", masks_found, opt.invert_masks ? " (inverted)" : "");
@@ -162,42 +164,34 @@ namespace lfs::training {
 
         const auto mode = opt_params.mask_mode;
         const Tensor mask_2d = mask.ndim() == 3 ? mask.squeeze(0) : mask;
-        const Tensor mask_expanded = mask_2d.unsqueeze(0).expand({static_cast<int>(rendered.shape()[0]),
-                                                                  static_cast<int>(mask_2d.shape()[0]),
-                                                                  static_cast<int>(mask_2d.shape()[1])});
-        const Tensor mask_sum = mask_expanded.sum() + EPSILON;
 
         Tensor loss, grad, grad_alpha;
 
         if (mode == param::MaskMode::Segment || mode == param::MaskMode::Ignore) {
-            // Masked L1 loss
-            const Tensor l1_diff = (rendered - gt_image).abs();
-            const Tensor masked_l1 = (l1_diff * mask_expanded).sum() / mask_sum;
-            const Tensor sign_diff = (rendered - gt_image).sign();
-            Tensor l1_grad = sign_diff * mask_expanded / mask_sum;
-
             if (opt_params.lambda_dssim > 0.0f) {
-                // Masked SSIM (same padding to preserve dimensions)
-                const auto rendered_4d = rendered.unsqueeze(0);
-                const auto gt_4d = gt_image.unsqueeze(0);
-                auto ssim_result = lfs::training::kernels::ssim_forward_map(rendered_4d, gt_4d, false);
+                // Use FUSED masked L1+SSIM kernel
+                auto [loss_tensor, ctx] = lfs::training::kernels::masked_fused_l1_ssim_forward(
+                    rendered, gt_image, mask_2d, opt_params.lambda_dssim, masked_fused_workspace_);
 
-                const Tensor ssim_map_3d = ssim_result.ssim_map.squeeze(0);
-                const Tensor masked_ssim = (ssim_map_3d * mask_expanded).sum() / mask_sum;
-                const Tensor ssim_loss = Tensor::full({}, 1.0f, rendered.device()) - masked_ssim;
+                grad = lfs::training::kernels::masked_fused_l1_ssim_backward(ctx, masked_fused_workspace_);
+                loss = loss_tensor;
 
-                const float l1_weight = 1.0f - opt_params.lambda_dssim;
-                const float ssim_weight = opt_params.lambda_dssim;
-                loss = masked_l1 * l1_weight + ssim_loss * ssim_weight;
-
-                // SSIM backward with per-pixel gradient: d(loss)/d(ssim_map[i]) = -mask[i] / mask_sum
-                const Tensor mask_4d = mask_expanded.unsqueeze(0);
-                const Tensor dL_dmap = mask_4d * (-1.0f) / mask_sum;
-                const Tensor ssim_grad = lfs::training::kernels::ssim_backward_with_grad_map(ssim_result.ctx, dL_dmap).squeeze(0);
-                grad = l1_grad * l1_weight + ssim_grad * ssim_weight;
+                // Squeeze gradient to match input dimensions (loss is scalar, no adjustment needed)
+                if (grad.ndim() == 4 && rendered.ndim() == 3) {
+                    grad = grad.squeeze(0);
+                }
             } else {
+                // Pure L1 with mask (no SSIM)
+                const Tensor mask_expanded = mask_2d.unsqueeze(0).expand({static_cast<int>(rendered.shape()[0]),
+                                                                          static_cast<int>(mask_2d.shape()[0]),
+                                                                          static_cast<int>(mask_2d.shape()[1])});
+                const Tensor mask_sum = mask_expanded.sum() + EPSILON;
+
+                const Tensor l1_diff = (rendered - gt_image).abs();
+                const Tensor masked_l1 = (l1_diff * mask_expanded).sum() / mask_sum;
+                const Tensor sign_diff = (rendered - gt_image).sign();
+                grad = sign_diff * mask_expanded / mask_sum;
                 loss = masked_l1;
-                grad = l1_grad;
             }
 
             // Segment: opacity penalty for background
@@ -417,8 +411,8 @@ namespace lfs::training {
                     strategy_ = std::make_unique<MCMC>(*model);
                     LOG_DEBUG("Created MCMC strategy from Scene model");
                 } else {
-                    strategy_ = std::make_unique<DefaultStrategy>(*model);
-                    LOG_DEBUG("Created default strategy from Scene model");
+                    strategy_ = std::make_unique<ADC>(*model);
+                    LOG_DEBUG("Created ADC strategy from Scene model");
                 }
             }
 
@@ -446,23 +440,29 @@ namespace lfs::training {
 
             // Initialize sparsity optimizer
             if (params.optimization.enable_sparsity) {
-                constexpr int SPARSITY_UPDATE_INTERVAL = 50;
-                const int base_iterations = params.optimization.iterations;
-                const int total_iterations = base_iterations + params.optimization.sparsify_steps;
-                params_.optimization.iterations = total_iterations;
+                constexpr int UPDATE_INTERVAL = 50;
+                const int sparsify_steps = params.optimization.sparsify_steps;
+                const int stored_iters = static_cast<int>(params.optimization.iterations);
 
-                const ADMMSparsityOptimizer::Config sparsity_config{
-                    .sparsify_steps = params.optimization.sparsify_steps,
+                // Checkpoint already has total iterations; fresh start needs sparsify_steps added
+                const bool is_resume = params.resume_checkpoint.has_value();
+                const int base_iters = is_resume ? (stored_iters - sparsify_steps) : stored_iters;
+
+                if (!is_resume) {
+                    params_.optimization.iterations = static_cast<size_t>(base_iters + sparsify_steps);
+                }
+
+                const ADMMSparsityOptimizer::Config config{
+                    .sparsify_steps = sparsify_steps,
                     .init_rho = params.optimization.init_rho,
                     .prune_ratio = params.optimization.prune_ratio,
-                    .update_every = SPARSITY_UPDATE_INTERVAL,
-                    .start_iteration = base_iterations};
+                    .update_every = UPDATE_INTERVAL,
+                    .start_iteration = base_iters};
 
-                sparsity_optimizer_ = SparsityOptimizerFactory::create("admm", sparsity_config);
+                sparsity_optimizer_ = SparsityOptimizerFactory::create("admm", config);
                 if (sparsity_optimizer_) {
-                    LOG_INFO("Sparsity: base={}, start={}, steps={}, prune={}%, rho={}",
-                             base_iterations, base_iterations, params.optimization.sparsify_steps,
-                             params.optimization.prune_ratio * 100, params.optimization.init_rho);
+                    LOG_INFO("Sparsity: base={}, steps={}, prune={:.0f}%",
+                             base_iters, sparsify_steps, params.optimization.prune_ratio * 100);
                 }
             }
 
@@ -609,14 +609,14 @@ namespace lfs::training {
             LOG_INFO("Training resumed at iteration {}", iter);
         }
 
-        // Handle save request - save a real checkpoint (not just PLY)
         if (save_requested_.exchange(false)) {
-            LOG_INFO("Saving checkpoint at iteration {}...", iter);
+            LOG_INFO("Saving checkpoint and PLY at iteration {}...", iter);
+            save_ply(params_.dataset.output_path, iter, /*join=*/false);
             auto result = save_checkpoint(iter);
             if (result) {
                 auto checkpoint_path = params_.dataset.output_path / "checkpoints" /
                                        std::format("checkpoint_{}.resume", iter);
-                LOG_INFO("Checkpoint saved to {}", checkpoint_path.string());
+                LOG_INFO("Checkpoint and PLY saved to {}", lfs::core::path_to_utf8(params_.dataset.output_path));
             } else {
                 LOG_ERROR("Failed to save checkpoint: {}", result.error());
             }
@@ -825,10 +825,12 @@ namespace lfs::training {
                 std::optional<GsplatRasterizeContext> gsplat_ctx;
 
                 if (params_.optimization.gut) {
-                    // GUT mode: use gsplat rasterizer (no tiling support yet)
+                    const int tw = (num_tiles > 1) ? tile_width : 0;
+                    const int th = (num_tiles > 1) ? tile_height : 0;
                     auto rasterize_result = gsplat_rasterize_forward(
                         *cam, strategy_->get_model(), bg,
-                        1.0f, false, GsplatRenderMode::RGB, true /* use_gut */);
+                        tile_x_offset, tile_y_offset, tw, th,
+                        1.0f, false, GsplatRenderMode::RGB, true);
 
                     if (!rasterize_result) {
                         nvtxRangePop(); // rasterize_forward
@@ -844,7 +846,8 @@ namespace lfs::training {
                         *cam, strategy_->get_model(), bg,
                         tile_x_offset, tile_y_offset,
                         (num_tiles > 1) ? tile_width : 0, // 0 means full image
-                        (num_tiles > 1) ? tile_height : 0);
+                        (num_tiles > 1) ? tile_height : 0,
+                        params_.optimization.mip_filter);
 
                     // Check for OOM error
                     if (!rasterize_result) {
@@ -855,10 +858,10 @@ namespace lfs::training {
 
                             // Handle OOM by switching tile mode
                             if (tile_mode == TileMode::Four) {
-                                // Already at maximum tiling - can't tile further, stop gracefully
-                                LOG_ERROR("OUT OF MEMORY at maximum tile mode (2x2). Stopping training gracefully.");
+                                // Already at maximum tiling - can't tile further, return error
+                                LOG_ERROR("OUT OF MEMORY at maximum tile mode (2x2). Cannot continue training.");
                                 LOG_ERROR("Arena error: {}", error);
-                                return StepResult::Stop;
+                                return std::unexpected(error);
                             } else {
                                 // Upgrade to next tile mode
                                 TileMode new_mode = (tile_mode == TileMode::One) ? TileMode::Two : TileMode::Four;
@@ -901,12 +904,18 @@ namespace lfs::training {
 
                 const bool use_mask = params_.optimization.mask_mode != lfs::core::param::MaskMode::None && cam->has_mask();
                 if (use_mask) {
-                    // Load mask (cached after first load)
-                    auto mask = cam->load_and_get_mask(
-                        params_.dataset.resize_factor,
-                        params_.dataset.max_width,
-                        params_.optimization.invert_masks,
-                        params_.optimization.mask_threshold);
+                    // Use pipelined mask if available, otherwise load from camera (fallback for validation, etc.)
+                    lfs::core::Tensor mask;
+                    if (pipelined_mask_.is_valid() && pipelined_mask_.numel() > 0) {
+                        mask = pipelined_mask_;
+                    } else {
+                        // Fallback: load mask from camera (cached after first load)
+                        mask = cam->load_and_get_mask(
+                            params_.dataset.resize_factor,
+                            params_.dataset.max_width,
+                            params_.optimization.invert_masks,
+                            params_.optimization.mask_threshold);
+                    }
 
                     // Extract mask tile if tiling
                     lfs::core::Tensor mask_tile = mask;
@@ -1058,6 +1067,10 @@ namespace lfs::training {
                                       : loss_tensor_gpu;
                 loss_value = total_loss.item<float>();
 
+                if (std::isnan(loss_value) || std::isinf(loss_value)) {
+                    return std::unexpected(std::format("NaN/Inf loss at iteration {}", iter));
+                }
+
                 current_loss_ = loss_value;
                 if (progress_) {
                     progress_->update(iter, loss_value,
@@ -1117,12 +1130,13 @@ namespace lfs::training {
                     LOG_INFO("{}", metrics.to_string());
                 }
 
-                // Save model at specified steps
+                // Save checkpoint (not PLY) at specified steps
                 for (size_t save_step : params_.optimization.save_steps) {
                     if (iter == static_cast<int>(save_step) && iter != params_.optimization.iterations) {
-                        const bool join_threads = (iter == params_.optimization.save_steps.back());
-                        auto save_path = params_.dataset.output_path;
-                        save_ply(save_path, iter, /*join=*/join_threads);
+                        auto result = save_checkpoint(iter);
+                        if (!result) {
+                            LOG_WARN("Failed to save checkpoint at iteration {}: {}", iter, result.error());
+                        }
                     }
                 }
 
@@ -1204,7 +1218,7 @@ namespace lfs::training {
         ready_to_start_ = true; // Skip GUI wait for now
 
         is_running_ = true; // Now we can start
-        LOG_INFO("Starting training loop with {} workers", params_.optimization.num_workers);
+        LOG_INFO("Starting training loop");
         // initializing image loader
         auto& cache_loader = lfs::io::CacheLoader::getInstance(params_.dataset.loading_params.use_cpu_memory, params_.dataset.loading_params.use_fs_cache);
         cache_loader.reset_cache();
@@ -1235,7 +1249,6 @@ namespace lfs::training {
         try {
             // Start from current_iteration_ (allows resume from checkpoint)
             int iter = current_iteration_.load() > 0 ? current_iteration_.load() + 1 : 1;
-            const int num_workers = params_.optimization.num_workers;
             const RenderMode render_mode = RenderMode::RGB;
 
             if (progress_) {
@@ -1244,29 +1257,59 @@ namespace lfs::training {
                                   strategy_->is_refining(iter));
             }
 
-            // Use infinite dataloader to avoid epoch restarts
-            auto train_dataloader = create_infinite_dataloader_from_dataset(train_dataset_, num_workers);
+            // Conservative prefetch to avoid VRAM exhaustion
+            lfs::io::PipelinedLoaderConfig pipelined_config;
+            pipelined_config.jpeg_batch_size = 8;
+            pipelined_config.prefetch_count = 8;
+            pipelined_config.output_queue_size = 4;
+            pipelined_config.io_threads = 2;
+
+            // Non-JPEG images (PNG, WebP) need CPU decoding - use more threads until cache warms
+            constexpr float NON_JPEG_THRESHOLD = 0.1f;
+            constexpr size_t MIN_COLD_THREADS = 4;
+            constexpr size_t COLD_PREFETCH_COUNT = 16;
+            const float non_jpeg_ratio = train_dataset_->get_non_jpeg_ratio();
+            if (non_jpeg_ratio > NON_JPEG_THRESHOLD) {
+                const size_t cold_threads = std::max(MIN_COLD_THREADS,
+                                                     static_cast<size_t>(std::thread::hardware_concurrency() / 2));
+                pipelined_config.cold_process_threads = cold_threads;
+                pipelined_config.prefetch_count = COLD_PREFETCH_COUNT;
+                LOG_INFO("{:.0f}% non-JPEG images, using {} cold threads", non_jpeg_ratio * 100.0f, cold_threads);
+            }
+
+            // Configure mask loading if masks are enabled
+            PipelinedMaskConfig mask_pipeline_config;
+            if (params_.optimization.mask_mode != lfs::core::param::MaskMode::None) {
+                mask_pipeline_config.load_masks = true;
+                mask_pipeline_config.invert_masks = params_.optimization.invert_masks;
+                mask_pipeline_config.mask_threshold = params_.optimization.mask_threshold;
+                LOG_INFO("Mask loading enabled in pipeline (invert={}, threshold={})",
+                         mask_pipeline_config.invert_masks, mask_pipeline_config.mask_threshold);
+            }
+
+            auto train_dataloader = create_infinite_pipelined_dataloader(
+                train_dataset_, pipelined_config, mask_pipeline_config);
 
             LOG_DEBUG("Starting training iterations");
-            // Single loop without epochs
             while (iter <= params_.optimization.iterations) {
-                // Update iteration tracker for memory profiling
                 lfs::core::CudaMemoryPool::instance().set_iteration(iter);
-
-                if (stop_token.stop_requested() || stop_requested_.load()) {
+                if (stop_token.stop_requested() || stop_requested_.load())
                     break;
-                }
+                if (callback_busy_.load())
+                    cudaStreamSynchronize(callback_stream_);
 
                 // Get next batch from dataloader
-                auto batch_opt = train_dataloader->next();
-                if (!batch_opt) {
+                auto example_opt = train_dataloader->next();
+                if (!example_opt) {
                     LOG_ERROR("DataLoader returned nullopt unexpectedly");
                     break;
                 }
-                auto& batch = *batch_opt;
-                auto camera_with_image = batch[0].data;
-                lfs::core::Camera* cam = camera_with_image.camera;
-                lfs::core::Tensor gt_image = std::move(camera_with_image.image);
+                auto& example = *example_opt;
+                lfs::core::Camera* cam = example.data.camera;
+                lfs::core::Tensor gt_image = std::move(example.data.image);
+
+                // Store pipelined mask for use in train_step
+                pipelined_mask_ = example.mask.has_value() ? std::move(*example.mask) : lfs::core::Tensor();
 
                 auto step_result = train_step(iter, cam, gt_image, render_mode, stop_token);
                 if (!step_result) {
@@ -1404,9 +1447,28 @@ namespace lfs::training {
         }
     }
 
-    void Trainer::save_ply(const std::filesystem::path& save_path, int iter_num, bool join_threads) {
-        // Save PLY format - join_threads controls sync vs async
-        lfs::core::save_ply(strategy_->get_model(), save_path, iter_num, join_threads);
+    void Trainer::save_ply(const std::filesystem::path& save_path, const int iter_num, const bool join_threads) {
+        const lfs::io::PlySaveOptions ply_options{
+            .output_path = save_path / ("splat_" + std::to_string(iter_num) + ".ply"),
+            .binary = true,
+            .async = !join_threads};
+
+        const auto ply_result = lfs::io::save_ply(strategy_->get_model(), ply_options);
+        if (!ply_result) {
+            if (ply_result.error().code == lfs::io::ErrorCode::INSUFFICIENT_DISK_SPACE) {
+                lfs::core::events::state::DiskSpaceSaveFailed{
+                    .iteration = iter_num,
+                    .path = ply_options.output_path,
+                    .error = ply_result.error().message,
+                    .required_bytes = ply_result.error().required_bytes,
+                    .available_bytes = ply_result.error().available_bytes,
+                    .is_disk_space_error = true,
+                    .is_checkpoint = false}
+                    .emit();
+            }
+            LOG_WARN("Failed to save PLY: {}", ply_result.error().message);
+            return; // Don't save checkpoint if PLY failed
+        }
 
         // Save checkpoint alongside PLY for training resumption
         auto ckpt_result = lfs::training::save_checkpoint(
@@ -1415,7 +1477,7 @@ namespace lfs::training {
             LOG_WARN("Failed to save checkpoint: {}", ckpt_result.error());
         }
 
-        LOG_DEBUG("PLY save initiated: {} (sync={})", save_path.string(), join_threads);
+        LOG_DEBUG("PLY save initiated: {} (sync={})", lfs::core::path_to_utf8(save_path), join_threads);
     }
 
     std::expected<void, std::string> Trainer::save_checkpoint(int iteration) {
@@ -1426,6 +1488,10 @@ namespace lfs::training {
         return lfs::training::save_checkpoint(
             params_.dataset.output_path, iteration, *strategy_, params_,
             bilateral_grid_.get());
+    }
+
+    void Trainer::save_final_ply_and_checkpoint(const int iteration) {
+        save_ply(params_.dataset.output_path, iteration, /*join=*/true);
     }
 
     std::expected<int, std::string> Trainer::load_checkpoint(const std::filesystem::path& checkpoint_path) {

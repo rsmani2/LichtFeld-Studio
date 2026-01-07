@@ -106,6 +106,10 @@ namespace lfs::vis {
             return input_controller_.get();
         }
 
+        DataLoadingService* getDataLoader() {
+            return data_loader_.get();
+        }
+
         EditorContext& getEditorContext() { return editor_context_; }
         const EditorContext& getEditorContext() const { return editor_context_; }
 
@@ -142,6 +146,7 @@ namespace lfs::vis {
         void setupComponentConnections();
         void handleTrainingCompleted(const lfs::core::events::state::TrainingCompleted& event);
         void handleLoadFileCommand(const lfs::core::events::cmd::LoadFile& cmd);
+        void handleLoadConfigFile(const std::filesystem::path& path);
         void handleSwitchToLatestCheckpoint();
 
         // Tool initialization

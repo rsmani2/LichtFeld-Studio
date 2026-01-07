@@ -52,8 +52,10 @@ namespace lfs::core {
             EVENT(SwitchToLatestCheckpoint, );
             EVENT(SaveCheckpoint, std::optional<int> iteration;);
             EVENT(LoadFile, std::filesystem::path path; bool is_dataset;);
-            EVENT(LoadCheckpointForTraining, std::filesystem::path path;);
+            EVENT(LoadCheckpointForTraining, std::filesystem::path checkpoint_path; std::filesystem::path dataset_path; std::filesystem::path output_path;);
+            EVENT(LoadConfigFile, std::filesystem::path path;);
             EVENT(ShowDatasetLoadPopup, std::filesystem::path dataset_path;);
+            EVENT(ShowResumeCheckpointPopup, std::filesystem::path checkpoint_path;);
             EVENT(ClearScene, );
             EVENT(SwitchToEditMode, ); // Keep trained model, discard dataset
             EVENT(ResetCamera, );
@@ -142,6 +144,8 @@ namespace lfs::core {
                   std::optional<std::string> error;
                   size_t num_images;
                   size_t num_points;);
+            EVENT(ConfigLoadFailed, std::filesystem::path path; std::string error;);
+            EVENT(FileDropFailed, std::vector<std::string> files; std::string error;);
 
             // Evaluation
             EVENT(EvaluationStarted, int iteration; size_t num_images;);
@@ -156,6 +160,14 @@ namespace lfs::core {
 
             // System state
             EVENT(CheckpointSaved, int iteration; std::filesystem::path path;);
+            EVENT(DiskSpaceSaveFailed,
+                  int iteration;
+                  std::filesystem::path path;
+                  std::string error;
+                  size_t required_bytes;
+                  size_t available_bytes;
+                  bool is_disk_space_error;
+                  bool is_checkpoint = true;);
             EVENT(MemoryUsage,
                   size_t gpu_used;
                   size_t gpu_total;
@@ -164,12 +176,16 @@ namespace lfs::core {
                   size_t ram_total;
                   float ram_percent;);
             EVENT(FrameRendered, float render_ms; float fps; int num_gaussians;);
+
+            // CUDA version check
+            EVENT(CudaVersionUnsupported, int major; int minor; int min_major; int min_minor;);
         } // namespace state
 
         // ============================================================================
         // UI - User interface updates
         // ============================================================================
         namespace ui {
+            EVENT(FileDropReceived, ); // Emitted when files are dropped onto the window
             EVENT(WindowResized, int width; int height;);
             EVENT(CameraMove, glm::mat3 rotation; glm::vec3 translation;);
             EVENT(SpeedChanged, float current_speed; float max_speed;);
@@ -213,7 +229,7 @@ namespace lfs::core {
             EVENT(TrainingReadyToStart, );
             EVENT(WindowFocusLost, );
         } // namespace internal
-    }     // namespace events
+    } // namespace events
 
     // ============================================================================
     // Convenience functions

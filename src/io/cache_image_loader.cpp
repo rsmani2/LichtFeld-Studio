@@ -5,6 +5,7 @@
 #include "io/cache_image_loader.hpp"
 #include "core/image_io.hpp"
 #include "core/logger.hpp"
+#include "core/path_utils.hpp"
 #include "core/tensor.hpp"
 #include "io/nvcodec_image_loader.hpp"
 
@@ -36,10 +37,12 @@ namespace lfs::io {
         }
 
         std::string generate_short_hash() {
-            static std::random_device rd;
-            static std::mt19937 gen(rd());
-            static std::uniform_int_distribution<> dis(0, 15);
-            static const char hex_chars[] = "0123456789abcdef";
+            static constexpr char hex_chars[] = "0123456789abcdef";
+
+            // Thread-safe: use local RNG objects to avoid data races
+            thread_local std::random_device rd;
+            thread_local std::mt19937 gen(rd());
+            std::uniform_int_distribution<> dis(0, 15);
 
             std::string hash;
             hash.reserve(8);
@@ -147,8 +150,8 @@ namespace lfs::io {
         bool create_done_file(const std::filesystem::path& img_path) {
             auto done_path = img_path;
             done_path += ".done";
-            std::ofstream ofs(done_path, std::ios::trunc);
-            return ofs.good();
+            std::ofstream ofs;
+            return lfs::core::open_file_for_write(done_path, std::ios::trunc, ofs) && ofs.good();
         }
 
         bool does_cache_image_exist(const std::filesystem::path& img_path) {
@@ -175,10 +178,15 @@ namespace lfs::io {
         const std::filesystem::path cache_folder = cache_base / unique_cache_path;
         std::error_code ec;
 
+        // Create LichtFeld temp folder if it doesn't exist
         if (!std::filesystem::exists(cache_base.parent_path())) {
-            LOG_ERROR("Cache base path missing: {}", cache_base.parent_path().string());
-            use_fs_cache_ = false;
-            return;
+            std::filesystem::create_directories(cache_base.parent_path(), ec);
+            if (ec) {
+                LOG_ERROR("Failed to create cache base path: {} - {}", lfs::core::path_to_utf8(cache_base.parent_path()), ec.message());
+                use_fs_cache_ = false;
+                return;
+            }
+            LOG_DEBUG("Created cache base path: {}", lfs::core::path_to_utf8(cache_base.parent_path()));
         }
 
         if (std::filesystem::exists(cache_folder)) {
@@ -198,7 +206,7 @@ namespace lfs::io {
         }
 
         cache_folder_ = cache_folder;
-        LOG_DEBUG("Cache directory: {}", cache_folder.string());
+        LOG_DEBUG("Cache directory: {}", lfs::core::path_to_utf8(cache_folder));
     }
 
     void CacheLoader::reset_cache() {
@@ -228,7 +236,7 @@ namespace lfs::io {
             std::error_code ec;
             std::filesystem::remove_all(entry.path(), ec);
             if (ec) {
-                LOG_ERROR("Failed to remove {}: {}", entry.path().string(), ec.message());
+                LOG_ERROR("Failed to remove {}: {}", lfs::core::path_to_utf8(entry.path()), ec.message());
             }
         }
     }
@@ -247,7 +255,7 @@ namespace lfs::io {
     bool CacheLoader::has_sufficient_memory(std::size_t required_bytes) const {
         const std::size_t available = get_available_physical_memory();
         const std::size_t total = get_total_physical_memory();
-        const std::size_t min_free_bytes = std::max(
+        const std::size_t min_free_bytes = (std::max)(
             static_cast<std::size_t>(total * min_cpu_free_memory_ratio_),
             static_cast<std::size_t>(min_cpu_free_GB_ * BYTES_PER_GB));
         return available > required_bytes + min_free_bytes;
@@ -255,7 +263,7 @@ namespace lfs::io {
 
     void CacheLoader::evict_until_satisfied() {
         const std::size_t total = get_total_physical_memory();
-        const std::size_t min_free_bytes = std::max(
+        const std::size_t min_free_bytes = (std::max)(
             static_cast<std::size_t>(total * min_cpu_free_memory_ratio_),
             static_cast<std::size_t>(min_cpu_free_GB_ * BYTES_PER_GB));
 
@@ -289,7 +297,7 @@ namespace lfs::io {
     }
 
     std::string CacheLoader::generate_cache_key(const std::filesystem::path& path, const LoadParams& params) const {
-        return std::format("{}:rf{}_mw{}", path.string(), params.resize_factor, params.max_width);
+        return std::format("{}:rf{}_mw{}", lfs::core::path_to_utf8(path), params.resize_factor, params.max_width);
     }
 
     lfs::core::Tensor CacheLoader::load_cached_image_from_cpu(
@@ -337,7 +345,7 @@ namespace lfs::io {
         if (!img_data) {
             std::lock_guard lock(cpu_cache_mutex_);
             image_being_loaded_cpu_.erase(cache_key);
-            throw std::runtime_error("Failed to load: " + path.string());
+            throw std::runtime_error("Failed to load: " + lfs::core::path_to_utf8(path));
         }
 
         auto tensor = Tensor::from_blob(img_data,
@@ -391,8 +399,9 @@ namespace lfs::io {
             return load_and_preprocess(data, w, h, c);
         }
 
-        const std::string unique_name = std::format("rf{}_mw{}_{}", params.resize_factor, params.max_width, path.filename().string());
-        const auto cache_img_path = cache_folder_ / unique_name;
+        // Hash avoids Unicode path issues on Windows (operator/ interprets std::string as ANSI)
+        const std::string cache_key = std::format("rf{}_mw{}_{}", params.resize_factor, params.max_width, lfs::core::path_to_utf8(path));
+        const auto cache_img_path = cache_folder_ / (std::to_string(std::hash<std::string>{}(cache_key)) + ".jpg");
 
         std::tuple<unsigned char*, int, int, int> result;
         if (does_cache_image_exist(cache_img_path)) {
@@ -401,23 +410,24 @@ namespace lfs::io {
             result = load_image(path, params.resize_factor, params.max_width);
 
             bool is_being_saved = false;
+            const std::string path_key = lfs::core::path_to_utf8(path);
             {
                 std::lock_guard lock(cache_mutex_);
-                is_being_saved = image_being_saved_.contains(path.string());
+                is_being_saved = image_being_saved_.contains(path_key);
                 if (!is_being_saved) {
-                    image_being_saved_.insert(path.string());
+                    image_being_saved_.insert(path_key);
                 }
             }
 
             if (!is_being_saved) {
                 if (!save_img_data(cache_img_path, result)) {
-                    throw std::runtime_error("Failed to save cache: " + cache_img_path.string());
+                    throw std::runtime_error("Failed to save cache: " + lfs::core::path_to_utf8(cache_img_path));
                 }
                 if (!create_done_file(cache_img_path)) {
-                    throw std::runtime_error("Failed to create .done: " + cache_img_path.string());
+                    throw std::runtime_error("Failed to create .done: " + lfs::core::path_to_utf8(cache_img_path));
                 }
                 std::lock_guard lock(cache_mutex_);
-                image_being_saved_.erase(path.string());
+                image_being_saved_.erase(path_key);
             }
         }
 
@@ -561,7 +571,7 @@ namespace lfs::io {
 
             auto [img_data, width, height, channels] = load_image(path, params.resize_factor, params.max_width);
             if (!img_data) {
-                throw std::runtime_error("Failed to load: " + path.string());
+                throw std::runtime_error("Failed to load: " + lfs::core::path_to_utf8(path));
             }
 
             auto cpu_tensor = Tensor::empty_unpinned(
@@ -576,77 +586,99 @@ namespace lfs::io {
 
     } // anonymous namespace
 
+    namespace {
+        constexpr int CACHE_JPEG_QUALITY = 100;
+    }
+
     lfs::core::Tensor CacheLoader::load_jpeg_with_hardware_decode(
         const std::filesystem::path& path, const LoadParams& params) {
         using namespace lfs::core;
 
         const std::string cache_key = generate_cache_key(path, params);
         std::vector<uint8_t> jpeg_bytes;
-        bool found_in_cache = false;
+        bool from_cache = false;
 
-        // Check cache
         {
             std::lock_guard lock(jpeg_blob_mutex_);
             if (auto it = jpeg_blob_cache_.find(cache_key); it != jpeg_blob_cache_.end()) {
                 it->second.last_access = std::chrono::steady_clock::now();
                 jpeg_bytes = it->second.compressed_data;
-                found_in_cache = true;
+                from_cache = true;
             }
         }
 
-        // Load from disk if not cached
-        if (!found_in_cache) {
-            bool is_being_loaded = false;
-            {
-                std::lock_guard lock(jpeg_blob_mutex_);
-                is_being_loaded = jpeg_being_loaded_.contains(cache_key);
-                if (!is_being_loaded)
-                    jpeg_being_loaded_.insert(cache_key);
+        if (!from_cache) {
+            std::ifstream file;
+            if (!lfs::core::open_file_for_read(path, std::ios::binary | std::ios::ate, file)) {
+                throw std::runtime_error("Failed to open: " + lfs::core::path_to_utf8(path));
             }
-
-            std::ifstream file(path, std::ios::binary | std::ios::ate);
-            if (!file) {
-                if (!is_being_loaded) {
-                    std::lock_guard lock(jpeg_blob_mutex_);
-                    jpeg_being_loaded_.erase(cache_key);
-                }
-                throw std::runtime_error("Failed to open: " + path.string());
-            }
-
             const auto size = file.tellg();
             file.seekg(0, std::ios::beg);
             jpeg_bytes.resize(size);
             if (!file.read(reinterpret_cast<char*>(jpeg_bytes.data()), size)) {
-                if (!is_being_loaded) {
-                    std::lock_guard lock(jpeg_blob_mutex_);
-                    jpeg_being_loaded_.erase(cache_key);
-                }
-                throw std::runtime_error("Failed to read: " + path.string());
-            }
-
-            // Cache if we're the loading thread
-            if (!is_being_loaded) {
-                std::lock_guard lock(jpeg_blob_mutex_);
-                if (has_sufficient_memory(jpeg_bytes.size())) {
-                    evict_jpeg_blobs_if_needed(jpeg_bytes.size());
-                    jpeg_blob_cache_[cache_key] = CachedJpegBlob{
-                        .compressed_data = jpeg_bytes,
-                        .size_bytes = jpeg_bytes.size(),
-                        .last_access = std::chrono::steady_clock::now()};
-                }
-                jpeg_being_loaded_.erase(cache_key);
+                throw std::runtime_error("Failed to read: " + lfs::core::path_to_utf8(path));
             }
         }
 
-        // Check magic bytes
         const bool is_jpeg = jpeg_bytes.size() >= 2 && jpeg_bytes[0] == 0xFF && jpeg_bytes[1] == 0xD8;
 
         if (is_jpeg) {
             try {
                 auto& nvcodec = get_nvcodec_loader();
-                return nvcodec.load_image_from_memory_gpu(jpeg_bytes, params.resize_factor, params.max_width, params.cuda_stream);
+
+                if (from_cache) {
+                    return nvcodec.load_image_from_memory_gpu(jpeg_bytes, 1, 0, params.cuda_stream);
+                }
+
+                const bool needs_resize = (params.resize_factor > 1 || params.max_width > 0);
+                auto tensor = nvcodec.load_image_from_memory_gpu(
+                    jpeg_bytes, params.resize_factor, params.max_width, params.cuda_stream);
+
+                bool should_cache = false;
+                {
+                    std::lock_guard lock(jpeg_blob_mutex_);
+                    should_cache = !jpeg_being_loaded_.contains(cache_key);
+                    if (should_cache) {
+                        jpeg_being_loaded_.insert(cache_key);
+                    }
+                }
+
+                if (should_cache) {
+                    std::vector<uint8_t> cache_bytes;
+                    if (needs_resize) {
+                        // Re-encode resized image
+                        try {
+                            cache_bytes = nvcodec.encode_to_jpeg(tensor, CACHE_JPEG_QUALITY, params.cuda_stream);
+                        } catch (const std::exception& enc_err) {
+                            LOG_DEBUG("[CacheLoader] JPEG re-encode failed: {}, using original bytes", enc_err.what());
+                            cache_bytes = jpeg_bytes; // Fall back to original
+                        } catch (...) {
+                            LOG_DEBUG("[CacheLoader] JPEG re-encode failed with unknown error, using original bytes");
+                            cache_bytes = jpeg_bytes; // Fall back to original
+                        }
+                    } else {
+                        // No resize - cache original bytes directly
+                        cache_bytes = jpeg_bytes;
+                    }
+
+                    const std::size_t cache_size = cache_bytes.size();
+                    std::lock_guard lock(jpeg_blob_mutex_);
+                    if (has_sufficient_memory(cache_size)) {
+                        evict_jpeg_blobs_if_needed(cache_size);
+                        jpeg_blob_cache_[cache_key] = CachedJpegBlob{
+                            .compressed_data = std::move(cache_bytes),
+                            .size_bytes = cache_size,
+                            .last_access = std::chrono::steady_clock::now()};
+                        // Only remove from tracking set after successful caching
+                        jpeg_being_loaded_.erase(cache_key);
+                    } else {
+                        // Memory insufficient - remove from tracking to allow retry later
+                        jpeg_being_loaded_.erase(cache_key);
+                    }
+                }
+                return tensor;
             } catch (const std::exception& e) {
-                LOG_WARN("nvImageCodec failed: {} - using CPU fallback", e.what());
+                LOG_WARN("[CacheLoader] GPU decode failed, using CPU: {}", e.what());
                 return decode_with_cpu_fallback(path, params);
             }
         }
@@ -662,10 +694,20 @@ namespace lfs::io {
         if (nv_image_codec_available_ != NvImageCodecMode::Undetermined)
             return;
 
-        nv_image_codec_available_ = NvCodecImageLoader::is_available()
+        LOG_INFO("[CacheLoader] Checking nvImageCodec availability...");
+
+        // is_available() now runs comprehensive diagnostics and logs detailed info
+        bool available = NvCodecImageLoader::is_available();
+        nv_image_codec_available_ = available
                                         ? NvImageCodecMode::Available
                                         : NvImageCodecMode::UnAvailable;
-        LOG_DEBUG("nvImageCodec: {}", nv_image_codec_available_ == NvImageCodecMode::Available ? "available" : "unavailable");
+
+        if (available) {
+            LOG_INFO("[CacheLoader] nvImageCodec: AVAILABLE - GPU-accelerated JPEG decoding enabled");
+        } else {
+            LOG_WARN("[CacheLoader] nvImageCodec: UNAVAILABLE - will use CPU fallback for all images");
+            LOG_WARN("[CacheLoader] Check diagnostic logs above for details on why nvImageCodec is unavailable");
+        }
     }
 
 } // namespace lfs::io

@@ -6,7 +6,13 @@
 
 #include "core/image_io.hpp"
 #include "core/logger.hpp"
+#include "core/parameter_manager.hpp"
+#include "core/path_utils.hpp"
+#include "core/services.hpp"
+#include "gui/dpi_scale.hpp"
+#include "gui/localization_manager.hpp"
 #include "gui/panels/scene_panel.hpp"
+#include "gui/string_keys.hpp"
 #include "gui/utils/windows_utils.hpp"
 #include "gui/windows/image_preview.hpp"
 #include "internal/resource_paths.hpp"
@@ -21,6 +27,8 @@
 #include <imgui.h>
 
 namespace lfs::vis::gui {
+
+    using namespace lichtfeld::Strings;
 
     using namespace lfs::core::events;
     using lfs::core::ExportFormat;
@@ -58,11 +66,9 @@ namespace lfs::vis::gui {
             }
         }
 
-        constexpr const char* TRAINING_DELETE_TOOLTIP = "Cannot delete while training is in progress";
-
         void showDisabledDeleteTooltip(const bool is_protected) {
             if (is_protected && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
-                ImGui::SetTooltip("%s", TRAINING_DELETE_TOOLTIP);
+                ImGui::SetTooltip("%s", LOC(lichtfeld::Strings::Scene::CANNOT_DELETE_TRAINING));
             }
         }
     } // namespace
@@ -162,7 +168,7 @@ namespace lfs::vis::gui {
     void ScenePanel::render(bool* p_open, const UIContext* ctx) {
         ImGui::PushStyleColor(ImGuiCol_WindowBg, withAlpha(theme().palette.surface_bright, 0.8f));
 
-        if (!ImGui::Begin("Scene", p_open)) {
+        if (!ImGui::Begin(LOC(Window::SCENE), p_open)) {
             ImGui::End();
             ImGui::PopStyleColor();
             return;
@@ -181,8 +187,8 @@ namespace lfs::vis::gui {
         if (hasPLYs(ctx)) {
             renderPLYSceneGraph(ctx);
         } else {
-            ImGui::TextDisabled("No data loaded");
-            ImGui::TextDisabled("Use File menu to import");
+            ImGui::TextDisabled("%s", LOC(lichtfeld::Strings::Scene::NO_DATA_LOADED));
+            ImGui::TextDisabled("%s", LOC(lichtfeld::Strings::Scene::USE_FILE_MENU));
         }
     }
 
@@ -206,21 +212,22 @@ namespace lfs::vis::gui {
         const auto selected_names_vec = scene_manager->getSelectedNodeNames();
         std::unordered_set<std::string> selected_names(selected_names_vec.begin(), selected_names_vec.end());
         const auto& t = theme();
+        const float scale = getDpiScale();
 
         // Search filter
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f, 2.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(4.0f * scale, 2.0f * scale));
         ImGui::PushStyleColor(ImGuiCol_FrameBg, withAlpha(t.palette.surface, 0.5f));
         ImGui::SetNextItemWidth(-1);
-        ImGui::InputTextWithHint("##filter", "Filter...", m_filterText, sizeof(m_filterText));
+        ImGui::InputTextWithHint("##filter", LOC(lichtfeld::Strings::Scene::FILTER), m_filterText, sizeof(m_filterText));
         ImGui::PopStyleColor();
         ImGui::PopStyleVar();
 
         ImGui::Spacing();
 
         // Compact outliner style
-        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 1.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f, 0.0f));
-        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 14.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f * scale, 1.0f * scale));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4.0f * scale, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_IndentSpacing, 14.0f * scale);
         ImGui::PushStyleColor(ImGuiCol_Header, withAlpha(t.palette.primary, 0.3f));
         ImGui::PushStyleColor(ImGuiCol_HeaderHovered, withAlpha(t.palette.primary, 0.4f));
         ImGui::PushStyleColor(ImGuiCol_HeaderActive, withAlpha(t.palette.primary, 0.5f));
@@ -257,7 +264,7 @@ namespace lfs::vis::gui {
         const size_t splat_count = std::ranges::count_if(nodes,
                                                          [](const SceneNode* n) { return n->type == NodeType::SPLAT; });
 
-        const std::string label = std::format("Models ({})", splat_count);
+        const std::string label = std::vformat(LOC(lichtfeld::Strings::Scene::MODELS), std::make_format_args(splat_count));
         if (!ImGui::TreeNodeEx(label.c_str(), FOLDER_FLAGS))
             return;
 
@@ -267,18 +274,20 @@ namespace lfs::vis::gui {
         // Context menu for folder
         theme().pushContextMenuStyle();
         if (ImGui::BeginPopupContextItem("##ModelsMenu")) {
-            if (ImGui::MenuItem("Add PLY...")) {
-                cmd::ShowWindow{.window_name = "file_browser", .show = true}.emit();
+            if (!m_trainerManager->hasTrainer()) {
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::ADD_PLY))) {
+                    cmd::ShowWindow{.window_name = "file_browser", .show = true}.emit();
 #ifdef _WIN32
-                OpenPlyFileDialogNative();
-                cmd::ShowWindow{.window_name = "file_browser", .show = false}.emit();
+                    OpenPlyFileDialogNative();
+                    cmd::ShowWindow{.window_name = "file_browser", .show = false}.emit();
 #endif
+                }
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::ADD_GROUP))) {
+                    cmd::AddGroup{.name = "New Group", .parent_name = ""}.emit();
+                }
+                ImGui::Separator();
             }
-            if (ImGui::MenuItem("Add Group")) {
-                cmd::AddGroup{.name = "New Group", .parent_name = ""}.emit();
-            }
-            ImGui::Separator();
-            if (ImGui::MenuItem("Export...", nullptr, false, splat_count > 0)) {
+            if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::EXPORT), nullptr, false, splat_count > 0)) {
                 cmd::ShowWindow{.window_name = "export_dialog", .show = true}.emit();
             }
             ImGui::EndPopup();
@@ -293,8 +302,8 @@ namespace lfs::vis::gui {
         }
 
         if (!scene.hasNodes()) {
-            ImGui::TextDisabled("No models loaded");
-            ImGui::TextDisabled("Right-click to add...");
+            ImGui::TextDisabled("%s", LOC(lichtfeld::Strings::Scene::NO_MODELS_LOADED));
+            ImGui::TextDisabled("%s", LOC(lichtfeld::Strings::Scene::RIGHT_CLICK_TO_ADD));
         }
 
         ImGui::TreePop();
@@ -339,9 +348,10 @@ namespace lfs::vis::gui {
         const bool parent_is_dataset = parent_node && parent_node->type == NodeType::DATASET;
 
         const auto& t = theme();
+        const float scale = getDpiScale();
         ImDrawList* const draw_list = ImGui::GetWindowDrawList();
 
-        constexpr float ROW_PADDING = 2.0f;
+        const float ROW_PADDING = 2.0f * scale;
         constexpr ImU32 HIGHLIGHT_COLOR = IM_COL32(80, 120, 180, 180);
         constexpr ImU32 SELECTION_COLOR_BASE = IM_COL32(60, 100, 160, 200);
         constexpr ImU32 SELECTION_COLOR_FLASH = IM_COL32(140, 180, 240, 230);
@@ -383,8 +393,8 @@ namespace lfs::vis::gui {
         }
 
         // Scene graph icon layout constants
-        constexpr float ICON_SIZE = 16.0f;
-        constexpr float ICON_SPACING = 2.0f;
+        const float ICON_SIZE = 16.0f * scale;
+        const float ICON_SPACING = 2.0f * scale;
         const ImVec2 icon_sz{ICON_SIZE, ICON_SIZE};
 
         const bool can_drag = canReparent(node, nullptr, scene);
@@ -423,7 +433,7 @@ namespace lfs::vis::gui {
             if (ImGui::ImageButton("##del", static_cast<ImTextureID>(m_icons.trash), icon_sz, {0, 0}, {1, 1}, {0, 0, 0, 0}, trash_tint))
                 cmd::RemovePLY{.name = node.name, .keep_children = false}.emit();
             if (ImGui::IsItemHovered())
-                ImGui::SetTooltip("Delete");
+                ImGui::SetTooltip("%s", LOC(lichtfeld::Strings::Scene::DELETE_NODE));
             ImGui::SameLine(0.0f, ICON_SPACING);
         }
 
@@ -484,9 +494,13 @@ namespace lfs::vis::gui {
             }
 
             // [Mask] - indicator for cameras with masks
+            // Rotate 180° when masks are inverted
             if (has_mask && m_icons.mask) {
                 ImGui::SameLine(0.0f, ICON_SPACING);
-                ImGui::Image(static_cast<ImTextureID>(m_icons.mask), icon_sz, {0, 0}, {1, 1},
+                const bool inverted = services().paramsOrNull() && services().paramsOrNull()->getActiveParams().invert_masks;
+                const ImVec2 uv0 = inverted ? ImVec2(1, 1) : ImVec2(0, 0);
+                const ImVec2 uv1 = inverted ? ImVec2(0, 0) : ImVec2(1, 1);
+                ImGui::Image(static_cast<ImTextureID>(m_icons.mask), icon_sz, uv0, uv1,
                              ImVec4(0.9f, 0.5f, 0.6f, 0.8f), {0, 0, 0, 0});
             }
 
@@ -521,7 +535,7 @@ namespace lfs::vis::gui {
             // Drag source (only for reparentable nodes)
             if (can_drag && ImGui::BeginDragDropSource(ImGuiDragDropFlags_SourceAllowNullID)) {
                 ImGui::SetDragDropPayload("SCENE_NODE", node.name.c_str(), node.name.size() + 1);
-                ImGui::Text("Move: %s", node.name.c_str());
+                ImGui::Text(LOC(lichtfeld::Strings::Scene::MOVE_NODE), node.name.c_str());
                 ImGui::EndDragDropSource();
             }
 
@@ -615,7 +629,7 @@ namespace lfs::vis::gui {
                 };
 
                 if (is_camera) {
-                    if (ImGui::MenuItem("Go to Camera View")) {
+                    if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::GO_TO_CAMERA_VIEW))) {
                         cmd::GoToCamView{.cam_id = node.camera_uid}.emit();
                     }
                     finishNode();
@@ -623,13 +637,13 @@ namespace lfs::vis::gui {
                 }
 
                 if (is_camera_group || parent_is_dataset) {
-                    ImGui::TextDisabled("(No actions)");
+                    ImGui::TextDisabled("%s", LOC(lichtfeld::Strings::Scene::NO_ACTIONS));
                     finishNode();
                     return;
                 }
 
                 if (is_dataset) {
-                    if (ImGui::MenuItem("Delete", nullptr, false, !is_training_protected)) {
+                    if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::DELETE_ITEM), nullptr, false, !is_training_protected)) {
                         cmd::RemovePLY{.name = node.name, .keep_children = false}.emit();
                     }
                     showDisabledDeleteTooltip(is_training_protected);
@@ -638,10 +652,10 @@ namespace lfs::vis::gui {
                 }
 
                 if (is_cropbox) {
-                    if (ImGui::MenuItem("Fit to Scene")) {
+                    if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::FIT_TO_SCENE))) {
                         cmd::FitCropBoxToScene{.use_percentile = false}.emit();
                     }
-                    if (ImGui::MenuItem("Fit to Scene (Trimmed)")) {
+                    if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::FIT_TO_SCENE_TRIMMED))) {
                         cmd::FitCropBoxToScene{.use_percentile = true}.emit();
                     }
                     finishNode();
@@ -649,26 +663,26 @@ namespace lfs::vis::gui {
                 }
 
                 if (is_group) {
-                    if (ImGui::MenuItem("Add Group...")) {
+                    if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::ADD_GROUP_ELLIPSIS))) {
                         cmd::AddGroup{.name = "New Group", .parent_name = node.name}.emit();
                     }
-                    if (ImGui::MenuItem("Merge to Single PLY")) {
+                    if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::MERGE_TO_SINGLE_PLY))) {
                         cmd::MergeGroup{.name = node.name}.emit();
                     }
                     ImGui::Separator();
                 }
-                if (!is_group && ImGui::MenuItem("Export...")) {
+                if (!is_group && ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::EXPORT))) {
                     cmd::ShowWindow{.window_name = "export_dialog", .show = true}.emit();
                 }
-                if (ImGui::MenuItem("Rename"))
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::RENAME)))
                     startRenaming(node.name);
-                if (ImGui::MenuItem("Duplicate"))
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::DUPLICATE_ITEM)))
                     cmd::DuplicateNode{.name = node.name}.emit();
 
-                if (ImGui::BeginMenu("Move to")) {
+                if (ImGui::BeginMenu(LOC(lichtfeld::Strings::Scene::MOVE_TO))) {
                     const auto* parent_node = scene.getNodeById(node.parent_id);
                     if (parent_node) {
-                        if (ImGui::MenuItem("Root")) {
+                        if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::MOVE_TO_ROOT))) {
                             cmd::ReparentNode{.node_name = node.name, .new_parent_name = ""}.emit();
                         }
                         ImGui::Separator();
@@ -684,13 +698,13 @@ namespace lfs::vis::gui {
                         }
                     }
                     if (!found_group && !parent_node) {
-                        ImGui::TextDisabled("No groups available");
+                        ImGui::TextDisabled("%s", LOC(lichtfeld::Strings::Scene::NO_GROUPS_AVAILABLE));
                     }
                     ImGui::EndMenu();
                 }
 
                 ImGui::Separator();
-                if (ImGui::MenuItem("Delete", nullptr, false, !is_training_protected)) {
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::DELETE_ITEM), nullptr, false, !is_training_protected)) {
                     cmd::RemovePLY{.name = node.name, .keep_children = false}.emit();
                 }
                 showDisabledDeleteTooltip(is_training_protected);
@@ -724,15 +738,16 @@ namespace lfs::vis::gui {
         if (depth <= 0)
             return;
 
-        constexpr float INDENT_WIDTH = 14.0f;
-        constexpr float LINE_OFFSET_X = 7.0f;
+        const float scale = getDpiScale();
+        const float INDENT_WIDTH = 14.0f * scale;
+        const float LINE_OFFSET_X = 7.0f * scale;
 
         const auto& t = theme();
         const ImU32 guide_color = toU32(withAlpha(t.palette.text_dim, 0.25f));
 
         ImDrawList* const dl = ImGui::GetWindowDrawList();
         const ImVec2 cursor = ImGui::GetCursorScreenPos();
-        const float row_height = ImGui::GetTextLineHeight() + 2.0f;
+        const float row_height = ImGui::GetTextLineHeight() + 2.0f * scale;
 
         for (int i = 0; i < depth; ++i) {
             const float x = cursor.x + i * INDENT_WIDTH + LINE_OFFSET_X;
@@ -835,12 +850,12 @@ namespace lfs::vis::gui {
         ImGui::BeginChild("ImageList", ImVec2(0, 0), true);
 
         if (!m_imagePaths.empty()) {
-            ImGui::Text("Images (%zu):", m_imagePaths.size());
+            ImGui::Text(LOC(lichtfeld::Strings::Scene::IMAGES), m_imagePaths.size());
             ImGui::Separator();
 
             for (size_t i = 0; i < m_imagePaths.size(); ++i) {
                 const auto& imagePath = m_imagePaths[i];
-                const std::string filename = imagePath.filename().string();
+                const std::string filename = lfs::core::path_to_utf8(imagePath.filename());
                 const std::string unique_id = std::format("{}##{}", filename, i);
                 const bool is_selected = (m_selectedImageIndex == static_cast<int>(i));
 
@@ -872,7 +887,7 @@ namespace lfs::vis::gui {
                 const std::string context_menu_id = std::format("context_menu_{}", i);
                 theme().pushContextMenuStyle();
                 if (ImGui::BeginPopupContextItem(context_menu_id.c_str())) {
-                    if (ImGui::MenuItem("Go to Cam View")) {
+                    if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::GO_TO_CAM_VIEW))) {
                         if (const auto cam_it = m_pathToCamId.find(imagePath); cam_it != m_pathToCamId.end()) {
                             cmd::GoToCamView{.cam_id = cam_it->second}.emit();
                         }
@@ -882,8 +897,8 @@ namespace lfs::vis::gui {
                 Theme::popContextMenuStyle();
             }
         } else {
-            ImGui::Text("No images loaded.");
-            ImGui::Text("Use 'Open File Browser' to load a dataset.");
+            ImGui::TextUnformatted(LOC(lichtfeld::Strings::Scene::NO_IMAGES));
+            ImGui::TextUnformatted(LOC(lichtfeld::Strings::Scene::USE_FILE_BROWSER));
         }
 
         ImGui::EndChild();
@@ -919,9 +934,9 @@ namespace lfs::vis::gui {
 
     void ScenePanel::onImageSelected(const std::filesystem::path& imagePath) {
         ui::NodeSelected{
-            .path = imagePath.string(),
+            .path = lfs::core::path_to_utf8(imagePath),
             .type = "Images",
-            .metadata = {{"filename", imagePath.filename().string()}, {"path", imagePath.string()}}}
+            .metadata = {{"filename", lfs::core::path_to_utf8(imagePath.filename())}, {"path", lfs::core::path_to_utf8(imagePath)}}}
             .emit();
     }
 

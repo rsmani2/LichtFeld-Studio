@@ -4,6 +4,7 @@
 
 #include "fast_rasterizer.hpp"
 #include "core/logger.hpp"
+#include "core/path_utils.hpp"
 #include "core/tensor/internal/tensor_serialization.hpp"
 #include "training/kernels/grad_alpha.hpp"
 #include <chrono>
@@ -100,7 +101,7 @@ namespace lfs::training {
         // Log absolute path for easier debugging
         auto abs_path = std::filesystem::absolute(dump_dir);
 
-        LOG_ERROR("Rasterizer crash! Dumping data to: {}", abs_path.string());
+        LOG_ERROR("Rasterizer crash! Dumping data to: {}", lfs::core::path_to_utf8(abs_path));
         LOG_ERROR("Error: {}", error_msg);
 
         try {
@@ -134,8 +135,8 @@ namespace lfs::training {
             // - fx, fy, cx, cy: Camera intrinsics
             // - near_plane, far_plane: Clipping planes
             // - *_shape: Shape of each tensor for verification
-            std::ofstream params_file(dump_dir + "/params.json");
-            if (params_file) {
+            std::ofstream params_file;
+            if (lfs::core::open_file_for_write(std::filesystem::path(dump_dir) / "params.json", params_file)) {
                 params_file << "{\n";
                 params_file << "  \"error\": \"" << error_msg << "\",\n";
                 params_file << "  \"n_primitives\": " << n_primitives << ",\n";
@@ -176,7 +177,7 @@ namespace lfs::training {
                 params_file << "}\n";
             }
 
-            LOG_ERROR("Crash dump complete: {}", abs_path.string());
+            LOG_ERROR("Crash dump complete: {}", lfs::core::path_to_utf8(abs_path));
         } catch (const std::exception& dump_error) {
             LOG_ERROR("Failed to create crash dump: {}", dump_error.what());
         }
@@ -189,7 +190,8 @@ namespace lfs::training {
         int tile_x_offset,
         int tile_y_offset,
         int tile_width,
-        int tile_height) {
+        int tile_height,
+        bool mip_filter) {
         // Get camera parameters
         const int full_width = viewpoint_camera.image_width();
         const int full_height = viewpoint_camera.image_height();
@@ -269,7 +271,8 @@ namespace lfs::training {
                 cx_adjusted, // Use adjusted cx for tile offset
                 cy_adjusted, // Use adjusted cy for tile offset
                 near_plane,
-                far_plane);
+                far_plane,
+                mip_filter);
         } catch (const std::exception& e) {
             // Dump all input data for debugging
             dump_crash_data(
@@ -355,6 +358,7 @@ namespace lfs::training {
         ctx.means = means;
         ctx.raw_scales = raw_scales;
         ctx.raw_rotations = raw_rotations;
+        ctx.raw_opacities = raw_opacities;
         ctx.shN = shN;
 
         // Store camera pointers directly (tensors are managed by camera, already contiguous)
@@ -374,6 +378,7 @@ namespace lfs::training {
         ctx.center_y = cy_adjusted; // Store adjusted cy for backward
         ctx.near_plane = near_plane;
         ctx.far_plane = far_plane;
+        ctx.mip_filter = mip_filter;
 
         // Store tile information
         ctx.tile_x_offset = tile_x_offset;
@@ -436,6 +441,7 @@ namespace lfs::training {
             ctx.means.ptr<float>(),
             ctx.raw_scales.ptr<float>(),
             ctx.raw_rotations.ptr<float>(),
+            ctx.raw_opacities.ptr<float>(),
             ctx.shN.ptr<float>(),
             ctx.w2c_ptr,
             ctx.cam_position_ptr,
@@ -455,7 +461,8 @@ namespace lfs::training {
             ctx.focal_x,
             ctx.focal_y,
             ctx.center_x,
-            ctx.center_y);
+            ctx.center_y,
+            ctx.mip_filter);
 
         if (!backward_result.success) {
             throw std::runtime_error(std::string("Backward failed: ") + backward_result.error_message);

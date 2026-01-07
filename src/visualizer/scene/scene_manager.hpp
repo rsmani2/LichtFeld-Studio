@@ -7,7 +7,9 @@
 #include "core/events.hpp"
 #include "core/parameters.hpp"
 #include "core/services.hpp"
+#include "core/splat_data_mirror.hpp"
 #include "geometry/bounding_box.hpp"
+#include "io/loader.hpp"
 #include "scene/scene.hpp"
 #include "scene/scene_render_state.hpp"
 #include <filesystem>
@@ -145,6 +147,14 @@ namespace lfs::vis {
 
         void loadDataset(const std::filesystem::path& path,
                          const lfs::core::param::TrainingParameters& params);
+
+        // Apply pre-loaded dataset to scene (for async loading)
+        // The LoadResult comes from background thread, scene modification happens on main thread
+        std::expected<void, std::string> applyLoadedDataset(
+            const std::filesystem::path& path,
+            const lfs::core::param::TrainingParameters& params,
+            lfs::io::LoadResult&& load_result);
+
         void loadCheckpointForTraining(const std::filesystem::path& path,
                                        const lfs::core::param::TrainingParameters& params);
         void clear();
@@ -183,6 +193,9 @@ namespace lfs::vis {
         bool copySelectedGaussians();
         std::vector<std::string> pasteGaussians();
         [[nodiscard]] bool hasGaussianClipboard() const { return gaussian_clipboard_ != nullptr; }
+
+        /// Mirror selected gaussians along specified axis
+        bool executeMirror(lfs::core::MirrorAxis axis);
 
     private:
         void setupEventHandlers();

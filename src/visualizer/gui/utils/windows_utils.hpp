@@ -28,7 +28,8 @@ namespace lfs::vis::gui {
 #endif
 
     // Cross-platform file open dialogs (return path, empty if cancelled)
-    std::filesystem::path OpenPlyFileDialogNative();
+    std::filesystem::path OpenPlyFileDialogNative(const std::filesystem::path& startDir = {});
+    std::filesystem::path OpenCheckpointFileDialog();
     std::filesystem::path OpenDatasetFolderDialogNative();
 
     // Cross-platform file save/open dialogs

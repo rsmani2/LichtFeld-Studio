@@ -3,6 +3,7 @@
 
 #include "theme.hpp"
 #include "core/logger.hpp"
+#include "core/path_utils.hpp"
 #include "internal/resource_paths.hpp"
 #include <algorithm>
 #include <filesystem>
@@ -327,9 +328,9 @@ namespace lfs::vis {
             g_dark_theme = DEFAULT_DARK;
             try {
                 g_dark_path = getAssetPath("themes/dark.json");
-                if (loadTheme(g_dark_theme, g_dark_path.string())) {
+                if (loadTheme(g_dark_theme, lfs::core::path_to_utf8(g_dark_path))) {
                     g_dark_mtime = std::filesystem::last_write_time(g_dark_path);
-                    LOG_INFO("Loaded dark theme from {}", g_dark_path.string());
+                    LOG_INFO("Loaded dark theme from {}", lfs::core::path_to_utf8(g_dark_path));
                 }
             } catch (...) {
                 g_dark_path.clear();
@@ -339,9 +340,9 @@ namespace lfs::vis {
             g_light_theme = DEFAULT_LIGHT;
             try {
                 g_light_path = getAssetPath("themes/light.json");
-                if (loadTheme(g_light_theme, g_light_path.string())) {
+                if (loadTheme(g_light_theme, lfs::core::path_to_utf8(g_light_path))) {
                     g_light_mtime = std::filesystem::last_write_time(g_light_path);
-                    LOG_INFO("Loaded light theme from {}", g_light_path.string());
+                    LOG_INFO("Loaded light theme from {}", lfs::core::path_to_utf8(g_light_path));
                 }
             } catch (...) {
                 g_light_path.clear();
@@ -380,7 +381,7 @@ namespace lfs::vis {
             const auto mtime = std::filesystem::last_write_time(g_dark_path);
             if (mtime != g_dark_mtime) {
                 Theme t = DEFAULT_DARK;
-                if (loadTheme(t, g_dark_path.string())) {
+                if (loadTheme(t, lfs::core::path_to_utf8(g_dark_path))) {
                     g_dark_theme = t;
                     g_dark_mtime = mtime;
                     LOG_INFO("Hot-reloaded dark theme");
@@ -395,7 +396,7 @@ namespace lfs::vis {
             const auto mtime = std::filesystem::last_write_time(g_light_path);
             if (mtime != g_light_mtime) {
                 Theme t = DEFAULT_LIGHT;
-                if (loadTheme(t, g_light_path.string())) {
+                if (loadTheme(t, lfs::core::path_to_utf8(g_light_path))) {
                     g_light_theme = t;
                     g_light_mtime = mtime;
                     LOG_INFO("Hot-reloaded light theme");
@@ -502,8 +503,8 @@ namespace lfs::vis {
             vignette["radius"] = t.vignette.radius;
             vignette["softness"] = t.vignette.softness;
 
-            std::ofstream file(path);
-            if (!file.is_open())
+            std::ofstream file;
+            if (!lfs::core::open_file_for_write(lfs::core::utf8_to_path(path), file))
                 return false;
             file << j.dump(2);
             return true;
@@ -514,8 +515,8 @@ namespace lfs::vis {
 
     bool loadTheme(Theme& t, const std::string& path) {
         try {
-            std::ifstream file(path);
-            if (!file.is_open())
+            std::ifstream file;
+            if (!lfs::core::open_file_for_read(lfs::core::utf8_to_path(path), file))
                 return false;
 
             json j;
@@ -648,6 +649,13 @@ namespace lfs::vis {
                 t.vignette.intensity = v.value("intensity", t.vignette.intensity);
                 t.vignette.radius = v.value("radius", t.vignette.radius);
                 t.vignette.softness = v.value("softness", t.vignette.softness);
+            }
+
+            if (j.contains("button")) {
+                const auto& b = j["button"];
+                t.button.tint_normal = b.value("tint_normal", t.button.tint_normal);
+                t.button.tint_hover = b.value("tint_hover", t.button.tint_hover);
+                t.button.tint_active = b.value("tint_active", t.button.tint_active);
             }
 
             return true;

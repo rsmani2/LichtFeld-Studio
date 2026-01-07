@@ -6,6 +6,10 @@
 #include "core/events.hpp"
 #include "core/image_io.hpp"
 #include "core/logger.hpp"
+#include "core/path_utils.hpp"
+#include "gui/dpi_scale.hpp"
+#include "gui/localization_manager.hpp"
+#include "gui/string_keys.hpp"
 #include <algorithm>
 #include <cstring>
 #include <format>
@@ -17,6 +21,8 @@
 #include <imgui.h>
 
 namespace lfs::vis::gui {
+
+    using namespace lichtfeld::Strings;
 
     // EXIF tag IDs
     namespace exif_tags {
@@ -44,8 +50,8 @@ namespace lfs::vis::gui {
         if (ext != ".jpg" && ext != ".jpeg")
             return result;
 
-        std::ifstream file(path, std::ios::binary);
-        if (!file)
+        std::ifstream file;
+        if (!lfs::core::open_file_for_read(path, std::ios::binary, file))
             return result;
 
         uint8_t buf[2];
@@ -273,7 +279,7 @@ namespace lfs::vis::gui {
         LOG_INFO("Opened image {}/{}: {}",
                  current_index_ + 1,
                  image_paths_.size(),
-                 image_paths_[current_index_].filename().string());
+                 lfs::core::path_to_utf8(image_paths_[current_index_].filename()));
     }
 
     void ImagePreview::open(const std::filesystem::path& image_path) {
@@ -329,7 +335,7 @@ namespace lfs::vis::gui {
     std::unique_ptr<ImageData> ImagePreview::loadImageData(const std::filesystem::path& path) {
         LOG_TIMER("LoadImageData");
 
-        LOG_TRACE("Loading image data from: {}", path.string());
+        LOG_TRACE("Loading image data from: {}", lfs::core::path_to_utf8(path));
 
         // Load image (max_width = -1 disables downscaling for preview)
         auto [data, width, height, channels] = [&]() {
@@ -347,17 +353,17 @@ namespace lfs::vis::gui {
         {
             LOG_TIMER("Image validation");
             if (!image_data->valid()) {
-                LOG_ERROR("Failed to load image data from: {}", path.string());
+                LOG_ERROR("Failed to load image data from: {}", lfs::core::path_to_utf8(path));
                 throw std::runtime_error("Failed to load image data");
             }
 
             if (width <= 0 || height <= 0) {
-                LOG_ERROR("Invalid image dimensions: {}x{} for: {}", width, height, path.string());
+                LOG_ERROR("Invalid image dimensions: {}x{} for: {}", width, height, lfs::core::path_to_utf8(path));
                 throw std::runtime_error(std::format("Invalid image dimensions: {}x{}", width, height));
             }
 
             if (channels < 1 || channels > 4) {
-                LOG_ERROR("Invalid number of channels: {} for: {}", channels, path.string());
+                LOG_ERROR("Invalid number of channels: {} for: {}", channels, lfs::core::path_to_utf8(path));
                 throw std::runtime_error(std::format("Invalid number of channels: {}", channels));
             }
         }
@@ -414,7 +420,7 @@ namespace lfs::vis::gui {
             LOG_TIMER("GL texture generation");
             // Generate texture
             if (!texture->texture.generate()) {
-                LOG_ERROR("Failed to generate texture ID for: {}", path.string());
+                LOG_ERROR("Failed to generate texture ID for: {}", lfs::core::path_to_utf8(path));
                 throw std::runtime_error("Failed to generate texture ID");
             }
         }
@@ -451,7 +457,7 @@ namespace lfs::vis::gui {
             internal_format = GL_RGBA8;
             break;
         default:
-            LOG_ERROR("Unsupported channel count: {} for: {}", channels, path.string());
+            LOG_ERROR("Unsupported channel count: {} for: {}", channels, lfs::core::path_to_utf8(path));
             throw std::runtime_error(std::format("Unsupported channel count: {}", channels));
         }
 
@@ -476,7 +482,7 @@ namespace lfs::vis::gui {
                 case GL_OUT_OF_MEMORY: error_str = "GL_OUT_OF_MEMORY"; break;
                 default: error_str = std::format("0x{:X}", error); break;
                 }
-                LOG_ERROR("OpenGL error creating texture: {} for: {}", error_str, path.string());
+                LOG_ERROR("OpenGL error creating texture: {} for: {}", error_str, lfs::core::path_to_utf8(path));
                 throw std::runtime_error(std::format("OpenGL error: {}", error_str));
             }
 
@@ -488,7 +494,7 @@ namespace lfs::vis::gui {
         }
 
         // State guard will restore texture binding automatically
-        LOG_DEBUG("Created texture {}x{} for: {}", width, height, path.filename().string());
+        LOG_DEBUG("Created texture {}x{} for: {}", width, height, lfs::core::path_to_utf8(path.filename()));
         return texture;
     }
 
@@ -497,7 +503,7 @@ namespace lfs::vis::gui {
             is_loading_ = true;
             load_error_.clear();
 
-            LOG_DEBUG("Loading image: {}", path.string());
+            LOG_DEBUG("Loading image: {}", lfs::core::path_to_utf8(path));
 
             // Load image data with RAII
             auto image_data = loadImageData(path);
@@ -512,7 +518,7 @@ namespace lfs::vis::gui {
         } catch (const std::exception& e) {
             load_error_ = e.what();
             is_loading_ = false;
-            LOG_ERROR("Error loading image '{}': {}", path.string(), e.what());
+            LOG_ERROR("Error loading image '{}': {}", lfs::core::path_to_utf8(path), e.what());
             return false;
         }
     }
@@ -766,7 +772,7 @@ namespace lfs::vis::gui {
                                       ? "Image Preview###ImagePreview"
                                       : std::format("Image Preview - {}/{} - {}###ImagePreview",
                                                     current_index_ + 1, image_paths_.size(),
-                                                    image_paths_[current_index_].filename().string());
+                                                    lfs::core::path_to_utf8(image_paths_[current_index_].filename()));
 
         if (focus_on_next_frame_) {
             ImGui::SetNextWindowFocus();
@@ -781,14 +787,14 @@ namespace lfs::vis::gui {
         }
 
         if (ImGui::BeginMenuBar()) {
-            if (ImGui::BeginMenu("View")) {
-                ImGui::MenuItem("Fit to Window", "F", &fit_to_window_);
-                ImGui::MenuItem("Show Info Panel", "I", &show_info_panel_);
+            if (ImGui::BeginMenu(LOC(lichtfeld::Strings::ImagePreview::VIEW))) {
+                ImGui::MenuItem(LOC(lichtfeld::Strings::ImagePreview::FIT_TO_WINDOW), "F", &fit_to_window_);
+                ImGui::MenuItem(LOC(lichtfeld::Strings::ImagePreview::SHOW_INFO_PANEL), "I", &show_info_panel_);
                 if (hasValidOverlay()) {
-                    ImGui::MenuItem("Show Mask Overlay", "M", &show_overlay_);
+                    ImGui::MenuItem(LOC(lichtfeld::Strings::ImagePreview::SHOW_MASK_OVERLAY), "M", &show_overlay_);
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("Reset View", "R") || ImGui::MenuItem("Actual Size", "1")) {
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::ImagePreview::RESET_VIEW), "R") || ImGui::MenuItem(LOC(lichtfeld::Strings::ImagePreview::ACTUAL_SIZE), "1")) {
                     zoom_ = 1.0f;
                     pan_x_ = 0.0f;
                     pan_y_ = 0.0f;
@@ -796,19 +802,19 @@ namespace lfs::vis::gui {
                 ImGui::EndMenu();
             }
 
-            if (ImGui::BeginMenu("Navigate")) {
-                if (ImGui::MenuItem("Previous", "Left", nullptr, current_index_ > 0)) {
+            if (ImGui::BeginMenu(LOC(lichtfeld::Strings::ImagePreview::NAVIGATE))) {
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::ImagePreview::PREVIOUS), "Left", nullptr, current_index_ > 0)) {
                     previousImage();
                 }
-                if (ImGui::MenuItem("Next", "Right", nullptr,
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::ImagePreview::NEXT), "Right", nullptr,
                                     current_index_ + 1 < image_paths_.size())) {
                     nextImage();
                 }
                 ImGui::Separator();
-                if (ImGui::MenuItem("First", "Home", nullptr, !image_paths_.empty())) {
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::ImagePreview::FIRST), "Home", nullptr, !image_paths_.empty())) {
                     goToImage(0);
                 }
-                if (ImGui::MenuItem("Last", "End", nullptr, !image_paths_.empty())) {
+                if (ImGui::MenuItem(LOC(lichtfeld::Strings::ImagePreview::LAST), "End", nullptr, !image_paths_.empty())) {
                     goToImage(image_paths_.size() - 1);
                 }
                 ImGui::EndMenu();
@@ -838,12 +844,20 @@ namespace lfs::vis::gui {
             return;
         }
 
-        constexpr float INFO_PANEL_WIDTH = 260.0f;
+        const float scale = getDpiScale();
+        const float INFO_PANEL_WIDTH = 260.0f * scale;
+        const float PANEL_MARGIN = 8.0f * scale;
+
+        // Reserve space for info panel if visible
+        const float available_width = show_info_panel_
+                                          ? content_size.x - INFO_PANEL_WIDTH - PANEL_MARGIN * 2.0f
+                                          : content_size.x;
 
         const auto [display_width, display_height] = calculateDisplaySize(
-            static_cast<int>(content_size.x), static_cast<int>(content_size.y));
+            static_cast<int>(available_width), static_cast<int>(content_size.y));
 
-        const float x_offset = (content_size.x - display_width) * 0.5f + pan_x_;
+        // Center image in available space (excluding info panel if visible)
+        const float x_offset = (available_width - display_width) * 0.5f + pan_x_;
         const float y_offset = (content_size.y - display_height) * 0.5f + pan_y_;
         const float base_cursor_y = ImGui::GetCursorPosY();
 
@@ -868,8 +882,7 @@ namespace lfs::vis::gui {
 
         // Floating info panel
         if (show_info_panel_ && current_texture_) {
-            constexpr float PANEL_MARGIN = 8.0f;
-            constexpr float MAX_PANEL_HEIGHT = 400.0f;
+            const float MAX_PANEL_HEIGHT = 400.0f * scale;
             const float panel_height = std::min(content_size.y - 2.0f * PANEL_MARGIN, MAX_PANEL_HEIGHT);
             ImGui::SetCursorPos(ImVec2(content_size.x - INFO_PANEL_WIDTH - PANEL_MARGIN, base_cursor_y + PANEL_MARGIN));
 
@@ -877,7 +890,7 @@ namespace lfs::vis::gui {
             ImGui::BeginChild("##ImageInfoPanel", ImVec2(INFO_PANEL_WIDTH, panel_height), true);
 
             const auto& path = image_paths_[current_index_];
-            const std::string filename = path.filename().string();
+            const std::string filename = lfs::core::path_to_utf8(path.filename());
             std::string ext = path.extension().string();
             if (!ext.empty() && ext[0] == '.')
                 ext = ext.substr(1);
@@ -887,25 +900,25 @@ namespace lfs::vis::gui {
             // File info section
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "FILE");
             ImGui::Separator();
-            ImGui::Text("Name: %s", filename.c_str());
-            ImGui::Text("Format: %s", ext.c_str());
+            ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::NAME), filename.c_str());
+            ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::FORMAT), ext.c_str());
             if (std::filesystem::exists(path)) {
                 const auto file_size = std::filesystem::file_size(path);
                 if (file_size >= 1024 * 1024)
-                    ImGui::Text("Size: %.2f MB", file_size / (1024.0 * 1024.0));
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::SIZE_MB), file_size / (1024.0 * 1024.0));
                 else if (file_size >= 1024)
-                    ImGui::Text("Size: %.1f KB", file_size / 1024.0);
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::SIZE_KB), file_size / 1024.0);
                 else
-                    ImGui::Text("Size: %zu bytes", file_size);
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::SIZE_BYTES), file_size);
 
                 const auto ftime = std::filesystem::last_write_time(path);
                 const auto sys_time = std::chrono::clock_cast<std::chrono::system_clock>(ftime);
                 const auto time_t = std::chrono::system_clock::to_time_t(sys_time);
                 char time_buf[64];
                 std::strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M", std::localtime(&time_t));
-                ImGui::Text("Modified: %s", time_buf);
+                ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::MODIFIED), time_buf);
             }
-            ImGui::Text("Path: %s", path.parent_path().string().c_str());
+            ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::PATH), lfs::core::path_to_utf8(path.parent_path()).c_str());
 
             ImGui::Spacing();
             ImGui::Spacing();
@@ -914,7 +927,7 @@ namespace lfs::vis::gui {
             ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "IMAGE");
             ImGui::Separator();
             ImGui::Text("Dimensions: %dx%d", current_texture_->width, current_texture_->height);
-            ImGui::Text("Megapixels: %.1f MP",
+            ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::MEGAPIXELS),
                         (current_texture_->width * current_texture_->height) / 1e6);
 
             // Infer channels from extension
@@ -926,8 +939,8 @@ namespace lfs::vis::gui {
                 channels = "RGBA (4)";
                 color_space = "Linear";
             }
-            ImGui::Text("Channels: %s", channels);
-            ImGui::Text("Color Space: %s", color_space);
+            ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::CHANNELS), channels);
+            ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::COLOR_SPACE), color_space);
 
             // Aspect ratio
             const float aspect = static_cast<float>(current_texture_->width) /
@@ -967,24 +980,24 @@ namespace lfs::vis::gui {
                             camera += " ";
                         camera += current_exif_.camera_model;
                     }
-                    ImGui::Text("Camera: %s", camera.c_str());
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::CAMERA), camera.c_str());
                 }
                 if (!current_exif_.lens_model.empty())
-                    ImGui::Text("Lens: %s", current_exif_.lens_model.c_str());
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::LENS), current_exif_.lens_model.c_str());
                 if (!current_exif_.focal_length.empty())
-                    ImGui::Text("Focal Length: %s", current_exif_.focal_length.c_str());
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::FOCAL_LENGTH), current_exif_.focal_length.c_str());
                 if (!current_exif_.focal_length_35mm.empty())
-                    ImGui::Text("35mm Equiv: %s", current_exif_.focal_length_35mm.c_str());
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::FOCAL_35MM), current_exif_.focal_length_35mm.c_str());
                 if (!current_exif_.exposure_time.empty())
-                    ImGui::Text("Exposure: %s", current_exif_.exposure_time.c_str());
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::EXPOSURE), current_exif_.exposure_time.c_str());
                 if (!current_exif_.f_number.empty())
-                    ImGui::Text("Aperture: %s", current_exif_.f_number.c_str());
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::APERTURE), current_exif_.f_number.c_str());
                 if (!current_exif_.iso.empty())
                     ImGui::Text("%s", current_exif_.iso.c_str());
                 if (!current_exif_.date_time.empty())
-                    ImGui::Text("Date: %s", current_exif_.date_time.c_str());
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::DATE), current_exif_.date_time.c_str());
                 if (!current_exif_.software.empty())
-                    ImGui::Text("Software: %s", current_exif_.software.c_str());
+                    ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::SOFTWARE), current_exif_.software.c_str());
             }
 
             ImGui::Spacing();
@@ -995,15 +1008,15 @@ namespace lfs::vis::gui {
             ImGui::Separator();
             ImGui::Text("Zoom: %.0f%%", zoom_ * 100.0f);
             ImGui::Text("Pan: %.0f, %.0f", pan_x_, pan_y_);
-            ImGui::Text("Fit to Window: %s", fit_to_window_ ? "Yes" : "No");
+            ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::FIT_STATUS), fit_to_window_ ? LOC(Training::Status::YES) : LOC(Training::Status::NO));
 
             if (hasValidOverlay()) {
                 ImGui::Spacing();
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "MASK");
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "%s", LOC(lichtfeld::Strings::ImagePreview::MASK_SECTION));
                 ImGui::Separator();
-                ImGui::Text("Overlay: %s", show_overlay_ ? "Visible" : "Hidden");
-                ImGui::Text("File: %s", overlay_paths_[current_index_].filename().string().c_str());
+                ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::OVERLAY_STATUS), show_overlay_ ? LOC(lichtfeld::Strings::ImagePreview::VISIBLE) : LOC(lichtfeld::Strings::ImagePreview::HIDDEN));
+                ImGui::Text(LOC(lichtfeld::Strings::ImagePreview::FILE_LABEL), lfs::core::path_to_utf8(overlay_paths_[current_index_].filename()).c_str());
             }
 
             ImGui::EndChild();

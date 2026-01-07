@@ -9,6 +9,7 @@
 #include "gl_resources.hpp"
 #include "shader.hpp"
 #include "shader_manager.hpp"
+#include <glm/vec2.hpp>
 #include <memory>
 
 namespace lfs::rendering {
@@ -21,8 +22,8 @@ namespace lfs::rendering {
         float far_plane = 100000.0f;
         bool orthographic = false;
         bool has_depth = false;
-        bool depth_is_ndc = false;  // True if depth is already NDC (0-1), skip conversion
-        GLuint external_depth_texture = 0;  // If set, use this texture instead of framebuffer's depth
+        bool depth_is_ndc = false;         // True if depth is already NDC (0-1), skip conversion
+        GLuint external_depth_texture = 0; // If set, use this texture instead of framebuffer's depth
     };
 
     class ScreenQuadRenderer {
@@ -51,6 +52,9 @@ namespace lfs::rendering {
         const DepthParams& getDepthParams() const { return depth_params_; }
 
         bool isInteropEnabled() const;
+
+        // Get texture coordinate scale for over-allocated textures
+        glm::vec2 getTexcoordScale() const;
 
     protected:
         virtual GLuint getTextureID() const;

@@ -11,6 +11,7 @@
 #include "core/parameters.hpp"
 #include "core/tensor.hpp"
 #include "dataset.hpp"
+#include "lfs/kernels/ssim.cuh"
 #include "metrics/metrics.hpp"
 #include "optimizer/scheduler.hpp"
 #include "progress.hpp"
@@ -106,6 +107,7 @@ namespace lfs::training {
         // Checkpoint methods
         std::expected<void, std::string> save_checkpoint(int iteration);
         std::expected<int, std::string> load_checkpoint(const std::filesystem::path& checkpoint_path);
+        void save_final_ply_and_checkpoint(int iteration);
 
         // Orderly shutdown - GPU sync, wait for async saves, release resources. Idempotent.
         void shutdown();
@@ -211,10 +213,15 @@ namespace lfs::training {
         std::unique_ptr<TrainingProgress> progress_;
         size_t train_dataset_size_ = 0;
 
+        // Pre-loaded mask from pipelined dataloader (used in train_step)
+        lfs::core::Tensor pipelined_mask_;
+
         // Bilateral grid for appearance modeling (optional)
         std::unique_ptr<BilateralGrid> bilateral_grid_;
 
         std::unique_ptr<ISparsityOptimizer> sparsity_optimizer_;
+
+        lfs::training::kernels::MaskedFusedL1SSIMWorkspace masked_fused_workspace_;
 
         // Metrics evaluator - handles all evaluation logic
         std::unique_ptr<lfs::training::MetricsEvaluator> evaluator_;

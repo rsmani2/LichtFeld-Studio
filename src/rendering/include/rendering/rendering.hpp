@@ -64,6 +64,7 @@ namespace lfs::rendering {
         ViewportData viewport;
         float scaling_modifier = 1.0f;
         bool antialiasing = false;
+        bool mip_filter = false;
         int sh_degree = 3;
         glm::vec3 background_color{0.0f, 0.0f, 0.0f};
         std::optional<BoundingBox> crop_box;
@@ -111,8 +112,8 @@ namespace lfs::rendering {
         std::shared_ptr<lfs::core::Tensor> screen_positions; // Optional: screen positions [N, 2] for brush tool
         bool valid = false;
         // Depth conversion parameters (needed for proper depth buffer writing)
-        bool depth_is_ndc = false;       // True if depth is already NDC (0-1), e.g., from OpenGL
-        unsigned int external_depth_texture = 0;  // If set, use this OpenGL texture directly (zero-copy)
+        bool depth_is_ndc = false;               // True if depth is already NDC (0-1), e.g., from OpenGL
+        unsigned int external_depth_texture = 0; // If set, use this OpenGL texture directly (zero-copy)
         float near_plane = DEFAULT_NEAR_PLANE;
         float far_plane = DEFAULT_FAR_PLANE;
         bool orthographic = false;
@@ -147,6 +148,7 @@ namespace lfs::rendering {
         // Common render settings
         float scaling_modifier = 1.0f;
         bool antialiasing = false;
+        bool mip_filter = false;
         int sh_degree = 3;
         glm::vec3 background_color{0.0f, 0.0f, 0.0f};
         std::optional<BoundingBox> crop_box;
@@ -160,6 +162,10 @@ namespace lfs::rendering {
         bool show_dividers = true;
         glm::vec4 divider_color{1.0f, 0.85f, 0.0f, 1.0f};
         bool show_labels = true;
+
+        // Texcoord scale for over-allocated textures
+        glm::vec2 left_texcoord_scale{1.0f, 1.0f};
+        glm::vec2 right_texcoord_scale{1.0f, 1.0f};
     };
 
     enum class GridPlane {

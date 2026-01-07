@@ -50,6 +50,8 @@ namespace lfs::rendering {
         GLuint texture_id_ = 0;
         int width_ = 0;
         int height_ = 0;
+        int allocated_width_ = 0;
+        int allocated_height_ = 0;
 
     public:
         CudaGLInteropTextureImpl() = default;
@@ -59,6 +61,17 @@ namespace lfs::rendering {
         Result<void> resize(int new_width, int new_height);
         Result<void> updateFromTensor(const Tensor& image);
         GLuint getTextureID() const { return texture_id_; }
+        int getWidth() const { return width_; }
+        int getHeight() const { return height_; }
+        int getAllocatedWidth() const { return allocated_width_; }
+        int getAllocatedHeight() const { return allocated_height_; }
+
+        float getTexcoordScaleX() const {
+            return allocated_width_ > 0 ? static_cast<float>(width_) / allocated_width_ : 1.0f;
+        }
+        float getTexcoordScaleY() const {
+            return allocated_height_ > 0 ? static_cast<float>(height_) / allocated_height_ : 1.0f;
+        }
 
     private:
         void cleanup();
@@ -69,23 +82,39 @@ namespace lfs::rendering {
     class CudaGLInteropTextureImpl<true> {
         GLuint texture_id_ = 0;
         CudaGraphicsResourcePtr cuda_resource_;
-        int width_ = 0;
-        int height_ = 0;
+        int width_ = 0;            // Render/image width
+        int height_ = 0;           // Render/image height
+        int allocated_width_ = 0;  // Actual texture allocation width (may be larger)
+        int allocated_height_ = 0; // Actual texture allocation height (may be larger)
         bool is_registered_ = false;
         bool is_depth_format_ = false;  // True if R32F, false if RGBA8
+        bool external_texture_ = false; // True if texture is externally owned (don't delete)
 
     public:
         CudaGLInteropTextureImpl();
         ~CudaGLInteropTextureImpl();
 
         Result<void> init(int width, int height);
-        Result<void> initForDepth(int width, int height);  // R32F format for depth
+        Result<void> initForDepth(int width, int height); // R32F format for depth
         Result<void> initForReading(GLuint texture_id, int width, int height);
         Result<void> resize(int new_width, int new_height);
         Result<void> updateFromTensor(const Tensor& image);
-        Result<void> updateDepthFromTensor(const Tensor& depth);  // Single-channel float
+        Result<void> updateDepthFromTensor(const Tensor& depth); // Single-channel float
         Result<void> readToTensor(Tensor& output);
         GLuint getTextureID() const { return texture_id_; }
+        int getWidth() const { return width_; }
+        int getHeight() const { return height_; }
+        int getAllocatedWidth() const { return allocated_width_; }
+        int getAllocatedHeight() const { return allocated_height_; }
+
+        // Get texture coordinate scale for shader (image_size / allocated_size)
+        // Use this when the texture is over-allocated to sample only the valid region
+        float getTexcoordScaleX() const {
+            return allocated_width_ > 0 ? static_cast<float>(width_) / allocated_width_ : 1.0f;
+        }
+        float getTexcoordScaleY() const {
+            return allocated_height_ > 0 ? static_cast<float>(height_) / allocated_height_ : 1.0f;
+        }
 
     private:
         void cleanup();
@@ -152,7 +181,7 @@ namespace lfs::rendering {
     // Modified FrameBuffer to support interop
     class InteropFrameBuffer : public FrameBuffer {
         std::optional<CudaGLInteropTexture> interop_texture_;
-        std::optional<CudaGLInteropTexture> depth_interop_texture_;  // For depth upload
+        std::optional<CudaGLInteropTexture> depth_interop_texture_; // For depth upload
         bool use_interop_;
         bool use_depth_interop_ = true;
 
@@ -160,7 +189,7 @@ namespace lfs::rendering {
         explicit InteropFrameBuffer(bool use_interop = true);
 
         Result<void> uploadFromCUDA(const Tensor& cuda_image);
-        Result<void> uploadDepthFromCUDA(const Tensor& cuda_depth);  // Direct CUDA→GL depth
+        Result<void> uploadDepthFromCUDA(const Tensor& cuda_depth); // Direct CUDA→GL depth
 
         GLuint getInteropTexture() const {
             return use_interop_ && interop_texture_ ? interop_texture_->getTextureID() : getFrameTexture();
@@ -172,6 +201,15 @@ namespace lfs::rendering {
 
         bool hasDepthInterop() const {
             return use_depth_interop_ && depth_interop_texture_.has_value();
+        }
+
+        // Get texture coordinate scale for shader (image_size / allocated_size)
+        // Returns 1.0 if not using interop or texture not initialized
+        float getTexcoordScaleX() const {
+            return use_interop_ && interop_texture_ ? interop_texture_->getTexcoordScaleX() : 1.0f;
+        }
+        float getTexcoordScaleY() const {
+            return use_interop_ && interop_texture_ ? interop_texture_->getTexcoordScaleY() : 1.0f;
         }
 
         void resize(int new_width, int new_height) override;

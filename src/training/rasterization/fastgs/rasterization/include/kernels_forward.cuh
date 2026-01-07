@@ -45,7 +45,8 @@ namespace fast_lfs::rasterization::kernels::forward {
         const float cx,
         const float cy,
         const float near_, // near and far are macros in windowns
-        const float far_) {
+        const float far_,
+        const bool mip_filter) {
         auto primitive_idx = cg::this_grid().thread_rank();
         bool active = true;
         if (primitive_idx >= n_primitives) {
@@ -140,27 +141,26 @@ namespace fast_lfs::rasterization::kernels::forward {
             jw_r2.x * cov3d.m11 + jw_r2.y * cov3d.m12 + jw_r2.z * cov3d.m13,
             jw_r2.x * cov3d.m12 + jw_r2.y * cov3d.m22 + jw_r2.z * cov3d.m23,
             jw_r2.x * cov3d.m13 + jw_r2.y * cov3d.m23 + jw_r2.z * cov3d.m33);
-        float3 cov2d = make_float3(
-            dot(jwc_r1, jw_r1),
-            dot(jwc_r1, jw_r2),
-            dot(jwc_r2, jw_r2));
-        cov2d.x += config::dilation;
-        cov2d.z += config::dilation;
-        const float determinant = cov2d.x * cov2d.z - cov2d.y * cov2d.y;
-        if (determinant < 1e-8f)
+        float3 cov2d = make_float3(dot(jwc_r1, jw_r1), dot(jwc_r1, jw_r2), dot(jwc_r2, jw_r2));
+
+        // Mip filter: use smaller dilation and compensate opacity
+        const float det_raw = mip_filter ? fmaxf(cov2d.x * cov2d.z - cov2d.y * cov2d.y, 0.0f) : 0.0f;
+        const float kernel_size = mip_filter ? config::dilation_mip_filter : config::dilation;
+        cov2d.x += kernel_size;
+        cov2d.z += kernel_size;
+        const float det = cov2d.x * cov2d.z - cov2d.y * cov2d.y;
+        if (det < 1e-8f)
             active = false;
-        const float3 conic = make_float3(
-            cov2d.z / determinant,
-            -cov2d.y / determinant,
-            cov2d.x / determinant);
+        const float det_rcp = 1.0f / det;
+        const float output_opacity = mip_filter ? opacity * sqrtf(det_raw * det_rcp) : opacity;
+        if (output_opacity < config::min_alpha_threshold)
+            active = false;
 
-        // 2d mean in screen space
-        const float2 mean2d = make_float2(
-            x * fx + cx,
-            y * fy + cy);
+        const float3 conic = make_float3(cov2d.z * det_rcp, -cov2d.y * det_rcp, cov2d.x * det_rcp);
+        const float2 mean2d = make_float2(x * fx + cx, y * fy + cy);
 
-        // compute bounds
-        const float power_threshold = logf(opacity * config::min_alpha_threshold_rcp);
+        // Compute bounds
+        const float power_threshold = logf(output_opacity * config::min_alpha_threshold_rcp);
         const float power_threshold_factor = sqrtf(2.0f * power_threshold);
         float extent_x = fmaxf(power_threshold_factor * sqrtf(cov2d.x) - 0.5f, 0.0f);
         float extent_y = fmaxf(power_threshold_factor * sqrtf(cov2d.z) - 0.5f, 0.0f);
@@ -195,7 +195,7 @@ namespace fast_lfs::rasterization::kernels::forward {
             static_cast<ushort>(screen_bounds.z),
             static_cast<ushort>(screen_bounds.w));
         primitive_mean2d[primitive_idx] = mean2d;
-        primitive_conic_opacity[primitive_idx] = make_float4(conic, opacity);
+        primitive_conic_opacity[primitive_idx] = make_float4(conic, output_opacity);
         primitive_color[primitive_idx] = convert_sh_to_color(
             sh_coefficients_0, sh_coefficients_rest,
             mean3d, cam_position[0],
@@ -353,7 +353,7 @@ namespace fast_lfs::rasterization::kernels::forward {
         if (tile_idx >= n_tiles)
             return;
         const uint2 instance_range = tile_instance_ranges[tile_idx];
-        const uint n_buckets = div_round_up(instance_range.y - instance_range.x, 32u);
+        const uint n_buckets = div_round_up(instance_range.y - instance_range.x, static_cast<uint>(config::checkpoint_interval));
         tile_n_buckets[tile_idx] = n_buckets;
     }
 
@@ -369,7 +369,7 @@ namespace fast_lfs::rasterization::kernels::forward {
         uint* tile_max_n_contributions,
         uint* tile_n_contributions,
         uint* bucket_tile_index,
-        float4* bucket_color_transmittance,
+        uint* bucket_checkpoint_uint8,
         const uint width,
         const uint height,
         const uint grid_width) {
@@ -386,7 +386,7 @@ namespace fast_lfs::rasterization::kernels::forward {
         const int n_points_total = tile_range.y - tile_range.x;
 
         uint bucket_offset = tile_idx == 0 ? 0 : tile_bucket_offsets[tile_idx - 1];
-        const int n_buckets = div_round_up(n_points_total, 32); // re-computing is faster than reading from tile_n_buckets
+        const int n_buckets = div_round_up(n_points_total, config::checkpoint_interval); // re-computing is faster than reading from tile_n_buckets
         for (int n_buckets_remaining = n_buckets, current_bucket_idx = thread_rank; n_buckets_remaining > 0; n_buckets_remaining -= config::block_size_blend, current_bucket_idx += config::block_size_blend) {
             if (current_bucket_idx < n_buckets)
                 bucket_tile_index[bucket_offset + current_bucket_idx] = tile_idx;
@@ -410,15 +410,19 @@ namespace fast_lfs::rasterization::kernels::forward {
                 const uint primitive_idx = instance_primitive_indices[current_fetch_idx];
                 collected_mean2d[thread_rank] = primitive_mean2d[primitive_idx];
                 collected_conic_opacity[thread_rank] = primitive_conic_opacity[primitive_idx];
-                const float3 color = fmaxf(primitive_color[primitive_idx], 0.0f);
+                const float3 color = fminf(fmaxf(primitive_color[primitive_idx], 0.0f), config::max_checkpoint_color);
                 collected_color[thread_rank] = color;
             }
             block.sync();
             const int current_batch_size = min(config::block_size_blend, n_points_remaining);
             for (int j = 0; !done && j < current_batch_size; ++j) {
-                if (j % 32 == 0) {
-                    const float4 current_color_transmittance = make_float4(color_pixel, transmittance);
-                    bucket_color_transmittance[bucket_offset * config::block_size_blend + thread_rank] = current_color_transmittance;
+                if (j % config::checkpoint_interval == 0) {
+                    constexpr float COLOR_SCALE = 255.0f / config::max_checkpoint_color;
+                    const uint r = static_cast<uint>(color_pixel.x * COLOR_SCALE + 0.5f);
+                    const uint g = static_cast<uint>(color_pixel.y * COLOR_SCALE + 0.5f);
+                    const uint b = static_cast<uint>(color_pixel.z * COLOR_SCALE + 0.5f);
+                    const uint t = min(static_cast<uint>(fmaxf(transmittance, 0.0f) * 255.0f + 0.5f), 255u);
+                    bucket_checkpoint_uint8[bucket_offset * config::block_size_blend + thread_rank] = r | (g << 8) | (b << 16) | (t << 24);
                     bucket_offset++;
                 }
                 n_possible_contributions++;

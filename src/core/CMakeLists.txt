@@ -18,11 +18,13 @@ set(CORE_SOURCES
         argument_parser.cpp
         camera.cpp
         converter.cpp
+        cuda_version.cpp
         image_io.cpp
         logger.cpp
         parameters.cpp
         splat_data.cpp
         splat_data_export.cpp
+        splat_data_mirror.cpp
         splat_data_transform.cpp
         sogs.cpp
         tensor_debug.cpp

@@ -37,7 +37,8 @@ std::tuple<int, int, int, int, int> fast_lfs::rasterization::forward(
     const float cx,
     const float cy,
     const float near_, // near and far are macros in windows
-    const float far_) {
+    const float far_,
+    bool mip_filter) {
     const dim3 grid(div_round_up(width, config::tile_width), div_round_up(height, config::tile_height), 1);
     const dim3 block(config::tile_width, config::tile_height, 1);
     const int n_tiles = grid.x * grid.y;
@@ -48,13 +49,16 @@ std::tuple<int, int, int, int, int> fast_lfs::rasterization::forward(
 
     // Initialize tile instance ranges
     static cudaStream_t memset_stream = 0;
+    static cudaEvent_t memset_event = 0;
     if constexpr (!config::debug) {
         static bool memset_stream_initialized = false;
         if (!memset_stream_initialized) {
             cudaStreamCreate(&memset_stream);
+            cudaEventCreate(&memset_event);
             memset_stream_initialized = true;
         }
         cudaMemsetAsync(per_tile_buffers.instance_ranges, 0, sizeof(uint2) * n_tiles, memset_stream);
+        cudaEventRecord(memset_event, memset_stream); // Record event when memset completes
     } else {
         cudaMemset(per_tile_buffers.instance_ranges, 0, sizeof(uint2) * n_tiles);
     }
@@ -97,7 +101,8 @@ std::tuple<int, int, int, int, int> fast_lfs::rasterization::forward(
         cx,
         cy,
         near_,
-        far_);
+        far_,
+        mip_filter);
     CHECK_CUDA(config::debug, "preprocess")
 
     int n_visible_primitives;
@@ -157,9 +162,9 @@ std::tuple<int, int, int, int, int> fast_lfs::rasterization::forward(
         n_instances);
     CHECK_CUDA(config::debug, "cub::DeviceRadixSort::SortPairs (Tile)")
 
-    // Synchronize memset stream if needed
+    // Wait for memset to complete (GPU-side wait, doesn't block CPU)
     if constexpr (!config::debug) {
-        cudaStreamSynchronize(memset_stream);
+        cudaStreamWaitEvent(nullptr, memset_event, 0); // Default stream waits for memset
     }
 
     // Extract instance ranges
@@ -192,8 +197,7 @@ std::tuple<int, int, int, int, int> fast_lfs::rasterization::forward(
     cudaMemcpy(&n_buckets, per_tile_buffers.bucket_offsets + n_tiles - 1, sizeof(uint), cudaMemcpyDeviceToHost);
 
     // Allocate per-bucket buffers through arena
-    size_t per_bucket_request = required<PerBucketBuffers>(n_buckets);
-    char* per_bucket_buffers_blob = per_bucket_buffers_func(per_bucket_request);
+    char* per_bucket_buffers_blob = per_bucket_buffers_func(required<PerBucketBuffers>(n_buckets));
     PerBucketBuffers per_bucket_buffers = PerBucketBuffers::from_blob(per_bucket_buffers_blob, n_buckets);
 
     // Perform blending
@@ -209,7 +213,7 @@ std::tuple<int, int, int, int, int> fast_lfs::rasterization::forward(
         per_tile_buffers.max_n_contributions,
         per_tile_buffers.n_contributions,
         per_bucket_buffers.tile_index,
-        per_bucket_buffers.color_transmittance,
+        per_bucket_buffers.checkpoint_uint8,
         width,
         height,
         grid.x);

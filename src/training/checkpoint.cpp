@@ -3,7 +3,10 @@
 
 #include "checkpoint.hpp"
 #include "components/bilateral_grid.hpp"
+#include "core/events.hpp"
 #include "core/logger.hpp"
+#include "core/path_utils.hpp"
+#include "io/error.hpp"
 #include "strategies/istrategy.hpp"
 #include <fstream>
 #include <nlohmann/json.hpp>
@@ -18,16 +21,81 @@ namespace lfs::training {
         const BilateralGrid* bilateral_grid) {
 
         try {
-            const auto checkpoint_dir = path / "checkpoints";
-            std::filesystem::create_directories(checkpoint_dir);
-            const auto checkpoint_path = checkpoint_dir / ("checkpoint_" + std::to_string(iteration) + ".resume");
-
-            std::ofstream file(checkpoint_path, std::ios::binary);
-            if (!file) {
-                return std::unexpected("Failed to open: " + checkpoint_path.string());
+            // Validate input path
+            if (path.empty()) {
+                return std::unexpected("Cannot save checkpoint: output path is empty");
             }
 
+            const auto checkpoint_dir = path / "checkpoints";
+
+            // Create checkpoint directory with error checking
+            std::error_code ec;
+            std::filesystem::create_directories(checkpoint_dir, ec);
+            if (ec) {
+                return std::unexpected("Failed to create checkpoint directory '" +
+                                       lfs::core::path_to_utf8(checkpoint_dir) + "': " + ec.message());
+            }
+
+            const auto checkpoint_path = checkpoint_dir / ("checkpoint_" + std::to_string(iteration) + ".resume");
+
             const auto& model = strategy.get_model();
+
+            // Model tensors
+            size_t model_bytes = 0;
+            model_bytes += model.means().bytes();
+            model_bytes += model.sh0().bytes();
+            model_bytes += model.scaling_raw().bytes();
+            model_bytes += model.rotation_raw().bytes();
+            model_bytes += model.opacity_raw().bytes();
+            if (model.shN().is_valid()) {
+                model_bytes += model.shN().bytes();
+            }
+            if (model.deleted().is_valid()) {
+                model_bytes += model.deleted().bytes();
+            }
+            if (model._densification_info.is_valid()) {
+                model_bytes += model._densification_info.bytes();
+            }
+
+            // Optimizer: 2x model (Adam m & v)
+            const size_t optimizer_bytes = model_bytes * 2;
+
+            // Bilateral grid: 3x (grids + Adam state)
+            size_t bilateral_grid_bytes = 0;
+            if (bilateral_grid) {
+                bilateral_grid_bytes = bilateral_grid->grids().bytes() * 3;
+            }
+
+            constexpr size_t OVERHEAD_BYTES = 64 * 1024;
+
+            const size_t estimated_size = sizeof(CheckpointHeader) +
+                                          model_bytes +
+                                          optimizer_bytes +
+                                          bilateral_grid_bytes +
+                                          OVERHEAD_BYTES;
+
+            if (auto space_check = lfs::io::check_disk_space(checkpoint_path, estimated_size, 1.1f);
+                !space_check) {
+                const auto& error = space_check.error();
+                const bool is_disk_space = error.is(lfs::io::ErrorCode::INSUFFICIENT_DISK_SPACE);
+
+                lfs::core::events::state::DiskSpaceSaveFailed{
+                    .iteration = iteration,
+                    .path = checkpoint_path,
+                    .error = error.format(),
+                    .required_bytes = estimated_size,
+                    .available_bytes = error.available_bytes,
+                    .is_disk_space_error = is_disk_space}
+                    .emit();
+
+                return std::unexpected(error.format());
+            }
+
+            std::ofstream file;
+            if (!lfs::core::open_file_for_write(checkpoint_path, std::ios::binary, file)) {
+                return std::unexpected("Failed to open checkpoint file: " + lfs::core::path_to_utf8(checkpoint_path));
+            }
+
             CheckpointHeader header{};
             header.iteration = iteration;
             header.num_gaussians = static_cast<uint32_t>(model.size());
@@ -70,7 +138,7 @@ namespace lfs::training {
             file.write(reinterpret_cast<const char*>(&header), sizeof(header));
 
             LOG_INFO("Checkpoint saved: {} ({} Gaussians, iter {}{})",
-                     checkpoint_path.string(), header.num_gaussians, iteration,
+                     lfs::core::path_to_utf8(checkpoint_path), header.num_gaussians, iteration,
                      bilateral_grid ? ", +bilateral" : "");
             return {};
 
@@ -83,9 +151,9 @@ namespace lfs::training {
         const std::filesystem::path& path) {
 
         try {
-            std::ifstream file(path, std::ios::binary);
-            if (!file) {
-                return std::unexpected("Failed to open: " + path.string());
+            std::ifstream file;
+            if (!lfs::core::open_file_for_read(path, std::ios::binary, file)) {
+                return std::unexpected("Failed to open: " + lfs::core::path_to_utf8(path));
             }
 
             CheckpointHeader header{};
@@ -111,9 +179,9 @@ namespace lfs::training {
         BilateralGrid* bilateral_grid) {
 
         try {
-            std::ifstream file(path, std::ios::binary);
-            if (!file) {
-                return std::unexpected("Failed to open: " + path.string());
+            std::ifstream file;
+            if (!lfs::core::open_file_for_read(path, std::ios::binary, file)) {
+                return std::unexpected("Failed to open: " + lfs::core::path_to_utf8(path));
             }
 
             CheckpointHeader header{};
@@ -163,15 +231,15 @@ namespace lfs::training {
                 strategy.reserve_optimizer_capacity(max_cap);
             }
 
-            // Load params, preserving CLI overrides
+            // Load params from checkpoint, preserving CLI overrides
             if (header.params_json_size > 0) {
                 file.seekg(static_cast<std::streamoff>(header.params_json_offset));
                 std::string params_str(header.params_json_size, '\0');
                 file.read(params_str.data(), static_cast<std::streamsize>(header.params_json_size));
 
-                const int cli_iterations = params.optimization.iterations;
                 const auto cli_data_path = params.dataset.data_path;
                 const auto cli_output_path = params.dataset.output_path;
+                const auto cli_iterations = params.optimization.iterations;
 
                 const auto params_json = nlohmann::json::parse(params_str);
                 if (params_json.contains("optimization")) {
@@ -183,16 +251,16 @@ namespace lfs::training {
                     params.optimization = lfs::core::param::OptimizationParameters::from_json(params_json);
                 }
 
-                // CLI overrides checkpoint
-                params.optimization.iterations = cli_iterations;
                 if (!cli_data_path.empty())
                     params.dataset.data_path = cli_data_path;
                 if (!cli_output_path.empty())
                     params.dataset.output_path = cli_output_path;
+                if (cli_iterations > 0)
+                    params.optimization.iterations = cli_iterations;
             }
 
             LOG_INFO("Checkpoint loaded: {} ({} Gaussians, iter {})",
-                     path.string(), header.num_gaussians, header.iteration);
+                     lfs::core::path_to_utf8(path), header.num_gaussians, header.iteration);
             return header.iteration;
 
         } catch (const std::exception& e) {
@@ -204,9 +272,9 @@ namespace lfs::training {
         const std::filesystem::path& path) {
 
         try {
-            std::ifstream file(path, std::ios::binary);
-            if (!file) {
-                return std::unexpected("Failed to open: " + path.string());
+            std::ifstream file;
+            if (!lfs::core::open_file_for_read(path, std::ios::binary, file)) {
+                return std::unexpected("Failed to open: " + lfs::core::path_to_utf8(path));
             }
 
             CheckpointHeader header{};
@@ -239,9 +307,9 @@ namespace lfs::training {
         const std::filesystem::path& path) {
 
         try {
-            std::ifstream file(path, std::ios::binary);
-            if (!file) {
-                return std::unexpected("Failed to open: " + path.string());
+            std::ifstream file;
+            if (!lfs::core::open_file_for_read(path, std::ios::binary, file)) {
+                return std::unexpected("Failed to open: " + lfs::core::path_to_utf8(path));
             }
 
             CheckpointHeader header{};
@@ -271,7 +339,7 @@ namespace lfs::training {
                 }
             }
 
-            LOG_DEBUG("Params loaded from checkpoint: {}", params.dataset.data_path.string());
+            LOG_DEBUG("Params loaded from checkpoint: {}", lfs::core::path_to_utf8(params.dataset.data_path));
             return params;
 
         } catch (const std::exception& e) {

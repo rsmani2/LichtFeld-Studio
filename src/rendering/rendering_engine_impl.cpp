@@ -150,6 +150,7 @@ namespace lfs::rendering {
             .fov = request.viewport.fov,
             .scaling_modifier = request.scaling_modifier,
             .antialiasing = request.antialiasing,
+            .mip_filter = request.mip_filter,
             .sh_degree = request.sh_degree,
             .render_mode = RenderMode::RGB,
             .crop_box = nullptr,
@@ -293,6 +294,7 @@ namespace lfs::rendering {
             .fov = request.viewport.fov,
             .scaling_modifier = request.scaling_modifier,
             .antialiasing = false,
+            .mip_filter = false, // Not applicable to point clouds
             .sh_degree = 0,
             .render_mode = RenderMode::RGB,
             .crop_box = nullptr,
@@ -397,7 +399,9 @@ namespace lfs::rendering {
             return upload_result;
         }
 
-        glViewport(viewport_pos.x, viewport_pos.y, viewport_size.x, viewport_size.y);
+        // Note: glViewport should be set by the caller to the DISPLAY size
+        // The viewport_size here is the IMAGE size for upload validation
+        // The fullscreen quad will stretch the texture to fill whatever viewport is set
 
         return screen_renderer_->render(quad_shader_);
     }

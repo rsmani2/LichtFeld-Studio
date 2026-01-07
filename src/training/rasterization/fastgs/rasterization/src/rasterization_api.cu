@@ -14,8 +14,8 @@
 #include <cstring>
 #include <cuda_runtime.h>
 #include <functional>
-#include <iostream>
 #include <stdexcept>
+#include <vector>
 
 namespace fast_lfs::rasterization {
 
@@ -40,7 +40,8 @@ namespace fast_lfs::rasterization {
         float center_x,
         float center_y,
         float near_plane,
-        float far_plane) {
+        float far_plane,
+        bool mip_filter) {
 
         // Validate inputs using pure CUDA validation
         CHECK_CUDA_PTR(means_ptr, "means_ptr");
@@ -172,7 +173,8 @@ namespace fast_lfs::rasterization {
                                                                  center_x,
                                                                  center_y,
                                                                  near_plane,
-                                                                 far_plane);
+                                                                 far_plane,
+                                                                 mip_filter);
 
             // Verify allocations happened
             if (n_instances > 0 && !per_instance_buffers_blob) {
@@ -235,6 +237,7 @@ namespace fast_lfs::rasterization {
         const float* means_ptr,
         const float* scales_raw_ptr,
         const float* rotations_raw_ptr,
+        const float* raw_opacities_ptr,
         const float* sh_coefficients_rest_ptr,
         const float* w2c_ptr,
         const float* cam_position_ptr,
@@ -254,7 +257,8 @@ namespace fast_lfs::rasterization {
         float focal_x,
         float focal_y,
         float center_x,
-        float center_y) {
+        float center_y,
+        bool mip_filter) {
 
         BackwardOutputs outputs;
         outputs.success = false;
@@ -345,6 +349,7 @@ namespace fast_lfs::rasterization {
                 reinterpret_cast<const float3*>(means_ptr),
                 reinterpret_cast<const float3*>(scales_raw_ptr),
                 reinterpret_cast<const float4*>(rotations_raw_ptr),
+                raw_opacities_ptr,
                 reinterpret_cast<const float3*>(sh_coefficients_rest_ptr),
                 reinterpret_cast<const float4*>(w2c_ptr),
                 reinterpret_cast<const float3*>(cam_position_ptr),
@@ -375,7 +380,8 @@ namespace fast_lfs::rasterization {
                 focal_x,
                 focal_y,
                 center_x,
-                center_y);
+                center_y,
+                mip_filter);
 
             // Mark frame as complete
             auto& arena = lfs::core::GlobalArenaManager::instance().get_arena();
@@ -392,6 +398,92 @@ namespace fast_lfs::rasterization {
             outputs.error_message = e.what();
             return outputs;
         }
+    }
+
+    void warmup_kernels() {
+        // Pre-compile rasterization kernels via minimal forward+backward pass.
+        // All allocated memory is released before returning.
+
+        constexpr int NUM_GAUSSIANS = 100;
+        constexpr int IMG_WIDTH = 64;
+        constexpr int IMG_HEIGHT = 64;
+        constexpr float FOCAL = 50.0f;
+        constexpr float CENTER_X = IMG_WIDTH / 2.0f;
+        constexpr float CENTER_Y = IMG_HEIGHT / 2.0f;
+
+        // Allocate all buffers in one block for efficiency
+        constexpr size_t INPUT_SIZE = NUM_GAUSSIANS * (3 + 3 + 4 + 1 + 3) * sizeof(float) // means, scales, rotations, opacities, sh0
+                                      + 16 * sizeof(float)                                // w2c
+                                      + 3 * sizeof(float)                                 // cam_pos
+                                      + IMG_WIDTH * IMG_HEIGHT * 4 * sizeof(float);       // image + alpha
+
+        char* buffer;
+        cudaMalloc(&buffer, INPUT_SIZE);
+        cudaMemset(buffer, 0, INPUT_SIZE);
+
+        float* const means = reinterpret_cast<float*>(buffer);
+        float* const scales = means + NUM_GAUSSIANS * 3;
+        float* const rotations = scales + NUM_GAUSSIANS * 3;
+        float* const opacities = rotations + NUM_GAUSSIANS * 4;
+        float* const sh0 = opacities + NUM_GAUSSIANS;
+        float* const w2c = sh0 + NUM_GAUSSIANS * 3;
+        float* const cam_pos = w2c + 16;
+        float* const image = cam_pos + 3;
+        float* const alpha = image + IMG_WIDTH * IMG_HEIGHT * 3;
+
+        // Initialize rotations to identity quaternion
+        std::vector<float> rot_data(NUM_GAUSSIANS * 4);
+        for (int i = 0; i < NUM_GAUSSIANS; ++i) {
+            rot_data[i * 4] = 1.0f; // w=1, x=y=z=0
+        }
+        cudaMemcpy(rotations, rot_data.data(), rot_data.size() * sizeof(float), cudaMemcpyHostToDevice);
+
+        // Initialize w2c to identity and camera position
+        const float identity[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        const float cam[3] = {0.0f, 0.0f, 5.0f};
+        cudaMemcpy(w2c, identity, sizeof(identity), cudaMemcpyHostToDevice);
+        cudaMemcpy(cam_pos, cam, sizeof(cam), cudaMemcpyHostToDevice);
+
+        // Forward pass compiles forward kernels
+        const auto ctx = forward_raw(
+            means, scales, rotations, opacities, sh0, nullptr,
+            w2c, cam_pos, image, alpha,
+            NUM_GAUSSIANS, 1, 0,
+            IMG_WIDTH, IMG_HEIGHT,
+            FOCAL, FOCAL, CENTER_X, CENTER_Y,
+            0.01f, 100.0f);
+
+        if (ctx.success) {
+            // Allocate gradient buffers
+            constexpr size_t GRAD_SIZE = IMG_WIDTH * IMG_HEIGHT * 4 * sizeof(float) + NUM_GAUSSIANS * (3 + 3 + 4 + 1 + 3) * sizeof(float);
+            char* grad_buffer;
+            cudaMalloc(&grad_buffer, GRAD_SIZE);
+            cudaMemset(grad_buffer, 0, GRAD_SIZE);
+
+            float* const grad_image = reinterpret_cast<float*>(grad_buffer);
+            float* const grad_alpha = grad_image + IMG_WIDTH * IMG_HEIGHT * 3;
+            float* const grad_means = grad_alpha + IMG_WIDTH * IMG_HEIGHT;
+            float* const grad_scales = grad_means + NUM_GAUSSIANS * 3;
+            float* const grad_rotations = grad_scales + NUM_GAUSSIANS * 3;
+            float* const grad_opacities = grad_rotations + NUM_GAUSSIANS * 4;
+            float* const grad_sh0 = grad_opacities + NUM_GAUSSIANS;
+
+            // Backward pass compiles backward kernels (also releases arena)
+            backward_raw(
+                nullptr, grad_image, grad_alpha, image, alpha,
+                means, scales, rotations, opacities, nullptr, w2c, cam_pos, ctx,
+                grad_means, grad_scales, grad_rotations, grad_opacities,
+                grad_sh0, nullptr, nullptr,
+                NUM_GAUSSIANS, 1, 0,
+                IMG_WIDTH, IMG_HEIGHT, FOCAL, FOCAL, CENTER_X, CENTER_Y, true);
+
+            cudaFree(grad_buffer);
+        } else {
+            lfs::core::GlobalArenaManager::instance().get_arena().end_frame(ctx.frame_id);
+        }
+
+        cudaFree(buffer);
+        // Note: cudaFree is synchronous, no need for cudaDeviceSynchronize
     }
 
 } // namespace fast_lfs::rasterization

@@ -8,6 +8,7 @@
 #include "rasterization_config.h"
 #include <cstdint>
 #include <cub/cub.cuh>
+#include <cuda_fp16.h>
 
 namespace fast_lfs::rasterization {
 
@@ -49,7 +50,7 @@ namespace fast_lfs::rasterization {
         uint* n_visible_primitives;
         uint* n_instances;
 
-        static PerPrimitiveBuffers from_blob(char*& blob, size_t n_primitives) {
+        static PerPrimitiveBuffers from_blob(char*& blob, int n_primitives) {
             PerPrimitiveBuffers buffers;
             uint* depth_keys_current;
             obtain(blob, depth_keys_current, n_primitives, 128);
@@ -90,7 +91,7 @@ namespace fast_lfs::rasterization {
         cub::DoubleBuffer<ushort> keys;
         cub::DoubleBuffer<uint> primitive_indices;
 
-        static PerInstanceBuffers from_blob(char*& blob, size_t n_instances) {
+        static PerInstanceBuffers from_blob(char*& blob, int n_instances) {
             PerInstanceBuffers buffers;
             ushort* keys_current;
             obtain(blob, keys_current, n_instances, 128);
@@ -120,7 +121,7 @@ namespace fast_lfs::rasterization {
         uint* max_n_contributions;
         uint* n_contributions;
 
-        static PerTileBuffers from_blob(char*& blob, size_t n_tiles) {
+        static PerTileBuffers from_blob(char*& blob, int n_tiles) {
             PerTileBuffers buffers;
             obtain(blob, buffers.instance_ranges, n_tiles, 128);
             obtain(blob, buffers.n_buckets, n_tiles, 128);
@@ -138,14 +139,12 @@ namespace fast_lfs::rasterization {
 
     struct PerBucketBuffers {
         uint* tile_index;
-        float4* color_transmittance;
+        uint* checkpoint_uint8; // packed RGBA as 4x uint8 (colors [0,4], transmittance [0,1])
 
-        static PerBucketBuffers from_blob(char*& blob, size_t n_buckets) {
+        static PerBucketBuffers from_blob(char*& blob, int n_buckets) {
             PerBucketBuffers buffers;
-            // tile_index: only needs n_buckets elements (one per bucket)
-            // color_transmittance: needs n_buckets * block_size_blend elements (one per thread per bucket)
             obtain(blob, buffers.tile_index, n_buckets, 128);
-            obtain(blob, buffers.color_transmittance, n_buckets * config::block_size_blend, 128);
+            obtain(blob, buffers.checkpoint_uint8, n_buckets * config::block_size_blend, 128);
             return buffers;
         }
     };
