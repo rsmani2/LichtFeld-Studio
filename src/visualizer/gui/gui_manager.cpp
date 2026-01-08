@@ -20,20 +20,20 @@
 #include "gui/html_viewer_export.hpp"
 #include "gui/localization_manager.hpp"
 #include "gui/panels/main_panel.hpp"
+#include "gui/panels/python_console_panel.hpp"
+#include "gui/panels/python_scripts_panel.hpp"
 #include "gui/panels/scene_panel.hpp"
 #include "gui/panels/sequencer_settings_panel.hpp"
 #include "gui/panels/tools_panel.hpp"
-#include "sequencer/keyframe.hpp"
 #include "gui/panels/training_panel.hpp"
-#include "gui/panels/python_console_panel.hpp"
-#include "gui/panels/python_scripts_panel.hpp"
 #include "gui/string_keys.hpp"
 #include "gui/ui_widgets.hpp"
 #include "gui/utils/windows_utils.hpp"
 #include "gui/windows/file_browser.hpp"
 #include "io/exporter.hpp"
-#include "io/video/video_encoder.hpp"
 #include "io/loader.hpp"
+#include "io/video/video_encoder.hpp"
+#include "sequencer/keyframe.hpp"
 
 #include "input/input_controller.hpp"
 #include "internal/resource_paths.hpp"
@@ -408,6 +408,20 @@ namespace lfs::vis::gui {
             font_small_ = load_font_with_cjk(regular_path, t.fonts.small_size * xscale);
             font_section_ = load_font_with_cjk(bold_path, t.fonts.section_size * xscale);
 
+            // Load monospace font for code editor
+            const auto monospace_path = lfs::vis::getAssetPath("fonts/JetBrainsMono-Regular.ttf");
+            if (is_font_valid(monospace_path)) {
+                const std::string mono_path_utf8 = lfs::core::path_to_utf8(monospace_path);
+                font_monospace_ = io.Fonts->AddFontFromFileTTF(mono_path_utf8.c_str(), t.fonts.base_size * xscale);
+                if (font_monospace_) {
+                    LOG_INFO("Loaded monospace font: JetBrainsMono-Regular.ttf");
+                }
+            }
+            if (!font_monospace_) {
+                font_monospace_ = font_regular_;
+                LOG_WARN("Monospace font not found, using regular font for code editor");
+            }
+
             const bool all_loaded = font_regular_ && font_bold_ && font_heading_ && font_small_ && font_section_;
             if (!all_loaded) {
                 LOG_WARN("Some fonts failed to load, using fallback");
@@ -481,7 +495,7 @@ namespace lfs::vis::gui {
         });
 
         initMenuBar();
-        menu_bar_->setFonts({font_regular_, font_bold_, font_heading_, font_small_, font_section_});
+        menu_bar_->setFonts({font_regular_, font_bold_, font_heading_, font_small_, font_section_, font_monospace_});
 
         // Load startup overlay textures
         const auto loadOverlayTexture = [](const std::filesystem::path& path, unsigned int& tex, int& w, int& h) {
@@ -647,7 +661,7 @@ namespace lfs::vis::gui {
             .window_states = &window_states_,
             .editor = &editor_ctx,
             .sequencer_controller = &sequencer_controller_,
-            .fonts = {font_regular_, font_bold_, font_heading_, font_small_, font_section_}};
+            .fonts = {font_regular_, font_bold_, font_heading_, font_small_, font_section_, font_monospace_}};
 
         // Right panel
         if (show_main_panel_ && !ui_hidden_) {
@@ -1345,9 +1359,9 @@ namespace lfs::vis::gui {
         constexpr float FRUSTUM_THICKNESS = 1.5f;
         constexpr float NDC_CULL_MARGIN = 1.5f;
         constexpr int PATH_SAMPLES = 20;
-        constexpr float FRUSTUM_SIZE = 0.15f;   // Size of frustum base
-        constexpr float FRUSTUM_DEPTH = 0.25f;  // Depth of frustum
-        constexpr float HIT_RADIUS = 15.0f;     // Click detection radius in pixels
+        constexpr float FRUSTUM_SIZE = 0.15f;  // Size of frustum base
+        constexpr float FRUSTUM_DEPTH = 0.25f; // Depth of frustum
+        constexpr float HIT_RADIUS = 15.0f;    // Click detection radius in pixels
 
         const auto& timeline = sequencer_controller_.timeline();
         const auto& viewport = viewer_->getViewport();
@@ -1355,7 +1369,8 @@ namespace lfs::vis::gui {
 
         const auto projectToScreen = [&](const glm::vec3& pos) -> ImVec2 {
             const glm::vec4 clip = view_proj * glm::vec4(pos, 1.0f);
-            if (clip.w <= 0.0f) return {-10000.0f, -10000.0f};
+            if (clip.w <= 0.0f)
+                return {-10000.0f, -10000.0f};
             const glm::vec3 ndc = glm::vec3(clip) / clip.w;
             return {viewport_pos_.x + (ndc.x * 0.5f + 0.5f) * viewport_size_.x,
                     viewport_pos_.y + (1.0f - (ndc.y * 0.5f + 0.5f)) * viewport_size_.y};
@@ -1363,7 +1378,8 @@ namespace lfs::vis::gui {
 
         const auto isVisible = [&](const glm::vec3& pos) -> bool {
             const glm::vec4 clip = view_proj * glm::vec4(pos, 1.0f);
-            if (clip.w <= 0.0f) return false;
+            if (clip.w <= 0.0f)
+                return false;
             const glm::vec3 ndc = glm::vec3(clip) / clip.w;
             return std::abs(ndc.x) <= NDC_CULL_MARGIN && std::abs(ndc.y) <= NDC_CULL_MARGIN;
         };
@@ -1371,14 +1387,16 @@ namespace lfs::vis::gui {
         ImDrawList* const dl = ImGui::GetBackgroundDrawList();
         const auto& t = theme();
 
-        if (timeline.empty()) return;
+        if (timeline.empty())
+            return;
 
         // Path line
         const auto path_points = timeline.generatePath(PATH_SAMPLES);
         if (path_points.size() >= 2) {
             const ImU32 path_color = toU32WithAlpha(t.palette.primary, 0.8f);
             for (size_t i = 0; i + 1 < path_points.size(); ++i) {
-                if (!isVisible(path_points[i]) && !isVisible(path_points[i + 1])) continue;
+                if (!isVisible(path_points[i]) && !isVisible(path_points[i + 1]))
+                    continue;
                 dl->AddLine(projectToScreen(path_points[i]), projectToScreen(path_points[i + 1]), path_color, PATH_THICKNESS);
             }
         }
@@ -1386,7 +1404,7 @@ namespace lfs::vis::gui {
         // Hit testing for keyframe clicking
         const ImVec2 mouse = ImGui::GetMousePos();
         const bool mouse_in_viewport = mouse.x >= viewport_pos_.x && mouse.x <= viewport_pos_.x + viewport_size_.x &&
-                                        mouse.y >= viewport_pos_.y && mouse.y <= viewport_pos_.y + viewport_size_.y;
+                                       mouse.y >= viewport_pos_.y && mouse.y <= viewport_pos_.y + viewport_size_.y;
 
         std::optional<size_t> hovered_keyframe;
         float closest_dist = HIT_RADIUS;
@@ -1398,7 +1416,8 @@ namespace lfs::vis::gui {
 
         for (size_t i = 0; i < timeline.keyframes().size(); ++i) {
             const auto& kf = timeline.keyframes()[i];
-            if (!isVisible(kf.position)) continue;
+            if (!isVisible(kf.position))
+                continue;
 
             const ImVec2 s_apex = projectToScreen(kf.position);
 
@@ -1415,16 +1434,18 @@ namespace lfs::vis::gui {
             const bool selected = sequencer_controller_.selectedKeyframe() == i;
             const bool hovered = hovered_keyframe == i;
             ImU32 color = frustum_color;
-            if (selected) color = selected_frustum_color;
-            else if (hovered) color = hovered_frustum_color;
+            if (selected)
+                color = selected_frustum_color;
+            else if (hovered)
+                color = hovered_frustum_color;
             const float thickness = selected ? FRUSTUM_THICKNESS * 1.5f : FRUSTUM_THICKNESS;
 
             // Build frustum in camera local space, then transform to world
             // Apply GL_TO_COLMAP transform (flip Y and Z) to match training camera frustums
             const glm::mat3 rot_mat = glm::mat3_cast(kf.rotation);
-            const glm::vec3 forward = rot_mat[2];   // Z (GL_TO_COLMAP flips Z, was -Z)
-            const glm::vec3 up = -rot_mat[1];       // -Y (GL_TO_COLMAP flips Y)
-            const glm::vec3 right = rot_mat[0];     // X (unchanged)
+            const glm::vec3 forward = rot_mat[2]; // Z (GL_TO_COLMAP flips Z, was -Z)
+            const glm::vec3 up = -rot_mat[1];     // -Y (GL_TO_COLMAP flips Y)
+            const glm::vec3 right = rot_mat[0];   // X (unchanged)
 
             // Frustum apex at camera position
             const glm::vec3 apex = kf.position;
@@ -1522,7 +1543,8 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::renderKeyframeGizmo(const UIContext& ctx) {
-        if (keyframe_gizmo_op_ == ImGuizmo::OPERATION(0)) return;
+        if (keyframe_gizmo_op_ == ImGuizmo::OPERATION(0))
+            return;
 
         const auto selected = sequencer_controller_.selectedKeyframe();
         if (!selected.has_value()) {
@@ -1531,7 +1553,8 @@ namespace lfs::vis::gui {
         }
 
         const auto& timeline = sequencer_controller_.timeline();
-        if (*selected >= timeline.size()) return;
+        if (*selected >= timeline.size())
+            return;
 
         const auto* kf = timeline.getKeyframe(*selected);
         if (!kf || kf->is_loop_point) {
@@ -1540,7 +1563,8 @@ namespace lfs::vis::gui {
         }
 
         auto* const rendering_manager = ctx.viewer->getRenderingManager();
-        if (!rendering_manager) return;
+        if (!rendering_manager)
+            return;
 
         const auto& settings = rendering_manager->getSettings();
         auto& viewport = ctx.viewer->getViewport();
@@ -1593,7 +1617,8 @@ namespace lfs::vis::gui {
                 const bool position_changed = glm::any(glm::notEqual(
                     keyframe_pos_before_drag_, final_kf->position, 0.0001f));
                 const bool rotation_changed = glm::abs(glm::dot(
-                    keyframe_rot_before_drag_, final_kf->rotation) - 1.0f) > 0.0001f;
+                                                           keyframe_rot_before_drag_, final_kf->rotation) -
+                                                       1.0f) > 0.0001f;
 
                 if (position_changed || rotation_changed) {
                     sequencer::Keyframe old_kf = *final_kf;
@@ -1612,7 +1637,8 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::initPipPreview() {
-        if (pip_initialized_) return;
+        if (pip_initialized_)
+            return;
 
         glGenFramebuffers(1, &pip_fbo_);
         glGenTextures(1, &pip_texture_);
@@ -1656,14 +1682,17 @@ namespace lfs::vis::gui {
         const auto now = std::chrono::steady_clock::now();
         if (is_playing) {
             const float elapsed = std::chrono::duration<float>(now - pip_last_render_time_).count();
-            if (elapsed < 1.0f / PREVIEW_TARGET_FPS) return;
+            if (elapsed < 1.0f / PREVIEW_TARGET_FPS)
+                return;
         }
 
         auto* const rm = ctx.viewer->getRenderingManager();
         auto* const sm = ctx.viewer->getSceneManager();
-        if (!rm || !sm) return;
+        if (!rm || !sm)
+            return;
 
-        if (!pip_initialized_) initPipPreview();
+        if (!pip_initialized_)
+            initPipPreview();
 
         glm::mat3 cam_rot;
         glm::vec3 cam_pos;
@@ -1675,13 +1704,16 @@ namespace lfs::vis::gui {
             cam_pos = state.position;
             cam_fov = state.fov;
         } else {
-            if (pip_last_keyframe_ == selected && !pip_needs_update_) return;
+            if (pip_last_keyframe_ == selected && !pip_needs_update_)
+                return;
 
             const auto& timeline = sequencer_controller_.timeline();
-            if (*selected >= timeline.size()) return;
+            if (*selected >= timeline.size())
+                return;
 
             const auto* const kf = timeline.getKeyframe(*selected);
-            if (!kf) return;
+            if (!kf)
+                return;
 
             cam_rot = glm::mat3_cast(kf->rotation);
             cam_pos = kf->position;
@@ -1701,14 +1733,18 @@ namespace lfs::vis::gui {
         const bool is_playing = !sequencer_controller_.isStopped();
         const auto selected = sequencer_controller_.selectedKeyframe();
 
-        if (!is_playing && !selected.has_value()) return;
-        if (!pip_initialized_ || pip_texture_ == 0) return;
+        if (!is_playing && !selected.has_value())
+            return;
+        if (!pip_initialized_ || pip_texture_ == 0)
+            return;
 
         if (!is_playing) {
             const auto& timeline = sequencer_controller_.timeline();
-            if (*selected >= timeline.size()) return;
+            if (*selected >= timeline.size())
+                return;
             const auto* const kf = timeline.getKeyframe(*selected);
-            if (!kf || kf->is_loop_point) return;
+            if (!kf || kf->is_loop_point)
+                return;
         }
 
         const auto& t = theme();
@@ -1728,8 +1764,8 @@ namespace lfs::vis::gui {
 
         // Use different border color during playback
         const ImU32 border_color = is_playing
-            ? t.error_u32()
-            : toU32WithAlpha(t.palette.primary, 0.6f);
+                                       ? t.error_u32()
+                                       : toU32WithAlpha(t.palette.primary, 0.6f);
 
         ImGui::PushStyleColor(ImGuiCol_WindowBg, toU32(t.palette.surface));
         ImGui::PushStyleColor(ImGuiCol_Border, border_color);
@@ -1744,8 +1780,8 @@ namespace lfs::vis::gui {
 
         if (ImGui::Begin("##KeyframePreview", nullptr, flags)) {
             const std::string title = is_playing
-                ? std::format("Playback {:.2f}s", sequencer_controller_.playhead())
-                : std::format("Keyframe {} Preview", *selected + 1);
+                                          ? std::format("Playback {:.2f}s", sequencer_controller_.playhead())
+                                          : std::format("Keyframe {} Preview", *selected + 1);
             ImGui::TextColored({t.palette.text.x, t.palette.text.y, t.palette.text.z, 0.8f}, "%s", title.c_str());
             ImGui::Image(static_cast<ImTextureID>(pip_texture_),
                          {scaled_width - 8.0f, scaled_height - 8.0f}, {0, 1}, {1, 0});
@@ -2424,8 +2460,8 @@ namespace lfs::vis::gui {
 
             // Use snap interval if enabled, otherwise default to 1.0f
             const float interval = sequencer_ui_state_.snap_to_grid
-                ? sequencer_ui_state_.snap_interval
-                : 1.0f;
+                                       ? sequencer_ui_state_.snap_interval
+                                       : 1.0f;
             const float time = timeline.empty() ? 0.0f : timeline.endTime() + interval;
 
             lfs::sequencer::Keyframe kf;
@@ -2438,7 +2474,8 @@ namespace lfs::vis::gui {
         });
 
         cmd::SequencerUpdateKeyframe::when([this](const auto&) {
-            if (!sequencer_controller_.hasSelection()) return;
+            if (!sequencer_controller_.hasSelection())
+                return;
             const auto& cam = viewer_->getViewport().camera;
             sequencer_controller_.updateSelectedKeyframe(
                 cam.t,
@@ -2452,7 +2489,8 @@ namespace lfs::vis::gui {
 
         cmd::SequencerExportVideo::when([this](const auto& evt) {
             const auto path = SaveMp4FileDialog("camera_path");
-            if (path.empty()) return;
+            if (path.empty())
+                return;
 
             io::video::VideoExportOptions options;
             options.width = evt.width;
@@ -3808,7 +3846,8 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::cancelVideoExport() {
-        if (!video_export_state_.active.load()) return;
+        if (!video_export_state_.active.load())
+            return;
 
         LOG_INFO("Cancelling video export");
         video_export_state_.cancel_requested.store(true);
@@ -3818,7 +3857,7 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::startVideoExport(const std::filesystem::path& path,
-                                       const io::video::VideoExportOptions& options) {
+                                      const io::video::VideoExportOptions& options) {
         auto* const scene_manager = viewer_->getSceneManager();
         auto* const rendering_manager = viewer_->getRenderingManager();
         if (!scene_manager || !rendering_manager) {
@@ -3871,7 +3910,6 @@ namespace lfs::vis::gui {
         video_export_state_.thread = std::make_unique<std::jthread>(
             [this, path, options, total_frames, width, height,
              splat_ptr, engine, render_settings](std::stop_token stop_token) {
-
                 io::video::VideoEncoder encoder;
 
                 {

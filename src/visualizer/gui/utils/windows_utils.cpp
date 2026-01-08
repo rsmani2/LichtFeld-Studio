@@ -576,4 +576,67 @@ namespace lfs::vis::gui {
 #endif
     }
 
+    std::filesystem::path OpenPythonFileDialog(const std::filesystem::path& startDir) {
+#ifdef _WIN32
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] = {{L"Python Script", L"*.py"}};
+
+        if (SUCCEEDED(utils::selectFileNative(filePath, rgSpec, 1, false))) {
+            std::filesystem::path result(filePath);
+            CoTaskMemFree(filePath);
+            return result;
+        }
+        return {};
+#else
+        const bool has_valid_start = !startDir.empty() && std::filesystem::exists(startDir);
+        const std::string start_path = has_valid_start
+                                           ? shell_escape(lfs::core::path_to_utf8(startDir))
+                                           : "'.'";
+        const std::string primary = "zenity --file-selection "
+                                    "--filename=" +
+                                    start_path + "/ "
+                                                 "--file-filter='Python Script|*.py' "
+                                                 "--title='Open Python Script' 2>/dev/null";
+        const std::string fallback = "kdialog --getopenfilename " + start_path + " 'Python Script (*.py)' 2>/dev/null";
+
+        const std::string result = runDialogCommand(primary, fallback);
+        return result.empty() ? std::filesystem::path{} : std::filesystem::path(result);
+#endif
+    }
+
+    std::filesystem::path SavePythonFileDialog(const std::string& defaultName) {
+#ifdef _WIN32
+        PWSTR filePath = nullptr;
+        COMDLG_FILTERSPEC rgSpec[] = {{L"Python Script", L"*.py"}};
+        const std::wstring wDefaultName = utils::utf8_to_wstring(defaultName);
+
+        if (SUCCEEDED(utils::saveFileNative(filePath, rgSpec, 1, wDefaultName.c_str()))) {
+            std::filesystem::path result(filePath);
+            CoTaskMemFree(filePath);
+            if (result.extension() != ".py") {
+                result += ".py";
+            }
+            return result;
+        }
+        return {};
+#else
+        const std::string escaped_name = shell_escape(defaultName + ".py");
+        const std::string primary = "zenity --file-selection --save --confirm-overwrite "
+                                    "--file-filter='Python Script|*.py' "
+                                    "--filename=" +
+                                    escaped_name + " 2>/dev/null";
+        const std::string fallback = "kdialog --getsavefilename . 'Python Script (*.py)' 2>/dev/null";
+
+        const std::string result = runDialogCommand(primary, fallback);
+        if (result.empty())
+            return {};
+
+        std::filesystem::path path(result);
+        if (path.extension() != ".py") {
+            path += ".py";
+        }
+        return path;
+#endif
+    }
+
 } // namespace lfs::vis::gui

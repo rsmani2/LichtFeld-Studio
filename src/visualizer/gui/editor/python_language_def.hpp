@@ -3,11 +3,10 @@
 
 #pragma once
 
-#include <TextEditor.h>
+// This file is deprecated - santaclose TextEditor fork has built-in Python support.
+// Use TextEditor::SetLanguageDefinition(TextEditor::LanguageDefinitionId::Python)
 
 namespace lfs::vis::editor {
-
-    // Get Python language definition for TextEditor
-    const TextEditor::LanguageDefinition& getPythonLanguageDef();
-
+    // Kept for backward compatibility - does nothing
+    inline void initPythonLanguage() {}
 } // namespace lfs::vis::editor

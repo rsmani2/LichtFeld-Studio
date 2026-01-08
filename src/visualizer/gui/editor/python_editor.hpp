@@ -45,7 +45,6 @@ namespace lfs::vis::editor {
         bool isFocused() const { return is_focused_; }
 
     private:
-        void handleInput();
         void updateAutocomplete();
         std::string getWordBeforeCursor() const;
         std::string getContextBeforeCursor() const;

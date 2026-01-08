@@ -36,7 +36,7 @@ namespace lfs::vis::editor {
         std::vector<CompletionItem> cached_globals_;
         mutable std::mutex mutex_;
         std::chrono::steady_clock::time_point last_refresh_;
-        static constexpr auto REFRESH_INTERVAL = std::chrono::seconds(5);
+        static constexpr auto REFRESH_INTERVAL = std::chrono::seconds(1);
     };
 
 } // namespace lfs::vis::editor

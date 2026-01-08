@@ -13,12 +13,12 @@
 #include "gui/panels/menu_bar.hpp"
 #include "gui/panels/sequencer_settings_panel.hpp"
 #include "gui/panels/transform_panel.hpp"
-#include "io/video/video_export_options.hpp"
 #include "gui/ui_context.hpp"
 #include "gui/utils/drag_drop_native.hpp"
+#include "io/loader.hpp"
+#include "io/video/video_export_options.hpp"
 #include "sequencer/sequencer_controller.hpp"
 #include "sequencer/sequencer_panel.hpp"
-#include "io/loader.hpp"
 #include "windows/disk_space_error_dialog.hpp"
 #include "windows/exit_confirmation_popup.hpp"
 #include "windows/export_dialog.hpp"
@@ -253,6 +253,7 @@ namespace lfs::vis {
             ImFont* font_heading_ = nullptr;
             ImFont* font_small_ = nullptr;
             ImFont* font_section_ = nullptr;
+            ImFont* font_monospace_ = nullptr;
 
             // Viewport gizmo drag-to-orbit state
             bool viewport_gizmo_dragging_ = false;

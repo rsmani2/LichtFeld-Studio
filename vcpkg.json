@@ -3,6 +3,7 @@
   "dependencies": [
     "args",
     "boost-preprocessor",
+    "boost-regex",
     {
       "name": "ffmpeg",
       "features": [

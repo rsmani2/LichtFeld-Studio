@@ -11,10 +11,7 @@ namespace lfs::vis {
 
 namespace lfs::vis::editor {
 
-    // Create TextEditor palette from application theme
-    TextEditor::Palette createEditorPalette(const Theme& theme);
-
-    // Update an existing TextEditor's palette from theme
+    // Apply theme to editor using built-in palettes
     void applyThemeToEditor(TextEditor& editor, const Theme& theme);
 
 } // namespace lfs::vis::editor

@@ -5,6 +5,7 @@
 #pragma once
 
 #include "gui/ui_context.hpp"
+#include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -24,6 +25,7 @@ namespace lfs::vis::gui::panels {
         void addOutput(const std::string& text, uint32_t color = 0xFFFFFFFF);
         void addError(const std::string& text);
         void addInput(const std::string& text);
+        void addInfo(const std::string& text);
         void clear();
 
         void addToHistory(const std::string& cmd);
@@ -34,6 +36,12 @@ namespace lfs::vis::gui::panels {
 
         editor::ConsoleOutput* getConsoleOutput();
         editor::PythonEditor* getEditor();
+
+        // Script file management
+        void setScriptPath(const std::filesystem::path& path) { script_path_ = path; }
+        const std::filesystem::path& getScriptPath() const { return script_path_; }
+        void setModified(bool modified) { is_modified_ = modified; }
+        bool isModified() const { return is_modified_; }
 
     private:
         PythonConsoleState();
@@ -46,6 +54,10 @@ namespace lfs::vis::gui::panels {
 
         std::unique_ptr<editor::ConsoleOutput> console_output_;
         std::unique_ptr<editor::PythonEditor> editor_;
+
+        // Script file tracking
+        std::filesystem::path script_path_;
+        bool is_modified_ = false;
     };
 
     // Draw the Python console window

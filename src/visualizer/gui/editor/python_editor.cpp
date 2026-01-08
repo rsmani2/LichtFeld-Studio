@@ -3,17 +3,16 @@
 
 #include "python_editor.hpp"
 #include "editor_theme.hpp"
-#include "python_language_def.hpp"
 #include "theme/theme.hpp"
 #include <cctype>
 
 namespace lfs::vis::editor {
 
     PythonEditor::PythonEditor() {
-        editor_.SetLanguageDefinition(getPythonLanguageDef());
-        editor_.SetShowWhitespaces(false);
+        editor_.SetLanguageDefinition(TextEditor::LanguageDefinitionId::Python);
+        editor_.SetShowWhitespacesEnabled(false);
         editor_.SetTabSize(4);
-        updateTheme(theme());
+        editor_.SetAutoIndentEnabled(true);
     }
 
     PythonEditor::~PythonEditor() = default;
@@ -40,27 +39,20 @@ namespace lfs::vis::editor {
                 autocomplete_.hide();
             } else if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)) {
                 autocomplete_.selectPrevious();
-                editor_.SetHandleKeyboardInputs(false);
             } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
                 autocomplete_.selectNext();
-                editor_.SetHandleKeyboardInputs(false);
             } else if (ImGui::IsKeyPressed(ImGuiKey_Tab, false) ||
                        (!io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_Enter, false))) {
                 std::string selected;
                 if (autocomplete_.acceptSelected(selected)) {
                     insertCompletion(selected);
                 }
-                editor_.SetHandleKeyboardInputs(false);
-            } else {
-                editor_.SetHandleKeyboardInputs(true);
             }
-        } else {
-            editor_.SetHandleKeyboardInputs(true);
         }
 
         // Render editor
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
-        editor_.Render("##python_input", size, true);
+        editor_.Render("##python_input", true, size, true);
         ImGui::PopStyleVar();
 
         is_focused_ = ImGui::IsItemFocused() || ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
@@ -74,7 +66,7 @@ namespace lfs::vis::editor {
             }
 
             // History navigation (only when single line and autocomplete not visible)
-            if (!autocomplete_.isVisible() && editor_.GetTotalLines() <= 1) {
+            if (!autocomplete_.isVisible() && editor_.GetLineCount() <= 1) {
                 if (ImGui::IsKeyPressed(ImGuiKey_UpArrow, false)) {
                     historyUp();
                 } else if (ImGui::IsKeyPressed(ImGuiKey_DownArrow, false)) {
@@ -87,9 +79,10 @@ namespace lfs::vis::editor {
 
             // Render autocomplete popup
             if (autocomplete_.isVisible()) {
-                auto cursor_pos = editor_.GetCursorPosition();
+                int line, col;
+                editor_.GetCursorPosition(line, col);
                 ImVec2 popup_pos = ImGui::GetItemRectMin();
-                popup_pos.y += (cursor_pos.mLine + 1) * ImGui::GetTextLineHeightWithSpacing();
+                popup_pos.y += (line + 1) * ImGui::GetTextLineHeightWithSpacing();
                 popup_pos.x += 50;
 
                 std::string selected;
@@ -106,8 +99,13 @@ namespace lfs::vis::editor {
         const std::string word = getWordBeforeCursor();
         const std::string context = getContextBeforeCursor();
 
-        // Don't show autocomplete for empty input unless explicitly triggered
-        if (word.empty() && !autocomplete_triggered_) {
+        // Check if context ends with '.' (member access)
+        const bool is_member_access = !context.empty() && context.back() == '.';
+
+        // Don't show autocomplete for empty input unless:
+        // - explicitly triggered (Ctrl+Space)
+        // - typing after a dot (member access)
+        if (word.empty() && !autocomplete_triggered_ && !is_member_access) {
             autocomplete_.hide();
             return;
         }
@@ -124,15 +122,21 @@ namespace lfs::vis::editor {
     }
 
     std::string PythonEditor::getWordBeforeCursor() const {
-        const auto pos = editor_.GetCursorPosition();
-        const auto text = editor_.GetCurrentLineText();
+        int line, col;
+        editor_.GetCursorPosition(line, col);
 
-        if (text.empty() || pos.mColumn == 0) {
+        auto lines = editor_.GetTextLines();
+        if (line < 0 || line >= static_cast<int>(lines.size())) {
             return "";
         }
 
-        const int col = std::min(pos.mColumn, static_cast<int>(text.length()));
-        int start = col;
+        const std::string& text = lines[line];
+        if (text.empty() || col == 0) {
+            return "";
+        }
+
+        const int end = std::min(col, static_cast<int>(text.length()));
+        int start = end;
 
         while (start > 0) {
             const char c = text[start - 1];
@@ -142,35 +146,52 @@ namespace lfs::vis::editor {
             --start;
         }
 
-        return text.substr(start, col - start);
+        return text.substr(start, end - start);
     }
 
     std::string PythonEditor::getContextBeforeCursor() const {
-        const auto pos = editor_.GetCursorPosition();
-        const auto text = editor_.GetCurrentLineText();
+        int line, col;
+        editor_.GetCursorPosition(line, col);
 
-        if (text.empty() || pos.mColumn == 0) {
+        auto lines = editor_.GetTextLines();
+        if (line < 0 || line >= static_cast<int>(lines.size())) {
             return "";
         }
 
-        const int col = std::min(pos.mColumn, static_cast<int>(text.length()));
-        const int start = std::max(0, col - 50);
-        return text.substr(start, col - start);
-    }
-
-    void PythonEditor::insertCompletion(const std::string& text) {
-        const std::string word = getWordBeforeCursor();
-
-        // Delete the partial word
-        if (!word.empty()) {
-            for (size_t i = 0; i < word.length(); ++i) {
-                editor_.MoveLeft(1, true);
-            }
-            editor_.Delete();
+        const std::string& text = lines[line];
+        if (text.empty() || col == 0) {
+            return "";
         }
 
-        // Insert completion
-        editor_.InsertText(text);
+        const int end = std::min(col, static_cast<int>(text.length()));
+        const int start = std::max(0, end - 50);
+        return text.substr(start, end - start);
+    }
+
+    void PythonEditor::insertCompletion(const std::string& completion) {
+        const std::string word = getWordBeforeCursor();
+
+        int line, col;
+        editor_.GetCursorPosition(line, col);
+
+        // Get current text, replace the word with completion
+        auto lines = editor_.GetTextLines();
+        if (line < 0 || line >= static_cast<int>(lines.size())) {
+            return;
+        }
+
+        std::string& currentLine = lines[line];
+        const int wordStart = col - static_cast<int>(word.length());
+
+        if (wordStart >= 0 && wordStart <= static_cast<int>(currentLine.length())) {
+            // Replace the partial word with the completion
+            currentLine = currentLine.substr(0, wordStart) + completion +
+                          currentLine.substr(col);
+            editor_.SetTextLines(lines);
+
+            // Move cursor to end of completion
+            editor_.SetCursorPosition(line, wordStart + static_cast<int>(completion.length()));
+        }
     }
 
     std::string PythonEditor::getText() const {
@@ -186,8 +207,8 @@ namespace lfs::vis::editor {
         history_index_ = -1;
     }
 
-    void PythonEditor::updateTheme(const Theme& t) {
-        applyThemeToEditor(editor_, t);
+    void PythonEditor::updateTheme(const Theme& theme) {
+        applyThemeToEditor(editor_, theme);
     }
 
     void PythonEditor::addToHistory(const std::string& cmd) {
