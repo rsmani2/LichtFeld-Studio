@@ -1271,6 +1271,7 @@ namespace lfs::vis::gui {
         if (disk_space_error_dialog_)
             disk_space_error_dialog_->render();
 
+        // Render notification popups (errors, warnings, etc.)
         if (notification_popup_ && !disk_space_error_dialog_->isOpen())
             notification_popup_->render(viewport_pos_, viewport_size_);
 

@@ -297,9 +297,6 @@ namespace lfs::vis {
             };
             VideoExportState video_export_state_;
 
-            // Sequencer UI state
-            panels::SequencerUIState sequencer_ui_state_;
-
             // Async dataset import state
             struct ImportState {
                 std::atomic<bool> active{false};
@@ -321,6 +318,9 @@ namespace lfs::vis {
                 std::unique_ptr<std::jthread> thread;
             };
             ImportState import_state_;
+
+            // Sequencer UI state
+            panels::SequencerUIState sequencer_ui_state_;
 
             void startAsyncImport(const std::filesystem::path& path,
                                   const lfs::core::param::TrainingParameters& params);
