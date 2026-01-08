@@ -66,6 +66,11 @@ namespace lfs::python {
         PyTensor rdiv_scalar(float scalar) const;
         PyTensor neg() const;
         PyTensor abs() const;
+        PyTensor sigmoid() const;
+        PyTensor exp() const;
+        PyTensor log() const;
+        PyTensor sqrt() const;
+        PyTensor relu() const;
 
         // In-place arithmetic
         PyTensor& iadd(const PyTensor& other);

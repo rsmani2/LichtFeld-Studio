@@ -76,7 +76,8 @@ namespace lfs::python {
     class PyPointCloud {
     public:
         explicit PyPointCloud(core::PointCloud* pc, bool owns = false)
-            : pc_(pc), owns_(owns) {
+            : pc_(pc),
+              owns_(owns) {
             assert(pc_ != nullptr);
         }
 
@@ -84,27 +85,33 @@ namespace lfs::python {
         PyTensor colors() const { return PyTensor(pc_->colors, false); }
 
         std::optional<PyTensor> normals() const {
-            if (!pc_->normals.is_valid()) return std::nullopt;
+            if (!pc_->normals.is_valid())
+                return std::nullopt;
             return PyTensor(pc_->normals, false);
         }
         std::optional<PyTensor> sh0() const {
-            if (!pc_->sh0.is_valid()) return std::nullopt;
+            if (!pc_->sh0.is_valid())
+                return std::nullopt;
             return PyTensor(pc_->sh0, false);
         }
         std::optional<PyTensor> shN() const {
-            if (!pc_->shN.is_valid()) return std::nullopt;
+            if (!pc_->shN.is_valid())
+                return std::nullopt;
             return PyTensor(pc_->shN, false);
         }
         std::optional<PyTensor> opacity() const {
-            if (!pc_->opacity.is_valid()) return std::nullopt;
+            if (!pc_->opacity.is_valid())
+                return std::nullopt;
             return PyTensor(pc_->opacity, false);
         }
         std::optional<PyTensor> scaling() const {
-            if (!pc_->scaling.is_valid()) return std::nullopt;
+            if (!pc_->scaling.is_valid())
+                return std::nullopt;
             return PyTensor(pc_->scaling, false);
         }
         std::optional<PyTensor> rotation() const {
-            if (!pc_->rotation.is_valid()) return std::nullopt;
+            if (!pc_->rotation.is_valid())
+                return std::nullopt;
             return PyTensor(pc_->rotation, false);
         }
 
@@ -126,7 +133,8 @@ namespace lfs::python {
     class PySceneNode {
     public:
         PySceneNode(vis::SceneNode* node, vis::Scene* scene)
-            : node_(node), scene_(scene) {
+            : node_(node),
+              scene_(scene) {
             assert(node_ != nullptr);
             assert(scene_ != nullptr);
         }
@@ -135,7 +143,7 @@ namespace lfs::python {
         int32_t id() const { return node_->id; }
         int32_t parent_id() const { return node_->parent_id; }
         std::vector<int32_t> children() const { return node_->children; }
-        uint8_t type() const { return static_cast<uint8_t>(node_->type); }
+        vis::NodeType type() const { return node_->type; }
         std::string name() const { return node_->name; }
 
         // Transform
@@ -214,8 +222,8 @@ namespace lfs::python {
         }
 
         // Bounds
-        std::optional<std::tuple<std::tuple<float,float,float>, std::tuple<float,float,float>>>
-            get_node_bounds(int32_t id) const;
+        std::optional<std::tuple<std::tuple<float, float, float>, std::tuple<float, float, float>>>
+        get_node_bounds(int32_t id) const;
         std::tuple<float, float, float> get_node_bounds_center(int32_t id) const;
 
         // CropBox operations
@@ -240,12 +248,12 @@ namespace lfs::python {
         bool has_selection() const { return scene_->hasSelection(); }
 
         // Selection groups
-        uint8_t add_selection_group(const std::string& name, std::tuple<float,float,float> color);
+        uint8_t add_selection_group(const std::string& name, std::tuple<float, float, float> color);
         void remove_selection_group(uint8_t id) { scene_->removeSelectionGroup(id); }
         void rename_selection_group(uint8_t id, const std::string& name) {
             scene_->renameSelectionGroup(id, name);
         }
-        void set_selection_group_color(uint8_t id, std::tuple<float,float,float> color);
+        void set_selection_group_color(uint8_t id, std::tuple<float, float, float> color);
         void set_selection_group_locked(uint8_t id, bool locked) {
             scene_->setSelectionGroupLocked(id, locked);
         }

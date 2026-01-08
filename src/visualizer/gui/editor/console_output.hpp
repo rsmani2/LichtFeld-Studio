@@ -16,8 +16,15 @@ namespace lfs::vis::editor {
         Info    // System info messages
     };
 
-    struct ConsoleMessage {
+    struct TextSpan {
         std::string text;
+        ImVec4 color{1.0f, 1.0f, 1.0f, 1.0f};
+        bool bold = false;
+        bool use_default_color = true;
+    };
+
+    struct ConsoleMessage {
+        std::vector<TextSpan> spans;
         ConsoleMessageType type;
     };
 
@@ -31,6 +38,10 @@ namespace lfs::vis::editor {
         void addOutput(const std::string& text);
         void addError(const std::string& text);
         void addInfo(const std::string& text);
+
+        // Line-buffered output (for Python stdout/stderr capture)
+        void appendOutput(const std::string& text, bool is_error);
+        void flushBuffers();
 
         // Clear all messages
         void clear();
@@ -54,6 +65,10 @@ namespace lfs::vis::editor {
         std::vector<ConsoleMessage> messages_;
         bool scroll_to_bottom_ = false;
         bool auto_scroll_ = true;
+
+        // Line buffers for streaming output
+        std::string stdout_buffer_;
+        std::string stderr_buffer_;
 
         // Selection state
         int selection_start_ = 0;

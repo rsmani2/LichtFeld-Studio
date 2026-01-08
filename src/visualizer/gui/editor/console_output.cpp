@@ -4,38 +4,178 @@
 #include "console_output.hpp"
 #include "theme/theme.hpp"
 #include <algorithm>
+#include <regex>
 #include <sstream>
 
 namespace lfs::vis::editor {
+
+    namespace {
+        // ANSI color codes to ImVec4
+        ImVec4 ansi_to_color(int code, bool bright = false) {
+            float intensity = bright ? 1.0f : 0.7f;
+            switch (code) {
+            case 30: return ImVec4(0.0f, 0.0f, 0.0f, 1.0f);           // Black
+            case 31: return ImVec4(intensity, 0.2f, 0.2f, 1.0f);      // Red
+            case 32: return ImVec4(0.2f, intensity, 0.2f, 1.0f);      // Green
+            case 33: return ImVec4(intensity, intensity, 0.2f, 1.0f); // Yellow
+            case 34: return ImVec4(0.3f, 0.5f, intensity, 1.0f);      // Blue
+            case 35: return ImVec4(intensity, 0.3f, intensity, 1.0f); // Magenta
+            case 36: return ImVec4(0.3f, intensity, intensity, 1.0f); // Cyan
+            case 37: return ImVec4(0.9f, 0.9f, 0.9f, 1.0f);           // White
+            case 90: return ImVec4(0.5f, 0.5f, 0.5f, 1.0f);           // Bright Black
+            case 91: return ImVec4(1.0f, 0.4f, 0.4f, 1.0f);           // Bright Red
+            case 92: return ImVec4(0.4f, 1.0f, 0.4f, 1.0f);           // Bright Green
+            case 93: return ImVec4(1.0f, 1.0f, 0.4f, 1.0f);           // Bright Yellow
+            case 94: return ImVec4(0.4f, 0.6f, 1.0f, 1.0f);           // Bright Blue
+            case 95: return ImVec4(1.0f, 0.4f, 1.0f, 1.0f);           // Bright Magenta
+            case 96: return ImVec4(0.4f, 1.0f, 1.0f, 1.0f);           // Bright Cyan
+            case 97: return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);           // Bright White
+            default: return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+            }
+        }
+
+        std::vector<TextSpan> parse_ansi(const std::string& text) {
+            std::vector<TextSpan> spans;
+            TextSpan current;
+            current.use_default_color = true;
+
+            size_t pos = 0;
+            while (pos < text.size()) {
+                // Look for ESC[
+                size_t esc_pos = text.find("\x1b[", pos);
+                if (esc_pos == std::string::npos) {
+                    // No more escape codes, add rest of text
+                    if (pos < text.size()) {
+                        current.text = text.substr(pos);
+                        if (!current.text.empty()) {
+                            spans.push_back(current);
+                        }
+                    }
+                    break;
+                }
+
+                // Add text before escape sequence
+                if (esc_pos > pos) {
+                    current.text = text.substr(pos, esc_pos - pos);
+                    if (!current.text.empty()) {
+                        spans.push_back(current);
+                        current.text.clear();
+                    }
+                }
+
+                // Find 'm' that ends the SGR sequence
+                size_t end_pos = text.find('m', esc_pos + 2);
+                if (end_pos == std::string::npos) {
+                    pos = esc_pos + 2;
+                    continue;
+                }
+
+                // Parse SGR codes
+                std::string codes_str = text.substr(esc_pos + 2, end_pos - esc_pos - 2);
+                std::istringstream ss(codes_str);
+                std::string code_part;
+                while (std::getline(ss, code_part, ';')) {
+                    if (code_part.empty())
+                        continue;
+                    int code = std::stoi(code_part);
+                    if (code == 0) {
+                        // Reset
+                        current.use_default_color = true;
+                        current.bold = false;
+                    } else if (code == 1) {
+                        current.bold = true;
+                    } else if ((code >= 30 && code <= 37) || (code >= 90 && code <= 97)) {
+                        current.color = ansi_to_color(code);
+                        current.use_default_color = false;
+                    }
+                }
+
+                pos = end_pos + 1;
+            }
+
+            if (spans.empty()) {
+                TextSpan plain;
+                plain.text = text;
+                plain.use_default_color = true;
+                spans.push_back(plain);
+            }
+
+            return spans;
+        }
+    } // namespace
 
     ConsoleOutput::ConsoleOutput() = default;
     ConsoleOutput::~ConsoleOutput() = default;
 
     void ConsoleOutput::addInput(const std::string& text) {
-        messages_.push_back({text, ConsoleMessageType::Input});
+        ConsoleMessage msg;
+        msg.type = ConsoleMessageType::Input;
+        msg.spans = parse_ansi(text);
+        messages_.push_back(std::move(msg));
         if (auto_scroll_) {
             scroll_to_bottom_ = true;
         }
     }
 
     void ConsoleOutput::addOutput(const std::string& text) {
-        messages_.push_back({text, ConsoleMessageType::Output});
+        ConsoleMessage msg;
+        msg.type = ConsoleMessageType::Output;
+        msg.spans = parse_ansi(text);
+        messages_.push_back(std::move(msg));
         if (auto_scroll_) {
             scroll_to_bottom_ = true;
         }
     }
 
     void ConsoleOutput::addError(const std::string& text) {
-        messages_.push_back({text, ConsoleMessageType::Error});
+        ConsoleMessage msg;
+        msg.type = ConsoleMessageType::Error;
+        msg.spans = parse_ansi(text);
+        messages_.push_back(std::move(msg));
         if (auto_scroll_) {
             scroll_to_bottom_ = true;
         }
     }
 
     void ConsoleOutput::addInfo(const std::string& text) {
-        messages_.push_back({text, ConsoleMessageType::Info});
+        ConsoleMessage msg;
+        msg.type = ConsoleMessageType::Info;
+        msg.spans = parse_ansi(text);
+        messages_.push_back(std::move(msg));
         if (auto_scroll_) {
             scroll_to_bottom_ = true;
+        }
+    }
+
+    void ConsoleOutput::appendOutput(const std::string& text, bool is_error) {
+        std::string& buffer = is_error ? stderr_buffer_ : stdout_buffer_;
+        buffer += text;
+
+        size_t pos = 0;
+        size_t newline_pos;
+        while ((newline_pos = buffer.find('\n', pos)) != std::string::npos) {
+            std::string line = buffer.substr(pos, newline_pos - pos);
+            if (is_error) {
+                addError(line);
+            } else {
+                addOutput(line);
+            }
+            pos = newline_pos + 1;
+        }
+
+        if (pos > 0) {
+            buffer.erase(0, pos);
+        }
+    }
+
+    void ConsoleOutput::flushBuffers() {
+        if (!stdout_buffer_.empty()) {
+            addOutput(stdout_buffer_);
+            stdout_buffer_.clear();
+        }
+        if (!stderr_buffer_.empty()) {
+            addError(stderr_buffer_);
+            stderr_buffer_.clear();
         }
     }
 
@@ -53,44 +193,48 @@ namespace lfs::vis::editor {
                               ImGuiWindowFlags_HorizontalScrollbar)) {
 
             for (const auto& msg : messages_) {
-                ImVec4 color;
+                ImVec4 default_color;
                 const char* prefix = "";
                 switch (msg.type) {
                 case ConsoleMessageType::Input:
-                    color = t.palette.success;
+                    default_color = t.palette.success;
                     prefix = ">>> ";
                     break;
                 case ConsoleMessageType::Output:
-                    color = t.palette.text;
+                    default_color = t.palette.text;
                     break;
                 case ConsoleMessageType::Error:
-                    color = t.palette.error;
+                    default_color = t.palette.error;
                     break;
                 case ConsoleMessageType::Info:
-                    color = t.palette.info;
+                    default_color = t.palette.info;
                     break;
                 }
 
-                ImGui::PushStyleColor(ImGuiCol_Text, color);
-
-                // Handle multi-line messages
-                std::istringstream stream(msg.text);
-                std::string line;
-                bool first_line = true;
-
-                while (std::getline(stream, line)) {
-                    if (first_line && prefix[0] != '\0') {
-                        ImGui::TextUnformatted(prefix);
-                        ImGui::SameLine(0, 0);
-                        first_line = false;
-                    } else if (!first_line && msg.type == ConsoleMessageType::Input) {
-                        ImGui::TextUnformatted("... ");
-                        ImGui::SameLine(0, 0);
-                    }
-                    ImGui::TextUnformatted(line.c_str());
+                // Render prefix
+                if (prefix[0] != '\0') {
+                    ImGui::PushStyleColor(ImGuiCol_Text, default_color);
+                    ImGui::TextUnformatted(prefix);
+                    ImGui::PopStyleColor();
+                    ImGui::SameLine(0, 0);
                 }
 
-                ImGui::PopStyleColor();
+                // Render spans
+                for (size_t i = 0; i < msg.spans.size(); ++i) {
+                    const auto& span = msg.spans[i];
+                    ImVec4 color = span.use_default_color ? default_color : span.color;
+                    ImGui::PushStyleColor(ImGuiCol_Text, color);
+                    ImGui::TextUnformatted(span.text.c_str());
+                    ImGui::PopStyleColor();
+                    if (i + 1 < msg.spans.size()) {
+                        ImGui::SameLine(0, 0);
+                    }
+                }
+
+                // Handle empty messages (just show newline)
+                if (msg.spans.empty() || (msg.spans.size() == 1 && msg.spans[0].text.empty())) {
+                    ImGui::TextUnformatted("");
+                }
             }
 
             // Context menu for copy
@@ -130,12 +274,15 @@ namespace lfs::vis::editor {
         for (const auto& msg : messages_) {
             switch (msg.type) {
             case ConsoleMessageType::Input:
-                oss << ">>> " << msg.text << "\n";
+                oss << ">>> ";
                 break;
             default:
-                oss << msg.text << "\n";
                 break;
             }
+            for (const auto& span : msg.spans) {
+                oss << span.text;
+            }
+            oss << "\n";
         }
         return oss.str();
     }

@@ -663,18 +663,49 @@ namespace lfs::vis::gui {
             .sequencer_controller = &sequencer_controller_,
             .fonts = {font_regular_, font_bold_, font_heading_, font_small_, font_section_, font_monospace_}};
 
-        // Right panel
+        // Right panel and docked Python console
         if (show_main_panel_ && !ui_hidden_) {
             const auto* const vp = ImGui::GetMainViewport();
             const float panel_h = vp->WorkSize.y - STATUS_BAR_HEIGHT;
             const float min_w = vp->WorkSize.x * RIGHT_PANEL_MIN_RATIO;
             const float max_w = vp->WorkSize.x * RIGHT_PANEL_MAX_RATIO;
+            constexpr float PANEL_GAP = 2.0f;
 
             // on windows, when window is minimized, WorkSize can be zero
             if (min_w != 0 || max_w != 0)
                 right_panel_width_ = std::clamp(right_panel_width_, min_w, max_w);
 
-            const float panel_x = vp->WorkPos.x + vp->WorkSize.x - right_panel_width_;
+            // Calculate available space for viewport + Python console
+            const bool python_console_visible = window_states_["python_console"];
+            const float available_for_split = vp->WorkSize.x - right_panel_width_ - PANEL_GAP;
+
+            // Initialize Python console width to 1:1 split if not set or too small
+            if (python_console_visible && python_console_width_ < 0.0f) {
+                // First time opening: 1:1 split
+                python_console_width_ = (available_for_split - PANEL_GAP) / 2.0f;
+            }
+
+            // Clamp Python console width
+            if (python_console_visible) {
+                const float max_console_w = available_for_split - PYTHON_CONSOLE_MIN_WIDTH;
+                python_console_width_ = std::clamp(python_console_width_, PYTHON_CONSOLE_MIN_WIDTH, max_console_w);
+            }
+
+            // Right panel position
+            const float right_panel_x = vp->WorkPos.x + vp->WorkSize.x - right_panel_width_;
+
+            // Python console position (between viewport and right panel)
+            const float console_x = right_panel_x - (python_console_visible ? python_console_width_ + PANEL_GAP : 0.0f);
+
+            // Render docked Python console
+            if (python_console_visible) {
+                renderDockedPythonConsole(ctx, console_x, panel_h);
+            } else {
+                python_console_hovering_edge_ = false;
+                python_console_resizing_ = false;
+            }
+
+            const float panel_x = right_panel_x;
             ImGui::SetNextWindowPos({panel_x, vp->WorkPos.y}, ImGuiCond_Always);
             ImGui::SetNextWindowSize({right_panel_width_, panel_h}, ImGuiCond_Always);
 
@@ -788,6 +819,8 @@ namespace lfs::vis::gui {
         } else {
             hovering_panel_edge_ = false;
             resizing_panel_ = false;
+            python_console_hovering_edge_ = false;
+            python_console_resizing_ = false;
         }
 
         // Render floating windows
@@ -800,10 +833,8 @@ namespace lfs::vis::gui {
             export_dialog_->render(&window_states_["export_dialog"], viewer_->getSceneManager());
         }
 
-        // Python console
-        if (window_states_["python_console"]) {
-            panels::DrawPythonConsole(ctx, &window_states_["python_console"]);
-        }
+        // Python console - now rendered as docked panel, handled in renderDockedPythonConsole
+        // (floating mode removed)
 
         // Python scripts panel
         if (window_states_["python_scripts"]) {
@@ -1275,8 +1306,21 @@ namespace lfs::vis::gui {
     void GuiManager::updateViewportRegion() {
         constexpr float PANEL_GAP = 2.0f;
         const auto* const vp = ImGui::GetMainViewport();
+
+        // Calculate Python console width if visible (handle uninitialized state)
+        float console_w = 0.0f;
+        if (window_states_["python_console"] && show_main_panel_ && !ui_hidden_) {
+            if (python_console_width_ < 0.0f) {
+                // Not yet initialized, estimate 1:1 split
+                const float available = vp->WorkSize.x - right_panel_width_ - PANEL_GAP;
+                console_w = (available - PANEL_GAP) / 2.0f + PANEL_GAP;
+            } else {
+                console_w = python_console_width_ + PANEL_GAP;
+            }
+        }
+
         const float w = (show_main_panel_ && !ui_hidden_)
-                            ? vp->WorkSize.x - right_panel_width_ - PANEL_GAP
+                            ? vp->WorkSize.x - right_panel_width_ - console_w - PANEL_GAP
                             : vp->WorkSize.x;
         const float h = ui_hidden_ ? vp->WorkSize.y : vp->WorkSize.y - STATUS_BAR_HEIGHT;
         viewport_pos_ = {vp->WorkPos.x, vp->WorkPos.y};
@@ -1789,6 +1833,36 @@ namespace lfs::vis::gui {
         ImGui::End();
         ImGui::PopStyleVar(3);
         ImGui::PopStyleColor(2);
+    }
+
+    void GuiManager::renderDockedPythonConsole(const UIContext& ctx, float panel_x, float panel_h) {
+        const auto* const vp = ImGui::GetMainViewport();
+        const auto& io = ImGui::GetIO();
+        constexpr float EDGE_GRAB_W = 8.0f;
+
+        // Check if hovering over left edge for resize
+        python_console_hovering_edge_ = io.MousePos.x >= panel_x - EDGE_GRAB_W &&
+                                        io.MousePos.x <= panel_x + EDGE_GRAB_W &&
+                                        io.MousePos.y >= vp->WorkPos.y &&
+                                        io.MousePos.y <= vp->WorkPos.y + panel_h;
+
+        if (python_console_hovering_edge_ && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+            python_console_resizing_ = true;
+        if (python_console_resizing_ && !ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            python_console_resizing_ = false;
+        if (python_console_resizing_) {
+            const float max_console_w = vp->WorkSize.x * PYTHON_CONSOLE_MAX_RATIO;
+            python_console_width_ = std::clamp(python_console_width_ - io.MouseDelta.x,
+                                               PYTHON_CONSOLE_MIN_WIDTH, max_console_w);
+            updateViewportRegion();
+        }
+        if (python_console_hovering_edge_ || python_console_resizing_)
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+
+        // Draw the docked console panel
+        const ImVec2 pos{panel_x, vp->WorkPos.y};
+        const ImVec2 size{python_console_width_, panel_h};
+        panels::DrawDockedPythonConsole(ctx, pos, size);
     }
 
     void GuiManager::renderStatusBar(const UIContext& ctx) {

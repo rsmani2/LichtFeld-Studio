@@ -78,7 +78,10 @@ namespace lfs::vis {
             bool isViewportFocused() const;
             bool isPositionInViewport(double x, double y) const;
             bool isViewportGizmoDragging() const { return viewport_gizmo_dragging_; }
-            bool isResizingPanel() const { return resizing_panel_ || hovering_panel_edge_; }
+            bool isResizingPanel() const {
+                return resizing_panel_ || hovering_panel_edge_ ||
+                       python_console_resizing_ || python_console_hovering_edge_;
+            }
             bool isPositionInViewportGizmo(double x, double y) const;
 
             // Crop box gizmo state access
@@ -160,6 +163,13 @@ namespace lfs::vis {
             static constexpr float RIGHT_PANEL_MIN_RATIO = 0.01f;
             static constexpr float RIGHT_PANEL_MAX_RATIO = 0.99f;
 
+            // Python console panel state (docked mode)
+            float python_console_width_ = -1.0f; // -1 = uninitialized, will be set to 1:1 split on first open
+            bool python_console_resizing_ = false;
+            bool python_console_hovering_edge_ = false;
+            static constexpr float PYTHON_CONSOLE_MIN_WIDTH = 200.0f;
+            static constexpr float PYTHON_CONSOLE_MAX_RATIO = 0.5f;
+
             // Viewport gizmo layout (must match ViewportGizmo settings)
             static constexpr float VIEWPORT_GIZMO_SIZE = 95.0f;
             static constexpr float VIEWPORT_GIZMO_MARGIN_X = 10.0f;
@@ -175,6 +185,7 @@ namespace lfs::vis {
             void renderStatusBar(const UIContext& ctx);
             void renderSequencerPanel(const UIContext& ctx);
             void renderCameraPath(const UIContext& ctx);
+            void renderDockedPythonConsole(const UIContext& ctx, float panel_x, float panel_h);
             void showSpeedOverlay(float current_speed, float max_speed);
             void showZoomSpeedOverlay(float zoom_speed, float max_zoom_speed);
             void renderCropBoxGizmo(const UIContext& ctx);

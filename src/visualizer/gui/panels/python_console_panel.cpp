@@ -62,11 +62,7 @@ namespace {
                 auto& state = lfs::vis::gui::panels::PythonConsoleState::getInstance();
                 auto* output = state.getConsoleOutput();
                 if (output) {
-                    if (is_error) {
-                        output->addError(text);
-                    } else {
-                        output->addOutput(text);
-                    }
+                    output->appendOutput(text, is_error);
                 }
             });
         });
@@ -619,6 +615,204 @@ namespace lfs::vis::gui::panels {
         }
 
         ImGui::End();
+#endif // LFS_BUILD_PYTHON_BINDINGS
+    }
+
+    void DrawDockedPythonConsole(const UIContext& ctx, const ImVec2& pos, const ImVec2& size) {
+#ifndef LFS_BUILD_PYTHON_BINDINGS
+        ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+        if (ImGui::Begin("##DockedPythonConsole", nullptr,
+                         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoTitleBar)) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.5f, 1.0f),
+                               "Python bindings not available");
+        }
+        ImGui::End();
+        return;
+#else
+        lfs::python::ensure_initialized();
+        lfs::python::install_output_redirect();
+        setup_sys_path();
+        setup_console_output_capture();
+        setup_scene_provider();
+
+        auto& state = PythonConsoleState::getInstance();
+        const auto& t = theme();
+
+        ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
+        ImGui::SetNextWindowSize(size, ImGuiCond_Always);
+
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, t.palette.background);
+
+        constexpr ImGuiWindowFlags PANEL_FLAGS =
+            ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
+            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoDocking |
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoScrollbar |
+            ImGuiWindowFlags_NoScrollWithMouse;
+
+        if (!ImGui::Begin("##DockedPythonConsole", nullptr, PANEL_FLAGS)) {
+            ImGui::End();
+            ImGui::PopStyleColor();
+            return;
+        }
+
+        // Toolbar
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(4, 4));
+
+        // Load button
+        if (ImGui::Button("Load")) {
+            open_script_dialog(state);
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Load script (Ctrl+O)");
+
+        ImGui::SameLine();
+
+        // Save button
+        if (ImGui::Button("Save")) {
+            save_current_script(state);
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Save script (Ctrl+S)");
+
+        ImGui::SameLine();
+        ImGui::TextColored(t.palette.text_dim, "|");
+        ImGui::SameLine();
+
+        // Run button
+        ImGui::PushStyleColor(ImGuiCol_Button, t.palette.success);
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, lighten(t.palette.success, 0.1f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, darken(t.palette.success, 0.1f));
+        if (ImGui::Button("Run") || ImGui::IsKeyPressed(ImGuiKey_F5, false)) {
+            if (auto* editor = state.getEditor()) {
+                execute_python_code(editor->getText(), state);
+            }
+        }
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Run script (F5)");
+
+        ImGui::SameLine();
+
+        // Reset button
+        if (ImGui::Button("Reset")) {
+            reset_python_state(state);
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Reset Python state (Ctrl+R)");
+
+        ImGui::SameLine();
+
+        // Clear button
+        if (ImGui::Button("Clear")) {
+            state.clear();
+        }
+        if (ImGui::IsItemHovered())
+            ImGui::SetTooltip("Clear console (Ctrl+L)");
+
+        ImGui::PopStyleVar(2);
+
+        ImGui::Spacing();
+        ImGui::Separator();
+
+        // Calculate pane sizes
+        const ImVec2 content_avail = ImGui::GetContentRegionAvail();
+        const float total_height = content_avail.y;
+
+        float top_height = total_height * g_splitter_ratio - SPLITTER_THICKNESS / 2;
+        float bottom_height = total_height * (1.0f - g_splitter_ratio) - SPLITTER_THICKNESS / 2;
+
+        top_height = std::max(top_height, MIN_PANE_HEIGHT);
+        bottom_height = std::max(bottom_height, MIN_PANE_HEIGHT);
+
+        // Script Editor (top pane)
+        ImGui::BeginChild("##docked_script_editor_pane", ImVec2(content_avail.x, top_height), false,
+                          ImGuiWindowFlags_HorizontalScrollbar);
+        {
+            const ImVec2 editor_size(ImGui::GetContentRegionAvail().x,
+                                     ImGui::GetContentRegionAvail().y);
+
+            if (ctx.fonts.monospace) {
+                ImGui::PushFont(ctx.fonts.monospace);
+            }
+
+            if (auto* editor = state.getEditor()) {
+                if (editor->render(editor_size)) {
+                    execute_python_code(editor->getText(), state);
+                    editor->clear();
+                }
+            }
+
+            if (ctx.fonts.monospace) {
+                ImGui::PopFont();
+            }
+        }
+        ImGui::EndChild();
+
+        // Horizontal splitter
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0, 0, 0, 0));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, t.palette.primary_dim);
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, t.palette.primary);
+        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 0);
+
+        ImGui::Button("##docked_splitter", ImVec2(content_avail.x, SPLITTER_THICKNESS));
+
+        if (ImGui::IsItemHovered()) {
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        }
+
+        if (ImGui::IsItemActive()) {
+            const float delta = ImGui::GetIO().MouseDelta.y;
+            if (delta != 0.0f) {
+                g_splitter_ratio += delta / total_height;
+                g_splitter_ratio = std::clamp(g_splitter_ratio, 0.2f, 0.8f);
+            }
+            ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeNS);
+        }
+
+        ImGui::PopStyleVar();
+        ImGui::PopStyleColor(3);
+
+        // Console Output (bottom pane)
+        ImGui::BeginChild("##docked_console_pane", ImVec2(content_avail.x, bottom_height), false);
+        {
+            const ImVec2 output_size(ImGui::GetContentRegionAvail().x,
+                                     ImGui::GetContentRegionAvail().y);
+
+            if (ctx.fonts.monospace) {
+                ImGui::PushFont(ctx.fonts.monospace);
+            }
+
+            if (auto* output = state.getConsoleOutput()) {
+                output->render(output_size);
+            }
+
+            if (ctx.fonts.monospace) {
+                ImGui::PopFont();
+            }
+        }
+        ImGui::EndChild();
+
+        // Keyboard shortcuts
+        if (ImGui::GetIO().KeyCtrl) {
+            if (ImGui::IsKeyPressed(ImGuiKey_L, false)) {
+                state.clear();
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_R, false)) {
+                reset_python_state(state);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_O, false)) {
+                open_script_dialog(state);
+            }
+            if (ImGui::IsKeyPressed(ImGuiKey_S, false)) {
+                save_current_script(state);
+            }
+        }
+
+        ImGui::End();
+        ImGui::PopStyleColor();
 #endif // LFS_BUILD_PYTHON_BINDINGS
     }
 

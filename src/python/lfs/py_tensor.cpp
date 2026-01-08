@@ -441,6 +441,26 @@ namespace lfs::python {
         return PyTensor(tensor_.abs());
     }
 
+    PyTensor PyTensor::sigmoid() const {
+        return PyTensor(tensor_.sigmoid());
+    }
+
+    PyTensor PyTensor::exp() const {
+        return PyTensor(tensor_.exp());
+    }
+
+    PyTensor PyTensor::log() const {
+        return PyTensor(tensor_.log());
+    }
+
+    PyTensor PyTensor::sqrt() const {
+        return PyTensor(tensor_.sqrt());
+    }
+
+    PyTensor PyTensor::relu() const {
+        return PyTensor(tensor_.relu());
+    }
+
     // In-place arithmetic
     PyTensor& PyTensor::iadd(const PyTensor& other) {
         tensor_.add_(other.tensor_);
@@ -750,6 +770,13 @@ namespace lfs::python {
             .def("__neg__", &PyTensor::neg, "Negate")
             .def("__abs__", &PyTensor::abs, "Absolute value")
 
+            // Unary math functions
+            .def("sigmoid", &PyTensor::sigmoid, "Sigmoid activation")
+            .def("exp", &PyTensor::exp, "Exponential")
+            .def("log", &PyTensor::log, "Natural logarithm")
+            .def("sqrt", &PyTensor::sqrt, "Square root")
+            .def("relu", &PyTensor::relu, "ReLU activation")
+
             // Comparison operators
             .def("__eq__", &PyTensor::eq, "Equal tensor")
             .def("__eq__", &PyTensor::eq_scalar, "Equal scalar")
@@ -774,6 +801,10 @@ namespace lfs::python {
             .def("mean", &PyTensor::mean, nb::arg("dim") = nb::none(), nb::arg("keepdim") = false, "Mean reduction")
             .def("max", &PyTensor::max, nb::arg("dim") = nb::none(), nb::arg("keepdim") = false, "Max reduction")
             .def("min", &PyTensor::min, nb::arg("dim") = nb::none(), nb::arg("keepdim") = false, "Min reduction")
+            .def("sum_scalar", &PyTensor::sum_scalar, "Sum all elements to scalar")
+            .def("mean_scalar", &PyTensor::mean_scalar, "Mean of all elements as scalar")
+            .def("max_scalar", &PyTensor::max_scalar, "Max of all elements as scalar")
+            .def("min_scalar", &PyTensor::min_scalar, "Min of all elements as scalar")
 
             // Shape operations
             .def("reshape", &PyTensor::reshape, nb::arg("shape"), "Reshape tensor")

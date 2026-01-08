@@ -10,6 +10,7 @@
 #include <mutex>
 #include <string>
 #include <vector>
+#include <imgui.h>
 
 namespace lfs::vis::editor {
     class PythonEditor;
@@ -60,7 +61,10 @@ namespace lfs::vis::gui::panels {
         bool is_modified_ = false;
     };
 
-    // Draw the Python console window
+    // Draw the Python console window (floating)
     void DrawPythonConsole(const UIContext& ctx, bool* open);
+
+    // Draw the Python console as a docked panel (fixed position/size)
+    void DrawDockedPythonConsole(const UIContext& ctx, const ImVec2& pos, const ImVec2& size);
 
 } // namespace lfs::vis::gui::panels
