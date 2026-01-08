@@ -8,6 +8,7 @@
 #include <nanobind/stl/vector.h>
 
 #include "py_cameras.hpp"
+#include "py_io.hpp"
 #include "py_scene.hpp"
 #include "py_splat_data.hpp"
 #include "py_tensor.hpp"
@@ -41,6 +42,7 @@ namespace {
     using lfs::training::HookContext;
     using lfs::training::SelectionKind;
     using lfs::training::TrainingPhase;
+    using lfs::training::TrainingSnapshot;
 
     // RAII session that registers Python callbacks to the control boundary
     class PyControlSession {
@@ -84,19 +86,25 @@ namespace {
         std::vector<nb::object> owned_callbacks_;
     };
 
-    // Simple context view for reading training state
-    struct PyContextView {
-        int iteration() const { return CommandCenter::instance().snapshot().iteration; }
-        int max_iterations() const { return CommandCenter::instance().snapshot().max_iterations; }
-        float loss() const { return CommandCenter::instance().snapshot().loss; }
-        std::size_t num_gaussians() const { return CommandCenter::instance().snapshot().num_gaussians; }
-        bool is_refining() const { return CommandCenter::instance().snapshot().is_refining; }
-        bool is_training() const { return CommandCenter::instance().snapshot().is_running; }
-        bool is_paused() const { return CommandCenter::instance().snapshot().is_paused; }
+    // Context view for reading training state - caches snapshot for efficiency
+    class PyContextView {
+    public:
+        PyContextView() : snapshot_(CommandCenter::instance().snapshot()) {
+            if (snapshot_.trainer) {
+                strategy_ = snapshot_.trainer->getParams().optimization.strategy;
+            }
+        }
+
+        int iteration() const { return snapshot_.iteration; }
+        int max_iterations() const { return snapshot_.max_iterations; }
+        float loss() const { return snapshot_.loss; }
+        std::size_t num_gaussians() const { return snapshot_.num_gaussians; }
+        bool is_refining() const { return snapshot_.is_refining; }
+        bool is_training() const { return snapshot_.is_running; }
+        bool is_paused() const { return snapshot_.is_paused; }
 
         std::string phase() const {
-            auto p = CommandCenter::instance().snapshot().phase;
-            switch (p) {
+            switch (snapshot_.phase) {
             case TrainingPhase::Idle: return "idle";
             case TrainingPhase::IterationStart: return "iteration_start";
             case TrainingPhase::Forward: return "forward";
@@ -107,12 +115,20 @@ namespace {
             }
         }
 
-        std::string strategy() const {
-            const auto snap = CommandCenter::instance().snapshot();
-            if (!snap.trainer)
-                return "none";
-            return snap.trainer->getParams().optimization.strategy;
+        std::string strategy() const { return strategy_; }
+
+        void refresh() {
+            snapshot_ = CommandCenter::instance().snapshot();
+            if (snapshot_.trainer) {
+                strategy_ = snapshot_.trainer->getParams().optimization.strategy;
+            } else {
+                strategy_ = "none";
+            }
         }
+
+    private:
+        TrainingSnapshot snapshot_;
+        std::string strategy_ = "none";
     };
 
     // Gaussians info view
@@ -149,7 +165,7 @@ namespace {
             cmd.args["factor"] = static_cast<double>(factor);
             const auto result = CommandCenter::instance().execute(cmd);
             if (!result) {
-                LOG_ERROR("scale_lr failed: {}", result.error());
+                throw std::runtime_error(std::format("scale_lr failed: {}", result.error()));
             }
         }
 
@@ -161,7 +177,7 @@ namespace {
             cmd.args["value"] = static_cast<double>(value);
             const auto result = CommandCenter::instance().execute(cmd);
             if (!result) {
-                LOG_ERROR("set_lr failed: {}", result.error());
+                throw std::runtime_error(std::format("set_lr failed: {}", result.error()));
             }
         }
 
@@ -187,7 +203,7 @@ namespace {
                 cmd.args["max"] = static_cast<double>(*max_val);
             const auto result = CommandCenter::instance().execute(cmd);
             if (!result) {
-                LOG_ERROR("clamp failed: {}", result.error());
+                throw std::runtime_error(std::format("clamp failed: {}", result.error()));
             }
         }
 
@@ -200,7 +216,7 @@ namespace {
             cmd.args["factor"] = static_cast<double>(factor);
             const auto result = CommandCenter::instance().execute(cmd);
             if (!result) {
-                LOG_ERROR("scale failed: {}", result.error());
+                throw std::runtime_error(std::format("scale failed: {}", result.error()));
             }
         }
 
@@ -213,7 +229,7 @@ namespace {
             cmd.args["value"] = static_cast<double>(value);
             const auto result = CommandCenter::instance().execute(cmd);
             if (!result) {
-                LOG_ERROR("set failed: {}", result.error());
+                throw std::runtime_error(std::format("set failed: {}", result.error()));
             }
         }
     };
@@ -230,7 +246,7 @@ namespace {
             cmd.selection = {SelectionKind::All};
             const auto result = CommandCenter::instance().execute(cmd);
             if (!result) {
-                LOG_ERROR("pause failed: {}", result.error());
+                throw std::runtime_error(std::format("pause failed: {}", result.error()));
             }
         }
 
@@ -241,7 +257,7 @@ namespace {
             cmd.selection = {SelectionKind::All};
             const auto result = CommandCenter::instance().execute(cmd);
             if (!result) {
-                LOG_ERROR("resume failed: {}", result.error());
+                throw std::runtime_error(std::format("resume failed: {}", result.error()));
             }
         }
 
@@ -252,7 +268,7 @@ namespace {
             cmd.selection = {SelectionKind::All};
             const auto result = CommandCenter::instance().execute(cmd);
             if (!result) {
-                LOG_ERROR("request_stop failed: {}", result.error());
+                throw std::runtime_error(std::format("request_stop failed: {}", result.error()));
             }
         }
     };
@@ -322,7 +338,7 @@ NB_MODULE(lichtfeld, m) {
         .def("on_training_end", &PyControlSession::on_training_end, "Register training end callback")
         .def("clear", &PyControlSession::clear, "Unregister all callbacks");
 
-    // Context view class
+    // Context view class (caches snapshot on creation, call refresh() to update)
     nb::class_<PyContextView>(m, "Context")
         .def(nb::init<>())
         .def_prop_ro("iteration", &PyContextView::iteration)
@@ -333,7 +349,8 @@ NB_MODULE(lichtfeld, m) {
         .def_prop_ro("is_training", &PyContextView::is_training)
         .def_prop_ro("is_paused", &PyContextView::is_paused)
         .def_prop_ro("phase", &PyContextView::phase)
-        .def_prop_ro("strategy", &PyContextView::strategy);
+        .def_prop_ro("strategy", &PyContextView::strategy)
+        .def("refresh", &PyContextView::refresh, "Update cached snapshot from current state");
 
     // Gaussians view class
     nb::class_<PyGaussiansView>(m, "Gaussians")
@@ -410,33 +427,6 @@ NB_MODULE(lichtfeld, m) {
         },
         nb::arg("callback"), "Decorator for training end handler");
 
-    // Submodule: lf.handlers for organized access
-    auto handlers = m.def_submodule("handlers", "Event handlers");
-    handlers.def("on_training_start", [](nb::callable cb) {
-        register_hook(ControlHook::TrainingStart, cb);
-        return cb;
-    });
-    handlers.def("on_iteration_start", [](nb::callable cb) {
-        register_hook(ControlHook::IterationStart, cb);
-        return cb;
-    });
-    handlers.def("on_iteration_post", [](nb::callable cb) {
-        register_hook(ControlHook::PostStep, cb);
-        return cb;
-    });
-    handlers.def("on_post_step", [](nb::callable cb) {
-        register_hook(ControlHook::PostStep, cb);
-        return cb;
-    });
-    handlers.def("on_pre_optimizer_step", [](nb::callable cb) {
-        register_hook(ControlHook::PreOptimizerStep, cb);
-        return cb;
-    });
-    handlers.def("on_training_end", [](nb::callable cb) {
-        register_hook(ControlHook::TrainingEnd, cb);
-        return cb;
-    });
-
     // Register Tensor class
     lfs::python::register_tensor(m);
 
@@ -445,6 +435,10 @@ NB_MODULE(lichtfeld, m) {
     lfs::python::register_splat_data(scene_module);
     lfs::python::register_scene(scene_module);
     lfs::python::register_cameras(scene_module);
+
+    // I/O submodule
+    auto io_module = m.def_submodule("io", "File I/O operations");
+    lfs::python::register_io(io_module);
 
     // Get scene function - works in both headless (during hooks) and GUI mode
     m.def(
@@ -589,6 +583,51 @@ NB_MODULE(lichtfeld, m) {
         },
         "Print the scene graph tree");
 
+    // Frame callback for animations
+    m.def(
+        "on_frame", [](nb::callable cb) {
+            nb::object ocb = nb::cast<nb::object>(cb);
+            lfs::python::set_frame_callback([ocb](float dt) {
+                try {
+                    ocb(dt);
+                } catch (const std::exception& e) {
+                    LOG_ERROR("on_frame callback error: {}", e.what());
+                    lfs::python::clear_frame_callback();
+                }
+            });
+            LOG_INFO("Frame callback registered");
+        },
+        nb::arg("callback"), "Register a callback to be called each frame with delta time (seconds)");
+
+    m.def(
+        "stop_animation", []() {
+            lfs::python::clear_frame_callback();
+            LOG_INFO("Frame callback cleared");
+        },
+        "Stop any running animation (clears frame callback)");
+
+    // Create 4x4 matrix tensor from nested list (for transforms)
+    m.def(
+        "mat4", [](const std::vector<std::vector<float>>& rows) -> lfs::python::PyTensor {
+            if (rows.size() != 4) {
+                throw std::runtime_error("mat4 requires 4 rows");
+            }
+            for (const auto& row : rows) {
+                if (row.size() != 4) {
+                    throw std::runtime_error("mat4 requires 4 columns per row");
+                }
+            }
+            auto tensor = lfs::core::Tensor::empty({4, 4}, lfs::core::Device::CPU, lfs::core::DataType::Float32);
+            float* data = tensor.ptr<float>();
+            for (int i = 0; i < 4; ++i) {
+                for (int j = 0; j < 4; ++j) {
+                    data[i * 4 + j] = rows[i][j];
+                }
+            }
+            return lfs::python::PyTensor(std::move(tensor));
+        },
+        nb::arg("rows"), "Create a 4x4 matrix tensor from nested list [[r0], [r1], [r2], [r3]]");
+
     // Quick help
     m.def(
         "help", []() {
@@ -623,4 +662,22 @@ Example:
 )");
         },
         "Show help for lichtfeld module");
+
+    // Module metadata
+    m.attr("__version__") = "0.1.0";
+    m.attr("__all__") = nb::make_tuple(
+        // Core access
+        "context", "gaussians", "session", "get_scene",
+        "train_cameras", "val_cameras",
+        // Types
+        "Tensor", "Hook",
+        // Hook decorators
+        "on_training_start", "on_iteration_start",
+        "on_post_step", "on_pre_optimizer_step", "on_training_end",
+        // Animation
+        "on_frame", "stop_animation",
+        // Utilities
+        "run", "list_scene", "mat4", "help",
+        // Submodules
+        "scene", "io");
 }

@@ -10,6 +10,7 @@
 #include "core/logger.hpp"
 #include "core/path_utils.hpp"
 #include "core/services.hpp"
+#include "python/runner.hpp"
 #include "scene/scene_manager.hpp"
 #include "tools/align_tool.hpp"
 #include "tools/brush_tool.hpp"
@@ -362,6 +363,14 @@ namespace lfs::vis {
         // Clamp delta time to prevent huge jumps (min 30 FPS)
         delta_time = std::min(delta_time, 1.0f / 30.0f);
 
+        // Tick Python frame callback for animations
+        if (python::has_frame_callback()) {
+            python::tick_frame_callback(delta_time);
+            if (rendering_manager_) {
+                rendering_manager_->markDirty();
+            }
+        }
+
         // Update input controller with viewport bounds
         if (gui_manager_) {
             auto pos = gui_manager_->getViewportPos();
@@ -416,8 +425,9 @@ namespace lfs::vis {
         const bool is_training = trainer_manager_ && trainer_manager_->isRunning();
         const bool needs_render = rendering_manager_->needsRender();
         const bool continuous_input = input_controller_ && input_controller_->isContinuousInputActive();
+        const bool has_animation = python::has_frame_callback();
 
-        if (needs_render || continuous_input) {
+        if (needs_render || continuous_input || has_animation) {
             // Dirty or active input (WASD/orbit/pan): poll for smooth interaction
             window_manager_->pollEvents();
         } else if (is_training) {

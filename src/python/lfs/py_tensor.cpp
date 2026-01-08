@@ -147,10 +147,6 @@ namespace lfs::python {
         }
 
         const auto& dims = cpu_tensor.shape().dims();
-        const std::vector<size_t> shape_vec(dims.begin(), dims.end());
-
-        // Compute strides in bytes
-        std::vector<int64_t> strides(dims.size());
         size_t elem_size = 4;
         switch (cpu_tensor.dtype()) {
         case DataType::Float32: elem_size = 4; break;
@@ -159,13 +155,6 @@ namespace lfs::python {
         case DataType::Int64: elem_size = 8; break;
         case DataType::UInt8:
         case DataType::Bool: elem_size = 1; break;
-        }
-
-        if (!strides.empty()) {
-            strides.back() = static_cast<int64_t>(elem_size);
-            for (int i = static_cast<int>(strides.size()) - 2; i >= 0; --i) {
-                strides[i] = strides[i + 1] * static_cast<int64_t>(dims[i + 1]);
-            }
         }
 
         if (copy) {
@@ -180,24 +169,65 @@ namespace lfs::python {
             // Create owner capsule for memory management
             nb::capsule owner(buffer, [](void* p) noexcept { std::free(p); });
 
+            // Use nb::shape to create proper shape object
             switch (cpu_tensor.dtype()) {
-            case DataType::Float32:
-                return nb::cast(nb::ndarray<nb::numpy, float>(
-                    buffer, shape_vec.size(), shape_vec.data(), owner,
-                    strides.data()));
-            case DataType::Int32:
-                return nb::cast(nb::ndarray<nb::numpy, int32_t>(
-                    buffer, shape_vec.size(), shape_vec.data(), owner,
-                    strides.data()));
-            case DataType::Int64:
-                return nb::cast(nb::ndarray<nb::numpy, int64_t>(
-                    buffer, shape_vec.size(), shape_vec.data(), owner,
-                    strides.data()));
+            case DataType::Float32: {
+                if (dims.size() == 1) {
+                    return nb::cast(nb::ndarray<nb::numpy, float, nb::shape<-1>>(
+                        buffer, {dims[0]}, owner));
+                } else if (dims.size() == 2) {
+                    return nb::cast(nb::ndarray<nb::numpy, float, nb::shape<-1, -1>>(
+                        buffer, {dims[0], dims[1]}, owner));
+                } else if (dims.size() == 3) {
+                    return nb::cast(nb::ndarray<nb::numpy, float, nb::shape<-1, -1, -1>>(
+                        buffer, {dims[0], dims[1], dims[2]}, owner));
+                } else {
+                    // Fallback for higher dimensions - use dynamic ndarray
+                    std::vector<size_t> shape_vec(dims.begin(), dims.end());
+                    return nb::cast(nb::ndarray<nb::numpy, float>(
+                        buffer, dims.size(), shape_vec.data(), owner));
+                }
+            }
+            case DataType::Int32: {
+                if (dims.size() == 1) {
+                    return nb::cast(nb::ndarray<nb::numpy, int32_t, nb::shape<-1>>(
+                        buffer, {dims[0]}, owner));
+                } else if (dims.size() == 2) {
+                    return nb::cast(nb::ndarray<nb::numpy, int32_t, nb::shape<-1, -1>>(
+                        buffer, {dims[0], dims[1]}, owner));
+                } else {
+                    std::vector<size_t> shape_vec(dims.begin(), dims.end());
+                    return nb::cast(nb::ndarray<nb::numpy, int32_t>(
+                        buffer, dims.size(), shape_vec.data(), owner));
+                }
+            }
+            case DataType::Int64: {
+                if (dims.size() == 1) {
+                    return nb::cast(nb::ndarray<nb::numpy, int64_t, nb::shape<-1>>(
+                        buffer, {dims[0]}, owner));
+                } else if (dims.size() == 2) {
+                    return nb::cast(nb::ndarray<nb::numpy, int64_t, nb::shape<-1, -1>>(
+                        buffer, {dims[0], dims[1]}, owner));
+                } else {
+                    std::vector<size_t> shape_vec(dims.begin(), dims.end());
+                    return nb::cast(nb::ndarray<nb::numpy, int64_t>(
+                        buffer, dims.size(), shape_vec.data(), owner));
+                }
+            }
             case DataType::UInt8:
-            case DataType::Bool:
-                return nb::cast(nb::ndarray<nb::numpy, uint8_t>(
-                    buffer, shape_vec.size(), shape_vec.data(), owner,
-                    strides.data()));
+            case DataType::Bool: {
+                if (dims.size() == 1) {
+                    return nb::cast(nb::ndarray<nb::numpy, uint8_t, nb::shape<-1>>(
+                        buffer, {dims[0]}, owner));
+                } else if (dims.size() == 2) {
+                    return nb::cast(nb::ndarray<nb::numpy, uint8_t, nb::shape<-1, -1>>(
+                        buffer, {dims[0], dims[1]}, owner));
+                } else {
+                    std::vector<size_t> shape_vec(dims.begin(), dims.end());
+                    return nb::cast(nb::ndarray<nb::numpy, uint8_t>(
+                        buffer, dims.size(), shape_vec.data(), owner));
+                }
+            }
             default:
                 std::free(buffer);
                 throw std::runtime_error("Unsupported dtype for numpy conversion");
@@ -210,23 +240,62 @@ namespace lfs::python {
             void* const data = tensor_copy->data_ptr();
 
             switch (cpu_tensor.dtype()) {
-            case DataType::Float32:
-                return nb::cast(nb::ndarray<nb::numpy, float>(
-                    data, shape_vec.size(), shape_vec.data(), owner,
-                    strides.data()));
-            case DataType::Int32:
-                return nb::cast(nb::ndarray<nb::numpy, int32_t>(
-                    data, shape_vec.size(), shape_vec.data(), owner,
-                    strides.data()));
-            case DataType::Int64:
-                return nb::cast(nb::ndarray<nb::numpy, int64_t>(
-                    data, shape_vec.size(), shape_vec.data(), owner,
-                    strides.data()));
+            case DataType::Float32: {
+                if (dims.size() == 1) {
+                    return nb::cast(nb::ndarray<nb::numpy, float, nb::shape<-1>>(
+                        data, {dims[0]}, owner));
+                } else if (dims.size() == 2) {
+                    return nb::cast(nb::ndarray<nb::numpy, float, nb::shape<-1, -1>>(
+                        data, {dims[0], dims[1]}, owner));
+                } else if (dims.size() == 3) {
+                    return nb::cast(nb::ndarray<nb::numpy, float, nb::shape<-1, -1, -1>>(
+                        data, {dims[0], dims[1], dims[2]}, owner));
+                } else {
+                    std::vector<size_t> shape_vec(dims.begin(), dims.end());
+                    return nb::cast(nb::ndarray<nb::numpy, float>(
+                        data, dims.size(), shape_vec.data(), owner));
+                }
+            }
+            case DataType::Int32: {
+                if (dims.size() == 1) {
+                    return nb::cast(nb::ndarray<nb::numpy, int32_t, nb::shape<-1>>(
+                        data, {dims[0]}, owner));
+                } else if (dims.size() == 2) {
+                    return nb::cast(nb::ndarray<nb::numpy, int32_t, nb::shape<-1, -1>>(
+                        data, {dims[0], dims[1]}, owner));
+                } else {
+                    std::vector<size_t> shape_vec(dims.begin(), dims.end());
+                    return nb::cast(nb::ndarray<nb::numpy, int32_t>(
+                        data, dims.size(), shape_vec.data(), owner));
+                }
+            }
+            case DataType::Int64: {
+                if (dims.size() == 1) {
+                    return nb::cast(nb::ndarray<nb::numpy, int64_t, nb::shape<-1>>(
+                        data, {dims[0]}, owner));
+                } else if (dims.size() == 2) {
+                    return nb::cast(nb::ndarray<nb::numpy, int64_t, nb::shape<-1, -1>>(
+                        data, {dims[0], dims[1]}, owner));
+                } else {
+                    std::vector<size_t> shape_vec(dims.begin(), dims.end());
+                    return nb::cast(nb::ndarray<nb::numpy, int64_t>(
+                        data, dims.size(), shape_vec.data(), owner));
+                }
+            }
             case DataType::UInt8:
-            case DataType::Bool:
-                return nb::cast(nb::ndarray<nb::numpy, uint8_t>(
-                    data, shape_vec.size(), shape_vec.data(), owner,
-                    strides.data()));
+            case DataType::Bool: {
+                if (dims.size() == 1) {
+                    return nb::cast(nb::ndarray<nb::numpy, uint8_t, nb::shape<-1>>(
+                        data, {dims[0]}, owner));
+                } else if (dims.size() == 2) {
+                    return nb::cast(nb::ndarray<nb::numpy, uint8_t, nb::shape<-1, -1>>(
+                        data, {dims[0], dims[1]}, owner));
+                } else {
+                    std::vector<size_t> shape_vec(dims.begin(), dims.end());
+                    return nb::cast(nb::ndarray<nb::numpy, uint8_t>(
+                        data, dims.size(), shape_vec.data(), owner));
+                }
+            }
             default:
                 throw std::runtime_error("Unsupported dtype for numpy conversion");
             }
@@ -823,7 +892,16 @@ namespace lfs::python {
             .def("flatten", &PyTensor::flatten, nb::arg("start_dim") = 0, nb::arg("end_dim") = -1, "Flatten dimensions")
 
             // String representation
-            .def("__repr__", &PyTensor::repr);
+            .def("__repr__", &PyTensor::repr)
+
+            // __array__ protocol for zero-copy NumPy interop (CPU only)
+            // Allows: np.asarray(tensor) for zero-copy when tensor is CPU + contiguous
+            .def(
+                "__array__", [](PyTensor& self, nb::object dtype) -> nb::object {
+                    (void)dtype;              // We return our native dtype, ignore requested dtype
+                    return self.numpy(false); // Zero-copy
+                },
+                nb::arg("dtype") = nb::none(), "Return numpy array view (zero-copy for CPU contiguous tensors)");
     }
 
 } // namespace lfs::python

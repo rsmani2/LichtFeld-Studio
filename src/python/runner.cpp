@@ -311,4 +311,44 @@ def _lfs_format_code(code):
 #endif
     }
 
+    // Frame callback for animations
+    static std::function<void(float)> g_frame_callback;
+    static std::mutex g_frame_mutex;
+
+    void set_frame_callback(std::function<void(float)> callback) {
+        std::lock_guard lock(g_frame_mutex);
+        g_frame_callback = std::move(callback);
+    }
+
+    void clear_frame_callback() {
+        std::lock_guard lock(g_frame_mutex);
+        g_frame_callback = nullptr;
+    }
+
+    bool has_frame_callback() {
+        std::lock_guard lock(g_frame_mutex);
+        return g_frame_callback != nullptr;
+    }
+
+    void tick_frame_callback(float dt) {
+        std::function<void(float)> cb;
+        {
+            std::lock_guard lock(g_frame_mutex);
+            cb = g_frame_callback;
+        }
+        if (cb) {
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+            const PyGILState_STATE gil = PyGILState_Ensure();
+            try {
+                cb(dt);
+            } catch (const std::exception& e) {
+                LOG_ERROR("Frame callback error: {}", e.what());
+            }
+            PyGILState_Release(gil);
+#else
+            cb(dt);
+#endif
+        }
+    }
+
 } // namespace lfs::python

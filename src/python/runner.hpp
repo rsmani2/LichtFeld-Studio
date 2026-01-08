@@ -64,4 +64,26 @@ namespace lfs::python {
      */
     std::string format_python_code(const std::string& code);
 
+    /**
+     * @brief Set a callback to be called each frame. Used for animations.
+     * @param callback Function(delta_time) called each frame.
+     */
+    void set_frame_callback(std::function<void(float)> callback);
+
+    /**
+     * @brief Clear the frame callback.
+     */
+    void clear_frame_callback();
+
+    /**
+     * @brief Call the frame callback if set. Called by the visualizer each frame.
+     * @param dt Delta time since last frame in seconds.
+     */
+    void tick_frame_callback(float dt);
+
+    /**
+     * @brief Check if a frame callback is set.
+     */
+    bool has_frame_callback();
+
 } // namespace lfs::python

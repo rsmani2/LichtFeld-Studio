@@ -210,6 +210,7 @@ namespace lfs::python {
         // Transforms
         nb::tuple get_world_transform(int32_t node_id) const;
         void set_node_transform(const std::string& name, nb::ndarray<float, nb::shape<4, 4>> transform);
+        void set_node_transform_tensor(const std::string& name, const PyTensor& transform);
 
         // Combined model
         std::optional<PySplatData> combined_model();

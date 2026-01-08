@@ -121,6 +121,21 @@ namespace lfs::python {
         scene_->setNodeTransform(name, ndarray_to_mat4(transform));
     }
 
+    void PyScene::set_node_transform_tensor(const std::string& name, const PyTensor& transform) {
+        const auto& t = transform.tensor();
+        assert(t.dim() == 2 && t.size(0) == 4 && t.size(1) == 4);
+        auto cpu_t = t.device() == core::Device::CUDA ? t.cpu() : t;
+        auto contiguous = cpu_t.contiguous();
+        const float* data = contiguous.ptr<float>();
+        glm::mat4 m;
+        for (int i = 0; i < 4; ++i) {
+            for (int j = 0; j < 4; ++j) {
+                m[j][i] = data[i * 4 + j];
+            }
+        }
+        scene_->setNodeTransform(name, m);
+    }
+
     std::optional<PySplatData> PyScene::combined_model() {
         auto* model = const_cast<core::SplatData*>(scene_->getCombinedModel());
         if (!model)
@@ -302,6 +317,8 @@ namespace lfs::python {
             // Transforms
             .def("get_world_transform", &PyScene::get_world_transform, nb::arg("node_id"))
             .def("set_node_transform", &PyScene::set_node_transform,
+                 nb::arg("name"), nb::arg("transform"))
+            .def("set_node_transform", &PyScene::set_node_transform_tensor,
                  nb::arg("name"), nb::arg("transform"))
             // Combined/training model
             .def("combined_model", &PyScene::combined_model)

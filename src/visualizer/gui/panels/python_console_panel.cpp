@@ -474,6 +474,28 @@ namespace lfs::vis::gui::panels {
 
             ImGui::SameLine();
 
+            // Stop button (for animations)
+            const bool has_animation = python::has_frame_callback();
+            if (!has_animation) {
+                ImGui::BeginDisabled();
+            }
+            ImGui::PushStyleColor(ImGuiCol_Button, t.palette.error);
+            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, lighten(t.palette.error, 0.1f));
+            ImGui::PushStyleColor(ImGuiCol_ButtonActive, darken(t.palette.error, 0.1f));
+            if (ImGui::Button("Stop")) {
+                python::clear_frame_callback();
+                state.addOutput("Animation stopped.\n", false);
+            }
+            ImGui::PopStyleColor(3);
+            if (!has_animation) {
+                ImGui::EndDisabled();
+            }
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+                ImGui::SetTooltip("Stop running animation");
+            }
+
+            ImGui::SameLine();
+
             // Reset button
             if (ImGui::Button("Reset")) {
                 reset_python_state(state);

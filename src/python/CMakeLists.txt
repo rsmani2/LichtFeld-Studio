@@ -49,6 +49,7 @@ nanobind_add_module(
     lfs/py_splat_data.cpp
     lfs/py_scene.cpp
     lfs/py_cameras.cpp
+    lfs/py_io.cpp
 )
 
 set_target_properties(lfs_py PROPERTIES
@@ -80,4 +81,12 @@ target_include_directories(lfs_py PRIVATE
     ${CMAKE_BINARY_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/src/visualizer
+)
+
+#Copy type stubs alongside the module for IDE support
+add_custom_command(TARGET lfs_py POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        ${CMAKE_CURRENT_SOURCE_DIR}/lichtfeld.pyi
+        $<TARGET_FILE_DIR:lfs_py>/lichtfeld.pyi
+    COMMENT "Copying Python type stubs"
 )

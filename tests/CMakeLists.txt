@@ -208,6 +208,7 @@ set(TEST_FILES
     test_torch_conversion.cpp
     test_fastgs_kernels.cpp
     test_fastgs_fuzz.cpp
+    test_python_io.cpp
 )
 
 # Build test sources list
