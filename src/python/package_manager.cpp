@@ -199,6 +199,10 @@ namespace lfs::python {
         std::ostringstream cmd;
         cmd << "\"" << uv.string() << "\" venv \"" << m_venv_dir.string() << "\" --allow-existing";
 
+#ifdef LFS_PYTHON_EXECUTABLE
+        cmd << " --python \"" << LFS_PYTHON_EXECUTABLE << "\"";
+#endif
+
         const auto [exit_code, output] = execute_command(cmd.str());
         if (exit_code != 0) {
             LOG_ERROR("Failed to create venv: {}", output);
@@ -215,13 +219,20 @@ namespace lfs::python {
 #else
         const auto lib_dir = m_venv_dir / "lib";
         if (std::filesystem::exists(lib_dir)) {
+            std::filesystem::path best_match;
             for (const auto& entry : std::filesystem::directory_iterator(lib_dir)) {
                 if (entry.is_directory()) {
                     const auto name = entry.path().filename().string();
-                    if (name.find("python") == 0)
-                        return entry.path() / "site-packages";
+                    // Prefer pythonX.Y over pythonX (more specific version)
+                    if (name.find("python") == 0) {
+                        if (best_match.empty() || name.length() > best_match.filename().string().length()) {
+                            best_match = entry.path();
+                        }
+                    }
                 }
             }
+            if (!best_match.empty())
+                return best_match / "site-packages";
         }
         return m_venv_dir / "lib" / "python3" / "site-packages";
 #endif
@@ -343,6 +354,122 @@ namespace lfs::python {
                 return true;
         }
         return false;
+    }
+
+    bool PackageManager::install_async(const std::string& package,
+                                       UvRunner::OutputCallback on_output,
+                                       UvRunner::CompletionCallback on_complete) {
+        if (!ensure_venv())
+            return false;
+
+        if (!m_runner) {
+            m_runner = std::make_unique<UvRunner>();
+        }
+
+        if (m_runner->is_running()) {
+            LOG_ERROR("Another UV operation is already running");
+            return false;
+        }
+
+        LOG_INFO("Installing {} (async)", package);
+
+        m_runner->set_output_callback(std::move(on_output));
+        m_runner->set_completion_callback(std::move(on_complete));
+
+        return m_runner->start({"pip", "install", package, "--python", venv_python().string()});
+    }
+
+    bool PackageManager::uninstall_async(const std::string& package,
+                                         UvRunner::OutputCallback on_output,
+                                         UvRunner::CompletionCallback on_complete) {
+        if (!ensure_venv())
+            return false;
+
+        if (!m_runner) {
+            m_runner = std::make_unique<UvRunner>();
+        }
+
+        if (m_runner->is_running()) {
+            LOG_ERROR("Another UV operation is already running");
+            return false;
+        }
+
+        LOG_INFO("Uninstalling {} (async)", package);
+
+        m_runner->set_output_callback(std::move(on_output));
+        m_runner->set_completion_callback(std::move(on_complete));
+
+        return m_runner->start({"pip", "uninstall", package, "-y", "--python", venv_python().string()});
+    }
+
+    bool PackageManager::install_torch_async(const std::string& cuda_version,
+                                             const std::string& torch_version,
+                                             UvRunner::OutputCallback on_output,
+                                             UvRunner::CompletionCallback on_complete) {
+        if (!ensure_venv())
+            return false;
+
+        if (!m_runner) {
+            m_runner = std::make_unique<UvRunner>();
+        }
+
+        if (m_runner->is_running()) {
+            LOG_ERROR("Another UV operation is already running");
+            return false;
+        }
+
+        std::string cuda_tag = cuda_version;
+        if (cuda_tag == "auto") {
+            const auto info = core::check_cuda_version();
+            if (info.query_failed) {
+                cuda_tag = "cu124";
+            } else if (info.major >= 12) {
+                cuda_tag = info.minor >= 4 ? "cu124" : "cu121";
+            } else if (info.major == 11 && info.minor >= 8) {
+                cuda_tag = "cu118";
+            } else {
+                cuda_tag = "cu118";
+            }
+            LOG_INFO("CUDA {}.{} -> {}", info.major, info.minor, cuda_tag);
+        } else if (cuda_tag == "12.4") {
+            cuda_tag = "cu124";
+        } else if (cuda_tag == "12.1") {
+            cuda_tag = "cu121";
+        } else if (cuda_tag == "11.8") {
+            cuda_tag = "cu118";
+        }
+
+        std::string package = "torch";
+        if (!torch_version.empty())
+            package += "==" + torch_version;
+
+        const std::string index_url = std::string(PYTORCH_INDEX) + cuda_tag;
+
+        LOG_INFO("Installing {} from {} (async)", package, cuda_tag);
+
+        m_runner->set_output_callback(std::move(on_output));
+        m_runner->set_completion_callback(std::move(on_complete));
+
+        return m_runner->start({"pip", "install", package,
+                                "--extra-index-url", index_url,
+                                "--python", venv_python().string()});
+    }
+
+    bool PackageManager::poll() {
+        if (!m_runner) {
+            return false;
+        }
+        return m_runner->poll();
+    }
+
+    void PackageManager::cancel_async() {
+        if (m_runner) {
+            m_runner->cancel();
+        }
+    }
+
+    bool PackageManager::has_running_operation() const {
+        return m_runner && m_runner->is_running();
     }
 
 } // namespace lfs::python

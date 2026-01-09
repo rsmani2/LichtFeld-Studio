@@ -4,7 +4,11 @@
 
 #pragma once
 
+#include "uv_runner.hpp"
+
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -35,10 +39,35 @@ namespace lfs::python {
         bool ensure_venv();
         bool is_venv_ready() const;
 
+        // Synchronous operations (blocking)
         InstallResult install(const std::string& package);
         InstallResult uninstall(const std::string& package);
         InstallResult install_torch(const std::string& cuda_version = "auto",
                                     const std::string& torch_version = "");
+
+        // Async operations (non-blocking, call poll() in render loop)
+        bool install_async(const std::string& package,
+                           UvRunner::OutputCallback on_output = nullptr,
+                           UvRunner::CompletionCallback on_complete = nullptr);
+
+        bool uninstall_async(const std::string& package,
+                             UvRunner::OutputCallback on_output = nullptr,
+                             UvRunner::CompletionCallback on_complete = nullptr);
+
+        bool install_torch_async(const std::string& cuda_version = "auto",
+                                 const std::string& torch_version = "",
+                                 UvRunner::OutputCallback on_output = nullptr,
+                                 UvRunner::CompletionCallback on_complete = nullptr);
+
+        // Poll for async operation progress (call from render loop)
+        // Returns true if operation is still running
+        bool poll();
+
+        // Cancel current async operation
+        void cancel_async();
+
+        // Check if async operation is running
+        [[nodiscard]] bool has_running_operation() const;
 
         std::vector<PackageInfo> list_installed() const;
         bool is_installed(const std::string& package) const;
@@ -50,6 +79,8 @@ namespace lfs::python {
         std::filesystem::path m_venv_dir;
         mutable std::mutex m_mutex;
         mutable bool m_venv_ready = false;
+
+        std::unique_ptr<UvRunner> m_runner;
     };
 
 } // namespace lfs::python

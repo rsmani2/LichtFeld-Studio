@@ -179,6 +179,28 @@ namespace lfs::vis::editor {
         }
     }
 
+    void ConsoleOutput::updateLastLine(const std::string& text, bool is_error) {
+        ConsoleMessageType target_type = is_error ? ConsoleMessageType::Error : ConsoleMessageType::Output;
+
+        // Find last message of matching type and update it
+        for (auto it = messages_.rbegin(); it != messages_.rend(); ++it) {
+            if (it->type == target_type) {
+                it->spans = parse_ansi(text);
+                if (auto_scroll_) {
+                    scroll_to_bottom_ = true;
+                }
+                return;
+            }
+        }
+
+        // No matching message found, add new one
+        if (is_error) {
+            addError(text);
+        } else {
+            addOutput(text);
+        }
+    }
+
     void ConsoleOutput::clear() {
         messages_.clear();
     }

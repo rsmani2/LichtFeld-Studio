@@ -28,6 +28,11 @@ namespace lfs::python {
     void set_output_callback(std::function<void(const std::string&, bool)> callback);
 
     /**
+     * @brief Write text to the output callback (used by package manager async output).
+     */
+    void write_output(const std::string& text, bool is_error = false);
+
+    /**
      * @brief Initialize Python interpreter if not already done.
      */
     void ensure_initialized();

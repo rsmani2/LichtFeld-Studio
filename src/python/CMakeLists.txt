@@ -15,6 +15,8 @@ find_package(nanobind CONFIG REQUIRED)
 add_library(lfs_python_utils STATIC
     runner.cpp
     package_manager.cpp
+    subprocess.cpp
+    uv_runner.cpp
 )
 
 target_include_directories(lfs_python_utils

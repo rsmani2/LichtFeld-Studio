@@ -88,6 +88,18 @@ sys.stderr = OutputCapture(True)
 #endif
     }
 
+    void write_output(const std::string& text, bool is_error) {
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+        std::lock_guard lock(g_output_mutex);
+        if (g_output_callback) {
+            g_output_callback(text, is_error);
+        }
+#else
+        (void)text;
+        (void)is_error;
+#endif
+    }
+
 #ifdef LFS_BUILD_PYTHON_BINDINGS
     static PyThreadState* g_main_thread_state = nullptr;
 #endif
@@ -265,32 +277,50 @@ sys.stderr = OutputCapture(True)
 #ifndef LFS_BUILD_PYTHON_BINDINGS
         return code;
 #else
-        if (code.empty()) {
+        if (code.empty())
             return code;
+
+        auto& pm = PackageManager::instance();
+        if (!pm.is_installed("black")) {
+            if (!pm.ensure_venv()) {
+                LOG_ERROR("Failed to create venv for black");
+                return code;
+            }
+            LOG_INFO("Installing black...");
+            const auto install_result = pm.install("black");
+            if (!install_result.success) {
+                LOG_ERROR("Failed to install black: {}", install_result.error);
+                return code;
+            }
+            update_python_path();
         }
 
         ensure_initialized();
         const PyGILState_STATE gil = PyGILState_Ensure();
 
-        std::string result = code;
-
-        const char* FORMAT_CODE = R"(
+        static constexpr const char* FORMAT_CODE = R"(
 def _lfs_format_code(code):
+    import importlib, textwrap, sys
+    importlib.invalidate_caches()
     try:
         import black
-        return black.format_str(code, mode=black.Mode())
-    except ImportError:
-        try:
-            import lichtfeld as lf
-            lf.packages.install("black")
-            import black
-            return black.format_str(code, mode=black.Mode())
-        except Exception:
-            return code
+    except ImportError as e:
+        print(f"[format] ImportError: {e}", file=sys.stderr)
+        return None
+    lines = [line.rstrip() for line in code.splitlines()]
+    cleaned = textwrap.dedent('\n'.join(lines))
+    try:
+        return black.format_str(cleaned, mode=black.Mode())
     except black.InvalidInput:
-        return code
-    except Exception:
-        return code
+        stripped = '\n'.join(line.strip() for line in lines if line.strip())
+        try:
+            return black.format_str(stripped, mode=black.Mode())
+        except Exception as e:
+            print(f"[format] Fallback failed: {e}", file=sys.stderr)
+            return None
+    except Exception as e:
+        print(f"[format] Error: {e}", file=sys.stderr)
+        return None
 )";
 
         PyRun_SimpleString(FORMAT_CODE);
@@ -308,14 +338,16 @@ def _lfs_format_code(code):
             return code;
         }
 
+        std::string result = code;
         PyObject* const py_code = PyUnicode_FromString(code.c_str());
-        PyObject* py_result = PyObject_CallFunctionObjArgs(format_func, py_code, nullptr);
+        PyObject* const py_result = PyObject_CallFunctionObjArgs(format_func, py_code, nullptr);
         Py_DECREF(py_code);
 
-        if (py_result && PyUnicode_Check(py_result)) {
-            const char* formatted = PyUnicode_AsUTF8(py_result);
-            if (formatted) {
-                result = formatted;
+        if (py_result) {
+            if (PyUnicode_Check(py_result)) {
+                const char* const formatted = PyUnicode_AsUTF8(py_result);
+                if (formatted)
+                    result = formatted;
             }
             Py_DECREF(py_result);
         } else {

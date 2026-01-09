@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "gui/panels/python_console_panel.hpp"
+#include "gui/editor/console_output.hpp"
 #include "gui/editor/python_editor.hpp"
 #include "gui/terminal/terminal_widget.hpp"
 #include "gui/ui_widgets.hpp"
@@ -21,6 +22,7 @@
 #include <mutex>
 
 #include "core/services.hpp"
+#include "python/package_manager.hpp"
 #include "python/runner.hpp"
 #include "scene/scene_manager.hpp"
 
@@ -233,7 +235,8 @@ namespace lfs::vis::gui::panels {
     PythonConsoleState::PythonConsoleState()
         : terminal_(std::make_unique<terminal::TerminalWidget>(80, 24)),
           output_terminal_(std::make_unique<terminal::TerminalWidget>(80, 24)),
-          editor_(std::make_unique<editor::PythonEditor>()) {
+          editor_(std::make_unique<editor::PythonEditor>()),
+          uv_console_(std::make_unique<editor::ConsoleOutput>()) {
     }
 
     PythonConsoleState::~PythonConsoleState() = default;
@@ -330,11 +333,84 @@ namespace lfs::vis::gui::panels {
         return editor_.get();
     }
 
+    editor::ConsoleOutput* PythonConsoleState::getUvConsole() {
+        return uv_console_.get();
+    }
+
     namespace {
         // Splitter state
         float g_splitter_ratio = 0.6f;
         constexpr float MIN_PANE_HEIGHT = 100.0f;
         constexpr float SPLITTER_THICKNESS = 6.0f;
+
+        // Package install state
+        char g_package_input[256] = "";
+
+        void start_async_install(const std::string& package, editor::ConsoleOutput* console) {
+            if (package.empty() || !console)
+                return;
+
+            auto& pm = python::PackageManager::instance();
+            if (pm.has_running_operation()) {
+                console->addError("Another operation is already running");
+                return;
+            }
+
+            console->addInfo("Installing " + package + "...");
+
+            pm.install_async(
+                package,
+                [console](const std::string& line, bool is_error, bool is_line_update) {
+                    if (is_line_update) {
+                        console->updateLastLine(line, is_error);
+                    } else if (is_error) {
+                        console->addError(line);
+                    } else {
+                        console->addOutput(line);
+                    }
+                },
+                [console, package](bool success, int exit_code) {
+                    if (success) {
+                        console->addInfo("Successfully installed " + package);
+                    } else {
+                        console->addError("Failed to install " + package + " (exit code " +
+                                          std::to_string(exit_code) + ")");
+                    }
+                });
+        }
+
+        void start_async_uninstall(const std::string& package, editor::ConsoleOutput* console) {
+            if (package.empty() || !console)
+                return;
+
+            auto& pm = python::PackageManager::instance();
+            if (pm.has_running_operation()) {
+                console->addError("Another operation is already running");
+                return;
+            }
+
+            console->addInfo("Uninstalling " + package + "...");
+
+            pm.uninstall_async(
+                package,
+                [console](const std::string& line, bool is_error, bool is_line_update) {
+                    if (is_line_update) {
+                        console->updateLastLine(line, is_error);
+                    } else if (is_error) {
+                        console->addError(line);
+                    } else {
+                        console->addOutput(line);
+                    }
+                },
+                [console, package](bool success, int exit_code) {
+                    if (success) {
+                        console->addInfo("Successfully uninstalled " + package);
+                    } else {
+                        console->addError("Failed to uninstall " + package + " (exit code " +
+                                          std::to_string(exit_code) + ")");
+                    }
+                });
+        }
     } // namespace
 
     void DrawPythonConsole(const UIContext& ctx, bool* open) {
@@ -607,6 +683,58 @@ namespace lfs::vis::gui::panels {
                             terminal->spawn(getPythonExecutable());
                         }
                         terminal->render(ctx.fonts.monospace);
+                    }
+
+                    ImGui::EndTabItem();
+                }
+
+                // Packages tab (UV package manager output)
+                if (ImGui::BeginTabItem("Packages")) {
+                    state.setActiveTab(2);
+
+                    if (auto* uv_console = state.getUvConsole()) {
+                        ImVec2 avail = ImGui::GetContentRegionAvail();
+
+                        auto& pm = python::PackageManager::instance();
+                        const bool is_running = pm.has_running_operation();
+
+                        // Package input row
+                        ImGui::BeginDisabled(is_running);
+                        ImGui::SetNextItemWidth(avail.x - 220);
+                        bool enter_pressed = ImGui::InputTextWithHint(
+                            "##pkg_input", "Package name (e.g., numpy)",
+                            g_package_input, sizeof(g_package_input),
+                            ImGuiInputTextFlags_EnterReturnsTrue);
+                        ImGui::SameLine();
+                        if (ImGui::Button("Install", ImVec2(70, 0)) || enter_pressed) {
+                            start_async_install(g_package_input, uv_console);
+                            g_package_input[0] = '\0';
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Uninstall", ImVec2(70, 0))) {
+                            start_async_uninstall(g_package_input, uv_console);
+                            g_package_input[0] = '\0';
+                        }
+                        ImGui::EndDisabled();
+
+                        ImGui::SameLine();
+                        if (ImGui::Button("Clear", ImVec2(50, 0))) {
+                            uv_console->clear();
+                        }
+
+                        avail.y -= ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+
+                        // Status line if running
+                        if (is_running) {
+                            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Running UV operation...");
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Cancel")) {
+                                pm.cancel_async();
+                            }
+                            avail.y -= ImGui::GetTextLineHeightWithSpacing();
+                        }
+
+                        uv_console->render(avail);
                     }
 
                     ImGui::EndTabItem();
@@ -895,6 +1023,58 @@ namespace lfs::vis::gui::panels {
                             terminal->spawn(getPythonExecutable());
                         }
                         terminal->render(ctx.fonts.monospace);
+                    }
+
+                    ImGui::EndTabItem();
+                }
+
+                // Packages tab (UV package manager output)
+                if (ImGui::BeginTabItem("Packages")) {
+                    state.setActiveTab(2);
+
+                    if (auto* uv_console = state.getUvConsole()) {
+                        ImVec2 avail = ImGui::GetContentRegionAvail();
+
+                        auto& pm = python::PackageManager::instance();
+                        const bool is_running = pm.has_running_operation();
+
+                        // Package input row
+                        ImGui::BeginDisabled(is_running);
+                        ImGui::SetNextItemWidth(avail.x - 220);
+                        bool enter_pressed = ImGui::InputTextWithHint(
+                            "##docked_pkg_input", "Package name (e.g., numpy)",
+                            g_package_input, sizeof(g_package_input),
+                            ImGuiInputTextFlags_EnterReturnsTrue);
+                        ImGui::SameLine();
+                        if (ImGui::Button("Install##docked", ImVec2(70, 0)) || enter_pressed) {
+                            start_async_install(g_package_input, uv_console);
+                            g_package_input[0] = '\0';
+                        }
+                        ImGui::SameLine();
+                        if (ImGui::Button("Uninstall##docked", ImVec2(70, 0))) {
+                            start_async_uninstall(g_package_input, uv_console);
+                            g_package_input[0] = '\0';
+                        }
+                        ImGui::EndDisabled();
+
+                        ImGui::SameLine();
+                        if (ImGui::Button("Clear##docked", ImVec2(50, 0))) {
+                            uv_console->clear();
+                        }
+
+                        avail.y -= ImGui::GetTextLineHeightWithSpacing() + ImGui::GetStyle().ItemSpacing.y;
+
+                        // Status line if running
+                        if (is_running) {
+                            ImGui::TextColored(ImVec4(0.4f, 0.8f, 1.0f, 1.0f), "Running UV operation...");
+                            ImGui::SameLine();
+                            if (ImGui::SmallButton("Cancel##docked")) {
+                                pm.cancel_async();
+                            }
+                            avail.y -= ImGui::GetTextLineHeightWithSpacing();
+                        }
+
+                        uv_console->render(avail);
                     }
 
                     ImGui::EndTabItem();

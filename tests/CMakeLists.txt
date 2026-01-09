@@ -190,6 +190,9 @@ set(TEST_FILES
     test_checkpoint_resume.cpp
     test_video_color_convert.cpp
     test_python_integration.cpp
+    test_uv_runner.cpp
+    test_uv_runner_proof.cpp
+    test_pytorch_install_proof.cpp
     test_nan_inf_gpu_check.cpp
     test_mcmc_nan_fix.cpp
     test_vram_resize.cpp

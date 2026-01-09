@@ -48,6 +48,7 @@
 #include "scene/scene.hpp"
 #include "scene/scene_manager.hpp"
 #include "theme/theme.hpp"
+#include "python/package_manager.hpp"
 #include "tools/brush_tool.hpp"
 #include "tools/selection_tool.hpp"
 #include "training/training_state.hpp"
@@ -580,6 +581,9 @@ namespace lfs::vis::gui {
 
         // Check for async import completion (must happen on main thread)
         checkAsyncImportCompletion();
+
+        // Poll UV package manager for async operations
+        python::PackageManager::instance().poll();
 
         // Hot-reload themes (check once per second)
         {

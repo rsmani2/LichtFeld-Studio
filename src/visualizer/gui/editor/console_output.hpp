@@ -43,6 +43,9 @@ namespace lfs::vis::editor {
         void appendOutput(const std::string& text, bool is_error);
         void flushBuffers();
 
+        // Update the last output line (for \r progress updates)
+        void updateLastLine(const std::string& text, bool is_error = false);
+
         // Clear all messages
         void clear();
 

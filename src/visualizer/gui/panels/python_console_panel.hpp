@@ -15,6 +15,7 @@
 
 namespace lfs::vis::editor {
     class PythonEditor;
+    class ConsoleOutput;
 } // namespace lfs::vis::editor
 
 namespace lfs::vis::terminal {
@@ -42,6 +43,7 @@ namespace lfs::vis::gui::panels {
         terminal::TerminalWidget* getTerminal();
         terminal::TerminalWidget* getOutputTerminal();
         editor::PythonEditor* getEditor();
+        editor::ConsoleOutput* getUvConsole();
 
         // Tab selection (0 = Output, 1 = Terminal)
         int getActiveTab() const { return active_tab_; }
@@ -76,6 +78,7 @@ namespace lfs::vis::gui::panels {
         std::unique_ptr<terminal::TerminalWidget> terminal_;
         std::unique_ptr<terminal::TerminalWidget> output_terminal_;
         std::unique_ptr<editor::PythonEditor> editor_;
+        std::unique_ptr<editor::ConsoleOutput> uv_console_;
         int active_tab_ = 0;
         bool terminal_focused_ = false;
 
