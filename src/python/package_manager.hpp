@@ -5,8 +5,6 @@
 #pragma once
 
 #include <filesystem>
-#include <functional>
-#include <future>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -28,31 +26,30 @@ namespace lfs::python {
     public:
         static PackageManager& instance();
 
-        // UV binary location
         std::filesystem::path uv_path() const;
         bool is_uv_available() const;
 
-        // Package operations (blocking)
+        std::filesystem::path venv_dir() const;
+        std::filesystem::path venv_python() const;
+        std::filesystem::path site_packages_dir() const;
+        bool ensure_venv();
+        bool is_venv_ready() const;
+
         InstallResult install(const std::string& package);
         InstallResult uninstall(const std::string& package);
+        InstallResult install_torch(const std::string& cuda_version = "auto",
+                                    const std::string& torch_version = "");
 
-        // List installed packages
         std::vector<PackageInfo> list_installed() const;
-
-        // Check if package is installed
         bool is_installed(const std::string& package) const;
-
-        // Get site-packages directory
-        std::filesystem::path site_packages_dir() const;
 
     private:
         PackageManager();
-
-        // Execute command and capture output
         InstallResult execute_uv(const std::vector<std::string>& args) const;
 
-        std::filesystem::path m_site_packages;
+        std::filesystem::path m_venv_dir;
         mutable std::mutex m_mutex;
+        mutable bool m_venv_ready = false;
     };
 
 } // namespace lfs::python

@@ -123,6 +123,11 @@ namespace lfs::python {
         // String representation
         std::string repr() const;
 
+        // DLPack protocol for zero-copy tensor exchange
+        nb::tuple dlpack_device() const;
+        nb::capsule dlpack(nb::object stream = nb::none()) const;
+        static PyTensor from_dlpack(nb::object obj);
+
         // Access underlying tensor (for internal use)
         const core::Tensor& tensor() const { return tensor_; }
         core::Tensor& tensor() { return tensor_; }
@@ -130,6 +135,7 @@ namespace lfs::python {
     private:
         core::Tensor tensor_;
         bool owns_data_ = true;
+        std::optional<nb::capsule> dlpack_capsule_;
 
         // Helper to parse Python slice
         struct SliceInfo {

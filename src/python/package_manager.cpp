@@ -3,13 +3,11 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "package_manager.hpp"
-#include "runner.hpp"
 
+#include <core/cuda_version.hpp>
 #include <core/logger.hpp>
 
-#include <array>
 #include <cstdio>
-#include <fstream>
 #include <regex>
 #include <sstream>
 
@@ -24,14 +22,23 @@ namespace lfs::python {
 
     namespace {
 
+#ifdef _WIN32
+        constexpr const char* UV_BINARY = "uv.exe";
+        constexpr size_t MAX_PATH_LEN = MAX_PATH;
+#else
+        constexpr const char* UV_BINARY = "uv";
+        constexpr size_t MAX_PATH_LEN = 4096;
+#endif
+        constexpr const char* PYTORCH_INDEX = "https://download.pytorch.org/whl/";
+
         std::filesystem::path get_executable_dir() {
 #ifdef _WIN32
-            wchar_t path[MAX_PATH];
-            GetModuleFileNameW(nullptr, path, MAX_PATH);
+            wchar_t path[MAX_PATH_LEN];
+            GetModuleFileNameW(nullptr, path, MAX_PATH_LEN);
             return std::filesystem::path(path).parent_path();
 #else
-            char path[4096];
-            ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
+            char path[MAX_PATH_LEN];
+            const ssize_t len = readlink("/proc/self/exe", path, sizeof(path) - 1);
             if (len != -1) {
                 path[len] = '\0';
                 return std::filesystem::path(path).parent_path();
@@ -40,13 +47,6 @@ namespace lfs::python {
 #endif
         }
 
-#ifdef _WIN32
-        constexpr const char* UV_BINARY_NAME = "uv.exe";
-#else
-        constexpr const char* UV_BINARY_NAME = "uv";
-#endif
-
-        // Execute command and capture stdout/stderr
         std::pair<int, std::string> execute_command(const std::string& cmd) {
             std::string output;
             int exit_code = -1;
@@ -117,47 +117,43 @@ namespace lfs::python {
             return {exit_code, output};
         }
 
+        std::filesystem::path get_lichtfeld_dir() {
+#ifdef _WIN32
+            const char* const home = std::getenv("USERPROFILE");
+#else
+            const char* const home = std::getenv("HOME");
+#endif
+            return std::filesystem::path(home ? home : "/tmp") / ".lichtfeld";
+        }
+
     } // namespace
 
-    PackageManager::PackageManager() : m_site_packages(get_user_packages_dir()) {}
+    PackageManager::PackageManager() : m_venv_dir(get_lichtfeld_dir() / "venv") {}
 
     PackageManager& PackageManager::instance() {
-        static PackageManager instance;
-        return instance;
+        static PackageManager inst;
+        return inst;
     }
 
     std::filesystem::path PackageManager::uv_path() const {
-        // Check relative to executable (portable deployment)
-        auto exe_dir = get_executable_dir();
-        auto relative_uv = exe_dir / "bin" / UV_BINARY_NAME;
-        if (std::filesystem::exists(relative_uv)) {
-            return relative_uv;
-        }
+        const auto exe_dir = get_executable_dir();
 
-        // Check in exe directory directly
-        auto direct_uv = exe_dir / UV_BINARY_NAME;
-        if (std::filesystem::exists(direct_uv)) {
-            return direct_uv;
-        }
+        if (const auto p = exe_dir / "bin" / UV_BINARY; std::filesystem::exists(p))
+            return p;
+        if (const auto p = exe_dir / UV_BINARY; std::filesystem::exists(p))
+            return p;
 
-        // Check PATH (for development)
 #ifdef _WIN32
         auto [exit_code, result] = execute_command("where uv");
 #else
         auto [exit_code, result] = execute_command("which uv");
 #endif
-
         if (exit_code == 0 && !result.empty()) {
-            // Remove trailing newline
-            while (!result.empty() && (result.back() == '\n' || result.back() == '\r')) {
+            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
                 result.pop_back();
-            }
-            std::filesystem::path found_path(result);
-            if (std::filesystem::exists(found_path)) {
-                return found_path;
-            }
+            if (std::filesystem::path found(result); std::filesystem::exists(found))
+                return found;
         }
-
         return {};
     }
 
@@ -165,167 +161,186 @@ namespace lfs::python {
         return !uv_path().empty();
     }
 
+    std::filesystem::path PackageManager::venv_dir() const {
+        return m_venv_dir;
+    }
+
+    std::filesystem::path PackageManager::venv_python() const {
+#ifdef _WIN32
+        return m_venv_dir / "Scripts" / "python.exe";
+#else
+        return m_venv_dir / "bin" / "python";
+#endif
+    }
+
+    bool PackageManager::is_venv_ready() const {
+        return m_venv_ready && std::filesystem::exists(venv_python());
+    }
+
+    bool PackageManager::ensure_venv() {
+        std::lock_guard lock(m_mutex);
+
+        if (m_venv_ready && std::filesystem::exists(venv_python()))
+            return true;
+
+        const auto uv = uv_path();
+        if (uv.empty()) {
+            LOG_ERROR("uv not found");
+            return false;
+        }
+
+        if (std::filesystem::exists(venv_python())) {
+            m_venv_ready = true;
+            return true;
+        }
+
+        LOG_INFO("Creating venv at {}", m_venv_dir.string());
+
+        std::ostringstream cmd;
+        cmd << "\"" << uv.string() << "\" venv \"" << m_venv_dir.string() << "\" --allow-existing";
+
+        const auto [exit_code, output] = execute_command(cmd.str());
+        if (exit_code != 0) {
+            LOG_ERROR("Failed to create venv: {}", output);
+            return false;
+        }
+
+        m_venv_ready = true;
+        return true;
+    }
+
     std::filesystem::path PackageManager::site_packages_dir() const {
-        return m_site_packages;
+#ifdef _WIN32
+        return m_venv_dir / "Lib" / "site-packages";
+#else
+        const auto lib_dir = m_venv_dir / "lib";
+        if (std::filesystem::exists(lib_dir)) {
+            for (const auto& entry : std::filesystem::directory_iterator(lib_dir)) {
+                if (entry.is_directory()) {
+                    const auto name = entry.path().filename().string();
+                    if (name.find("python") == 0)
+                        return entry.path() / "site-packages";
+                }
+            }
+        }
+        return m_venv_dir / "lib" / "python3" / "site-packages";
+#endif
     }
 
     InstallResult PackageManager::execute_uv(const std::vector<std::string>& args) const {
-        InstallResult result;
+        const auto uv = uv_path();
+        if (uv.empty())
+            return {.error = "uv not found"};
 
-        auto uv = uv_path();
-        if (uv.empty()) {
-            result.error = "uv package manager not found";
-            return result;
-        }
-
-        // Build command string
         std::ostringstream cmd;
         cmd << "\"" << uv.string() << "\"";
-        for (const auto& arg : args) {
+        for (const auto& arg : args)
             cmd << " " << arg;
-        }
 
-        LOG_INFO("Executing: {}", cmd.str());
+        const auto [exit_code, output] = execute_command(cmd.str());
 
-        auto [exit_code, output] = execute_command(cmd.str());
-
+        InstallResult result;
         result.output = output;
         result.success = (exit_code == 0);
-        if (!result.success) {
-            result.error = output.empty() ? "Command failed with exit code " + std::to_string(exit_code) : output;
-        }
-
+        if (!result.success)
+            result.error = output.empty() ? "Exit code " + std::to_string(exit_code) : output;
         return result;
     }
 
     InstallResult PackageManager::install(const std::string& package) {
+        if (!ensure_venv())
+            return {.error = "Failed to create venv"};
+
         std::lock_guard lock(m_mutex);
-
-        if (!std::filesystem::exists(m_site_packages)) {
-            std::error_code ec;
-            std::filesystem::create_directories(m_site_packages, ec);
-            if (ec) {
-                InstallResult result;
-                result.error = "Failed to create site-packages directory: " + ec.message();
-                return result;
-            }
-        }
-
-        LOG_INFO("Installing package: {} to {}", package, m_site_packages.string());
-
-        return execute_uv({"pip", "install", package, "--target", m_site_packages.string(), "--quiet"});
+        LOG_INFO("Installing {}", package);
+        return execute_uv({"pip", "install", package, "--python", venv_python().string()});
     }
 
     InstallResult PackageManager::uninstall(const std::string& package) {
+        if (!is_venv_ready())
+            return {.error = "Venv not initialized"};
+
         std::lock_guard lock(m_mutex);
+        LOG_INFO("Uninstalling {}", package);
+        return execute_uv({"pip", "uninstall", package, "--python", venv_python().string(), "-y"});
+    }
 
-        LOG_INFO("Uninstalling package: {}", package);
+    InstallResult PackageManager::install_torch(const std::string& cuda_version,
+                                                const std::string& torch_version) {
+        if (!ensure_venv())
+            return {.error = "Failed to create venv"};
 
-        // uv pip uninstall doesn't support --target, so we need to set PYTHONUSERBASE
-        // or just delete the package directory directly
-
-        // Find package directory
-        std::filesystem::path pkg_dir = m_site_packages / package;
-        std::filesystem::path pkg_info = m_site_packages / (package + ".dist-info");
-
-        // Also check for normalized names (e.g., "my_package" vs "my-package")
-        std::string normalized = package;
-        std::replace(normalized.begin(), normalized.end(), '-', '_');
-
-        if (!std::filesystem::exists(pkg_dir)) {
-            pkg_dir = m_site_packages / normalized;
-        }
-        if (!std::filesystem::exists(pkg_info)) {
-            // Search for any matching dist-info
-            for (const auto& entry : std::filesystem::directory_iterator(m_site_packages)) {
-                if (entry.is_directory()) {
-                    std::string name = entry.path().filename().string();
-                    if (name.find(".dist-info") != std::string::npos) {
-                        // Extract package name from dist-info
-                        std::string info_pkg = name.substr(0, name.find('-'));
-                        std::string info_pkg_normalized = info_pkg;
-                        std::replace(info_pkg_normalized.begin(), info_pkg_normalized.end(), '_', '-');
-
-                        if (info_pkg == package || info_pkg_normalized == package || info_pkg == normalized) {
-                            pkg_info = entry.path();
-                            break;
-                        }
-                    }
-                }
+        std::string cuda_tag = cuda_version;
+        if (cuda_tag == "auto") {
+            const auto info = core::check_cuda_version();
+            if (info.query_failed) {
+                cuda_tag = "cu124";
+            } else if (info.major >= 12) {
+                cuda_tag = info.minor >= 4 ? "cu124" : "cu121";
+            } else if (info.major == 11 && info.minor >= 8) {
+                cuda_tag = "cu118";
+            } else {
+                cuda_tag = "cu118";
             }
+            LOG_INFO("CUDA {}.{} -> {}", info.major, info.minor, cuda_tag);
+        } else if (cuda_tag == "12.4") {
+            cuda_tag = "cu124";
+        } else if (cuda_tag == "12.1") {
+            cuda_tag = "cu121";
+        } else if (cuda_tag == "11.8") {
+            cuda_tag = "cu118";
         }
 
-        InstallResult result;
-        std::error_code ec;
+        std::string package = "torch";
+        if (!torch_version.empty())
+            package += "==" + torch_version;
 
-        // Remove package directory
-        if (std::filesystem::exists(pkg_dir)) {
-            std::filesystem::remove_all(pkg_dir, ec);
-            if (ec) {
-                result.error = "Failed to remove package directory: " + ec.message();
-                return result;
-            }
-        }
+        const std::string index_url = std::string(PYTORCH_INDEX) + cuda_tag;
 
-        // Remove dist-info
-        if (std::filesystem::exists(pkg_info)) {
-            std::filesystem::remove_all(pkg_info, ec);
-            if (ec) {
-                result.error = "Failed to remove dist-info: " + ec.message();
-                return result;
-            }
-        }
+        std::lock_guard lock(m_mutex);
+        LOG_INFO("Installing {} from {}", package, cuda_tag);
 
-        result.success = true;
-        result.output = "Uninstalled " + package;
-        return result;
+        return execute_uv({"pip", "install", package,
+                           "--extra-index-url", index_url,
+                           "--python", venv_python().string()});
     }
 
     std::vector<PackageInfo> PackageManager::list_installed() const {
         std::lock_guard lock(m_mutex);
         std::vector<PackageInfo> packages;
 
-        if (!std::filesystem::exists(m_site_packages)) {
+        const auto site_dir = site_packages_dir();
+        if (!std::filesystem::exists(site_dir))
             return packages;
-        }
 
-        // Look for *.dist-info directories
-        for (const auto& entry : std::filesystem::directory_iterator(m_site_packages)) {
-            if (!entry.is_directory()) {
+        static const std::regex DIST_INFO_PATTERN(R"((.+)-(.+)\.dist-info)");
+
+        for (const auto& entry : std::filesystem::directory_iterator(site_dir)) {
+            if (!entry.is_directory())
                 continue;
-            }
 
-            std::string name = entry.path().filename().string();
-            if (name.find(".dist-info") == std::string::npos) {
+            const auto name = entry.path().filename().string();
+            if (name.find(".dist-info") == std::string::npos)
                 continue;
-            }
 
-            // Parse name-version.dist-info
-            std::regex pattern(R"((.+)-(.+)\.dist-info)");
             std::smatch match;
-            if (std::regex_match(name, match, pattern)) {
-                PackageInfo info;
-                info.name = match[1].str();
-                info.version = match[2].str();
-                packages.push_back(info);
-            }
+            if (std::regex_match(name, match, DIST_INFO_PATTERN))
+                packages.push_back({.name = match[1].str(), .version = match[2].str()});
         }
-
         return packages;
     }
 
     bool PackageManager::is_installed(const std::string& package) const {
-        auto packages = list_installed();
-        std::string normalized = package;
-        std::replace(normalized.begin(), normalized.end(), '-', '_');
+        const auto packages = list_installed();
+        auto normalize = [](std::string s) {
+            std::replace(s.begin(), s.end(), '-', '_');
+            return s;
+        };
+        const auto normalized = normalize(package);
 
         for (const auto& pkg : packages) {
-            std::string pkg_normalized = pkg.name;
-            std::replace(pkg_normalized.begin(), pkg_normalized.end(), '-', '_');
-
-            if (pkg.name == package || pkg_normalized == normalized) {
+            if (pkg.name == package || normalize(pkg.name) == normalized)
                 return true;
-            }
         }
         return false;
     }

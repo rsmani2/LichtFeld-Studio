@@ -8,132 +8,90 @@
 #include <nanobind/stl/vector.h>
 
 #include "../package_manager.hpp"
+#include "../runner.hpp"
 
 namespace lfs::python {
 
     void register_packages(nb::module_& m) {
         auto pkg = m.def_submodule("packages", "Package management via uv");
 
-        // PackageInfo struct
         nb::class_<PackageInfo>(pkg, "PackageInfo")
-            .def_ro("name", &PackageInfo::name, "Package name")
-            .def_ro("version", &PackageInfo::version, "Package version")
+            .def_ro("name", &PackageInfo::name)
+            .def_ro("version", &PackageInfo::version)
             .def("__repr__", [](const PackageInfo& p) { return p.name + "==" + p.version; });
 
-        // install()
+        pkg.def(
+            "init",
+            []() {
+                auto& pm = PackageManager::instance();
+                if (!pm.is_uv_available())
+                    throw std::runtime_error("uv not found");
+                if (!pm.ensure_venv())
+                    throw std::runtime_error("Failed to create venv");
+                update_python_path();
+                return pm.venv_dir().string();
+            },
+            "Initialize venv at ~/.lichtfeld/venv");
+
         pkg.def(
             "install",
             [](const std::string& package) {
                 auto& pm = PackageManager::instance();
-                if (!pm.is_uv_available()) {
-                    throw std::runtime_error("uv package manager not found");
-                }
-                auto result = pm.install(package);
-                if (!result.success) {
+                if (!pm.is_uv_available())
+                    throw std::runtime_error("uv not found");
+                const auto result = pm.install(package);
+                if (!result.success)
                     throw std::runtime_error(result.error);
-                }
                 return result.output;
             },
-            nb::arg("package"),
-            R"doc(Install a package from PyPI.
+            nb::arg("package"), "Install package from PyPI");
 
-Args:
-    package: Package name with optional version specifier (e.g., "numpy", "scipy>=1.10")
-
-Returns:
-    Installation output
-
-Raises:
-    RuntimeError: If uv is not available or installation fails
-
-Example:
-    >>> lf.packages.install("numpy")
-    >>> lf.packages.install("scipy>=1.10")
-)doc");
-
-        // uninstall()
         pkg.def(
             "uninstall",
             [](const std::string& package) {
                 auto& pm = PackageManager::instance();
-                auto result = pm.uninstall(package);
-                if (!result.success) {
+                const auto result = pm.uninstall(package);
+                if (!result.success)
                     throw std::runtime_error(result.error);
-                }
                 return result.output;
             },
-            nb::arg("package"),
-            R"doc(Uninstall a package.
+            nb::arg("package"), "Uninstall package");
 
-Args:
-    package: Package name to uninstall
-
-Returns:
-    Uninstallation output
-
-Raises:
-    RuntimeError: If uninstallation fails
-)doc");
-
-        // list()
         pkg.def(
             "list",
-            []() {
-                auto& pm = PackageManager::instance();
-                return pm.list_installed();
-            },
-            R"doc(List installed packages.
+            []() { return PackageManager::instance().list_installed(); },
+            "List installed packages");
 
-Returns:
-    List of PackageInfo objects with name and version
-
-Example:
-    >>> for pkg in lf.packages.list():
-    ...     print(f"{pkg.name} {pkg.version}")
-)doc");
-
-        // is_installed()
         pkg.def(
             "is_installed",
             [](const std::string& package) {
-                auto& pm = PackageManager::instance();
-                return pm.is_installed(package);
+                return PackageManager::instance().is_installed(package);
             },
-            nb::arg("package"),
-            R"doc(Check if a package is installed.
+            nb::arg("package"), "Check if package is installed");
 
-Args:
-    package: Package name to check
-
-Returns:
-    True if package is installed, False otherwise
-)doc");
-
-        // is_uv_available()
         pkg.def(
             "is_uv_available",
-            []() {
+            []() { return PackageManager::instance().is_uv_available(); },
+            "Check if uv is available");
+
+        pkg.def(
+            "install_torch",
+            [](const std::string& cuda, const std::string& version) {
                 auto& pm = PackageManager::instance();
-                return pm.is_uv_available();
+                if (!pm.is_uv_available())
+                    throw std::runtime_error("uv not found");
+                const auto result = pm.install_torch(cuda, version);
+                if (!result.success)
+                    throw std::runtime_error(result.error);
+                return result.output;
             },
-            R"doc(Check if uv package manager is available.
+            nb::arg("cuda") = "auto", nb::arg("version") = "",
+            "Install PyTorch with CUDA detection");
 
-Returns:
-    True if uv is found and can be executed
-)doc");
-
-        // site_packages_dir()
         pkg.def(
             "site_packages_dir",
-            []() {
-                auto& pm = PackageManager::instance();
-                return pm.site_packages_dir().string();
-            },
-            R"doc(Get the user site-packages directory.
-
-Returns:
-    Path to ~/.lichtfeld/site-packages where packages are installed
-)doc");
+            []() { return PackageManager::instance().site_packages_dir().string(); },
+            "Get site-packages path");
     }
 
 } // namespace lfs::python

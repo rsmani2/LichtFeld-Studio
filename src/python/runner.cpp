@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "runner.hpp"
+#include "package_manager.hpp"
 
 #include <filesystem>
 #include <format>
@@ -108,15 +109,7 @@ sys.stderr = OutputCapture(True)
 #endif
 
     std::filesystem::path get_user_packages_dir() {
-#ifdef _WIN32
-        const char* home = std::getenv("USERPROFILE");
-#else
-        const char* home = std::getenv("HOME");
-#endif
-        if (!home) {
-            home = "/tmp";
-        }
-        return std::filesystem::path(home) / ".lichtfeld" / "site-packages";
+        return PackageManager::instance().site_packages_dir();
     }
 
     void ensure_initialized() {
@@ -181,6 +174,29 @@ sys.stderr = OutputCapture(True)
             redirect_output();
             PyGILState_Release(gil);
         });
+#endif
+    }
+
+    void update_python_path() {
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+        const auto packages = get_user_packages_dir();
+        if (!std::filesystem::exists(packages))
+            return;
+
+        const PyGILState_STATE gil = PyGILState_Ensure();
+
+        PyObject* const sys_path = PySys_GetObject("path");
+        if (sys_path) {
+            const auto path_str = packages.string();
+            PyObject* const py_path = PyUnicode_FromString(path_str.c_str());
+            if (PySequence_Contains(sys_path, py_path) == 0) {
+                PyList_Insert(sys_path, 0, py_path);
+                LOG_INFO("Added to sys.path: {}", path_str);
+            }
+            Py_DECREF(py_path);
+        }
+
+        PyGILState_Release(gil);
 #endif
     }
 

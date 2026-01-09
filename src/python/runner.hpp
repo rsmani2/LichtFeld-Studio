@@ -86,9 +86,8 @@ namespace lfs::python {
      */
     bool has_frame_callback();
 
-    /**
-     * @brief Get the user packages directory (~/.lichtfeld/site-packages).
-     */
     std::filesystem::path get_user_packages_dir();
+
+    void update_python_path();
 
 } // namespace lfs::python

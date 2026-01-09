@@ -5,7 +5,9 @@
 #include "py_tensor.hpp"
 #include "core/logger.hpp"
 
+#include <cstring>
 #include <cuda_runtime.h>
+#include <dlpack/dlpack.h>
 #include <nanobind/stl/optional.h>
 #include <sstream>
 
@@ -17,6 +19,93 @@ namespace lfs::python {
     using lfs::core::Device;
     using lfs::core::Tensor;
     using lfs::core::TensorShape;
+
+    namespace {
+
+        constexpr DLDeviceType to_dl_device(const Device d) {
+            return d == Device::CUDA ? kDLCUDA : kDLCPU;
+        }
+
+        Device from_dl_device(const DLDeviceType t) {
+            if (t == kDLCUDA || t == kDLCUDAManaged)
+                return Device::CUDA;
+            if (t == kDLCPU || t == kDLCUDAHost)
+                return Device::CPU;
+            throw std::runtime_error("Unsupported DLPack device type");
+        }
+
+        DLDataType to_dl_dtype(const DataType dt) {
+            DLDataType r{};
+            r.lanes = 1;
+            switch (dt) {
+            case DataType::Float32:
+                r.code = kDLFloat;
+                r.bits = 32;
+                break;
+            case DataType::Float16:
+                r.code = kDLFloat;
+                r.bits = 16;
+                break;
+            case DataType::Int32:
+                r.code = kDLInt;
+                r.bits = 32;
+                break;
+            case DataType::Int64:
+                r.code = kDLInt;
+                r.bits = 64;
+                break;
+            case DataType::UInt8:
+                r.code = kDLUInt;
+                r.bits = 8;
+                break;
+            case DataType::Bool:
+                r.code = kDLUInt;
+                r.bits = 8;
+                break;
+            default: throw std::runtime_error("Unsupported dtype for DLPack");
+            }
+            return r;
+        }
+
+        DataType from_dl_dtype(const DLDataType dt) {
+            if (dt.lanes != 1)
+                throw std::runtime_error("Vectorized DLPack not supported");
+            if (dt.code == kDLFloat && dt.bits == 32)
+                return DataType::Float32;
+            if (dt.code == kDLFloat && dt.bits == 16)
+                return DataType::Float16;
+            if (dt.code == kDLInt && dt.bits == 32)
+                return DataType::Int32;
+            if (dt.code == kDLInt && dt.bits == 64)
+                return DataType::Int64;
+            if (dt.code == kDLUInt && dt.bits == 8)
+                return DataType::UInt8;
+            throw std::runtime_error("Unsupported DLPack dtype");
+        }
+
+        struct DLPackContext {
+            Tensor tensor;
+            std::vector<int64_t> shape;
+            std::vector<int64_t> strides;
+
+            explicit DLPackContext(Tensor t) : tensor(std::move(t)) {
+                shape.reserve(tensor.ndim());
+                strides.reserve(tensor.ndim());
+                for (const auto d : tensor.shape().dims())
+                    shape.push_back(static_cast<int64_t>(d));
+                for (const auto s : tensor.strides())
+                    strides.push_back(static_cast<int64_t>(s));
+            }
+        };
+
+        void dlpack_deleter(DLManagedTensor* self) noexcept {
+            if (self) {
+                delete static_cast<DLPackContext*>(self->manager_ctx);
+                delete self;
+            }
+        }
+
+    } // namespace
 
     PyTensor::PyTensor(Tensor tensor, bool owns_data)
         : tensor_(std::move(tensor)),
@@ -748,6 +837,83 @@ namespace lfs::python {
         return oss.str();
     }
 
+    nb::tuple PyTensor::dlpack_device() const {
+        const int32_t device_type = tensor_.device() == Device::CUDA ? kDLCUDA : kDLCPU;
+        return nb::make_tuple(device_type, 0);
+    }
+
+    nb::capsule PyTensor::dlpack(nb::object stream) const {
+        if (tensor_.device() == Device::CUDA && !stream.is_none()) {
+            cudaDeviceSynchronize();
+        }
+
+        auto* ctx = new DLPackContext(tensor_);
+        auto* managed = new DLManagedTensor{};
+
+        DLTensor& dl = managed->dl_tensor;
+        dl.data = const_cast<void*>(tensor_.data_ptr());
+        dl.device.device_type = to_dl_device(tensor_.device());
+        dl.device.device_id = 0;
+        dl.ndim = static_cast<int32_t>(tensor_.ndim());
+        dl.dtype = to_dl_dtype(tensor_.dtype());
+        dl.shape = ctx->shape.data();
+        dl.strides = tensor_.is_contiguous() ? nullptr : ctx->strides.data();
+        dl.byte_offset = 0;
+
+        managed->manager_ctx = ctx;
+        managed->deleter = dlpack_deleter;
+
+        return nb::capsule(managed, "dltensor", [](void* p) noexcept {
+            auto* m = static_cast<DLManagedTensor*>(p);
+            if (m && m->deleter)
+                m->deleter(m);
+        });
+    }
+
+    PyTensor PyTensor::from_dlpack(nb::object obj) {
+        nb::capsule capsule;
+
+        if (nb::hasattr(obj, "__dlpack__")) {
+            capsule = nb::cast<nb::capsule>(obj.attr("__dlpack__")());
+        } else if (nb::isinstance<nb::capsule>(obj)) {
+            capsule = nb::cast<nb::capsule>(obj);
+        } else {
+            throw std::runtime_error("from_dlpack: requires __dlpack__ method or capsule");
+        }
+
+        const char* const name = capsule.name();
+        if (!name || std::strcmp(name, "dltensor") != 0) {
+            if (name && std::strcmp(name, "used_dltensor") == 0) {
+                throw std::runtime_error("from_dlpack: capsule already consumed");
+            }
+            throw std::runtime_error("from_dlpack: invalid capsule");
+        }
+
+        auto* managed = static_cast<DLManagedTensor*>(capsule.data());
+        if (!managed) {
+            throw std::runtime_error("from_dlpack: null DLManagedTensor");
+        }
+
+        const DLTensor& dl = managed->dl_tensor;
+
+        std::vector<size_t> shape_vec;
+        shape_vec.reserve(dl.ndim);
+        for (int32_t i = 0; i < dl.ndim; ++i) {
+            shape_vec.push_back(static_cast<size_t>(dl.shape[i]));
+        }
+
+        void* const data = static_cast<char*>(dl.data) + dl.byte_offset;
+        const Device device = from_dl_device(dl.device.device_type);
+        const DataType dtype = from_dl_dtype(dl.dtype);
+
+        Tensor tensor(data, TensorShape(shape_vec), device, dtype);
+
+        // Store capsule to prevent cleanup while tensor exists
+        auto result = PyTensor(std::move(tensor), false);
+        result.dlpack_capsule_ = std::move(capsule);
+        return result;
+    }
+
     void register_tensor(nb::module_& m) {
         nb::class_<PyTensor>(m, "Tensor")
             .def(nb::init<>())
@@ -781,6 +947,11 @@ namespace lfs::python {
             .def_static("from_numpy", &PyTensor::from_numpy,
                         nb::arg("arr"), nb::arg("copy") = true,
                         "Create tensor from NumPy array")
+
+            // DLPack protocol
+            .def("__dlpack__", &PyTensor::dlpack, nb::arg("stream") = nb::none())
+            .def("__dlpack_device__", &PyTensor::dlpack_device)
+            .def_static("from_dlpack", &PyTensor::from_dlpack, nb::arg("obj"))
 
             // Indexing
             .def("__getitem__", &PyTensor::getitem, "Get item/slice")
