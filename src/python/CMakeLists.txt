@@ -14,6 +14,7 @@ find_package(nanobind CONFIG REQUIRED)
 
 add_library(lfs_python_utils STATIC
     runner.cpp
+    package_manager.cpp
 )
 
 target_include_directories(lfs_python_utils
@@ -50,6 +51,7 @@ nanobind_add_module(
     lfs/py_scene.cpp
     lfs/py_cameras.cpp
     lfs/py_io.cpp
+    lfs/py_packages.cpp
 )
 
 set_target_properties(lfs_py PROPERTIES
@@ -90,3 +92,8 @@ add_custom_command(TARGET lfs_py POST_BUILD
         $<TARGET_FILE_DIR:lfs_py>/lichtfeld.pyi
     COMMENT "Copying Python type stubs"
 )
+
+# UV package manager for Python package installation support
+include(${CMAKE_SOURCE_DIR}/cmake/FetchUV.cmake)
+fetch_uv()
+install_uv()

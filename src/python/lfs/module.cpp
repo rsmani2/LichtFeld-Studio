@@ -9,6 +9,7 @@
 
 #include "py_cameras.hpp"
 #include "py_io.hpp"
+#include "py_packages.hpp"
 #include "py_scene.hpp"
 #include "py_splat_data.hpp"
 #include "py_tensor.hpp"
@@ -320,6 +321,24 @@ namespace {
 NB_MODULE(lichtfeld, m) {
     m.doc() = "LichtFeld Python control module for Gaussian splatting";
 
+    // Add user site-packages to sys.path on module import
+    {
+        auto user_packages = lfs::python::get_user_packages_dir();
+        nb::module_ sys = nb::module_::import_("sys");
+        nb::list path = nb::cast<nb::list>(sys.attr("path"));
+        std::string pkg_path = user_packages.string();
+        bool found = false;
+        for (size_t i = 0; i < path.size(); ++i) {
+            if (nb::cast<std::string>(path[i]) == pkg_path) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            path.insert(0, pkg_path.c_str());
+        }
+    }
+
     // Enum for hook types
     nb::enum_<ControlHook>(m, "Hook")
         .value("training_start", ControlHook::TrainingStart)
@@ -439,6 +458,9 @@ NB_MODULE(lichtfeld, m) {
     // I/O submodule
     auto io_module = m.def_submodule("io", "File I/O operations");
     lfs::python::register_io(io_module);
+
+    // Packages submodule (uses uv for package management)
+    lfs::python::register_packages(m);
 
     // Get scene function - works in both headless (during hooks) and GUI mode
     m.def(
@@ -679,5 +701,5 @@ Example:
         // Utilities
         "run", "list_scene", "mat4", "help",
         // Submodules
-        "scene", "io");
+        "scene", "io", "packages");
 }

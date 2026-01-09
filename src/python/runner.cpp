@@ -107,14 +107,45 @@ sys.stderr = OutputCapture(True)
     static PyThreadState* g_main_thread_state = nullptr;
 #endif
 
+    std::filesystem::path get_user_packages_dir() {
+#ifdef _WIN32
+        const char* home = std::getenv("USERPROFILE");
+#else
+        const char* home = std::getenv("HOME");
+#endif
+        if (!home) {
+            home = "/tmp";
+        }
+        return std::filesystem::path(home) / ".lichtfeld" / "site-packages";
+    }
+
     void ensure_initialized() {
 #ifdef LFS_BUILD_PYTHON_BINDINGS
         std::call_once(g_py_init_once, [] {
             install_output_capture();
             Py_Initialize();
             PyEval_InitThreads();
+
+            // Add user site-packages to sys.path (before releasing GIL)
+            std::filesystem::path user_packages = get_user_packages_dir();
+            if (!std::filesystem::exists(user_packages)) {
+                std::error_code ec;
+                std::filesystem::create_directories(user_packages, ec);
+                if (ec) {
+                    LOG_WARN("Failed to create user packages dir: {}", ec.message());
+                }
+            }
+
+            PyObject* sys_path = PySys_GetObject("path");
+            if (sys_path) {
+                PyObject* py_path = PyUnicode_FromString(user_packages.string().c_str());
+                PyList_Insert(sys_path, 0, py_path);
+                Py_DECREF(py_path);
+                LOG_INFO("Added user packages dir to Python path: {}", user_packages.string());
+            }
+
             g_main_thread_state = PyEval_SaveThread();
-            LOG_INFO("Python interpreter initialized and GIL released (SaveThread)");
+            LOG_INFO("Python interpreter initialized and GIL released");
         });
 #endif
     }
