@@ -9,6 +9,24 @@
 
 namespace lfs::python {
 
+    // Strip ANSI CSI sequences (ESC [ ... letter)
+    std::string strip_ansi(const char* const data, const size_t len) {
+        constexpr char ESC = '\033';
+        std::string result;
+        result.reserve(len);
+
+        for (size_t i = 0; i < len; ++i) {
+            if (data[i] == ESC && i + 1 < len && data[i + 1] == '[') {
+                i += 2;
+                while (i < len && !std::isalpha(static_cast<unsigned char>(data[i])))
+                    ++i;
+            } else {
+                result += data[i];
+            }
+        }
+        return result;
+    }
+
     UvRunner::~UvRunner() {
         cancel();
     }
@@ -46,7 +64,7 @@ namespace lfs::python {
 
         while ((n = process_.read(buf, sizeof(buf) - 1)) > 0) {
             buf[n] = '\0';
-            output_buffer_ += buf;
+            output_buffer_ += strip_ansi(buf, n);
             process_buffer();
         }
 
@@ -121,9 +139,8 @@ namespace lfs::python {
     }
 
     void UvRunner::emit_line(const std::string& line, bool is_line_update) {
-        if (output_callback_) {
+        if (output_callback_)
             output_callback_(line, false, is_line_update);
-        }
     }
 
 } // namespace lfs::python

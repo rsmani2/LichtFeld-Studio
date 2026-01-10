@@ -6,10 +6,12 @@
 
 #include "gui/ui_context.hpp"
 #include <algorithm>
+#include <atomic>
 #include <filesystem>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include <imgui.h>
 
@@ -64,6 +66,11 @@ namespace lfs::vis::gui::panels {
         void decreaseFontScale() { setFontScale(font_scale_ - 0.1f); }
         void resetFontScale() { font_scale_ = 1.0f; }
 
+        // Script execution
+        bool isScriptRunning() const { return script_running_.load(); }
+        void interruptScript();
+        void runScriptAsync(const std::string& code);
+
     private:
         PythonConsoleState();
         ~PythonConsoleState();
@@ -85,6 +92,11 @@ namespace lfs::vis::gui::panels {
 
         // Font scaling
         float font_scale_ = 1.0f;
+
+        // Script execution
+        std::atomic<bool> script_running_{false};
+        std::atomic<unsigned long> script_thread_id_{0};
+        std::thread script_thread_;
     };
 
     // Draw the Python console window (floating)

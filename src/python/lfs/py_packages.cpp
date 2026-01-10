@@ -105,8 +105,11 @@ namespace lfs::python {
 
                 return pm.install_async(
                     package,
-                    [](const std::string& line, bool is_error, bool) {
-                        write_output(line + "\r\n", is_error);
+                    [](const std::string& line, bool is_error, bool is_line_update) {
+                        if (is_line_update)
+                            write_output("\r" + line + "\033[K", is_error);
+                        else
+                            write_output(line + "\r\n", is_error);
                     },
                     [package](bool success, int exit_code) {
                         if (success) {
@@ -131,8 +134,11 @@ namespace lfs::python {
 
                 return pm.install_torch_async(
                     cuda, version,
-                    [](const std::string& line, bool is_error, bool) {
-                        write_output(line + "\r\n", is_error);
+                    [](const std::string& line, bool is_error, bool is_line_update) {
+                        if (is_line_update)
+                            write_output("\r" + line + "\033[K", is_error);
+                        else
+                            write_output(line + "\r\n", is_error);
                     },
                     [](bool success, int exit_code) {
                         if (success) {

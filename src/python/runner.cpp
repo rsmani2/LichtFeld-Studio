@@ -300,26 +300,86 @@ sys.stderr = OutputCapture(True)
 
         static constexpr const char* FORMAT_CODE = R"(
 def _lfs_format_code(code):
-    import importlib, textwrap, sys
+    import importlib, sys
     importlib.invalidate_caches()
     try:
         import black
     except ImportError as e:
         print(f"[format] ImportError: {e}", file=sys.stderr)
         return None
-    lines = [line.rstrip() for line in code.splitlines()]
-    cleaned = textwrap.dedent('\n'.join(lines))
+
+    # Normalize unicode characters that break parsing (from copy-paste)
+    replacements = {
+        '\u201c': '"', '\u201d': '"',  # Smart double quotes
+        '\u2018': "'", '\u2019': "'",  # Smart single quotes
+        '\u2212': '-',                  # Unicode minus
+        '\u2013': '-', '\u2014': '-',  # En-dash, em-dash
+        '\u00a0': ' ',                  # Non-breaking space
+        '\u2003': ' ', '\u2002': ' ',  # Em space, en space
+        '\u2009': ' ',                  # Thin space
+    }
+    for old, new in replacements.items():
+        code = code.replace(old, new)
+
+    # Normalize line endings and remove trailing whitespace
+    code = code.replace('\r\n', '\n').replace('\r', '\n')
+    lines = [line.rstrip() for line in code.split('\n')]
+
+    # Remove leading empty lines
+    while lines and not lines[0].strip():
+        lines.pop(0)
+
+    # Remove trailing empty lines
+    while lines and not lines[-1].strip():
+        lines.pop()
+
+    if not lines:
+        return code
+
+    # Convert tabs to spaces consistently
+    lines = [line.replace('\t', '    ') for line in lines]
+
+    # Find indentation levels for all non-empty lines
+    indents = []
+    for line in lines:
+        if line.strip():
+            indents.append(len(line) - len(line.lstrip()))
+
+    if not indents:
+        return code
+
+    # If first line has 0 indent but others have consistent indent,
+    # this is likely a copy-paste issue - use the mode of other indents
+    min_indent = min(indents)
+    if min_indent == 0 and len(indents) > 1:
+        other_indents = [i for i in indents[1:] if i > 0]
+        if other_indents:
+            # Find the smallest non-zero indent from other lines
+            min_other = min(other_indents)
+            # Check if most lines use this or a multiple of it
+            consistent = sum(1 for i in other_indents if i >= min_other) / len(other_indents)
+            if consistent > 0.5:
+                min_indent = min_other
+
+    # Remove common indentation
+    dedented = []
+    for line in lines:
+        if line.strip():
+            current_indent = len(line) - len(line.lstrip())
+            if current_indent >= min_indent:
+                dedented.append(line[min_indent:])
+            else:
+                dedented.append(line.lstrip())  # Line has less indent, just strip it
+        else:
+            dedented.append('')
+
+    cleaned = '\n'.join(dedented)
+
     try:
         return black.format_str(cleaned, mode=black.Mode())
-    except black.InvalidInput:
-        stripped = '\n'.join(line.strip() for line in lines if line.strip())
-        try:
-            return black.format_str(stripped, mode=black.Mode())
-        except Exception as e:
-            print(f"[format] Fallback failed: {e}", file=sys.stderr)
-            return None
     except Exception as e:
         print(f"[format] Error: {e}", file=sys.stderr)
+        print(f"[format] Code was:\n{repr(cleaned)}", file=sys.stderr)
         return None
 )";
 

@@ -58,20 +58,47 @@ namespace {
         });
     }
 
+    // Replace Braille (U+2800-28FF) with cycling block elements
+    std::string replace_braille_with_blocks(const std::string& text) {
+        static constexpr const char* BLOCKS[] = {"░", "▒", "▓", "█", "▓", "▒"};
+        static constexpr size_t BLOCK_COUNT = 6;
+        static constexpr uint8_t UTF8_BRAILLE_LEAD = 0xE2;
+        static int cycle = 0;
+
+        std::string result;
+        result.reserve(text.size());
+
+        for (size_t i = 0; i < text.size(); ++i) {
+            const auto c = static_cast<uint8_t>(text[i]);
+            if (c == UTF8_BRAILLE_LEAD && i + 2 < text.size()) {
+                const auto b1 = static_cast<uint8_t>(text[i + 1]);
+                const auto b2 = static_cast<uint8_t>(text[i + 2]);
+                if (b1 >= 0xA0 && b1 <= 0xA3 && (b2 & 0xC0) == 0x80) {
+                    result += BLOCKS[cycle++ % BLOCK_COUNT];
+                    i += 2;
+                    continue;
+                }
+            }
+            result += text[i];
+        }
+        return result;
+    }
+
     void setup_console_output_capture() {
         std::call_once(g_console_init_once, [] {
-            lfs::python::set_output_callback([](const std::string& text, bool is_error) {
+            lfs::python::set_output_callback([](const std::string& text, const bool is_error) {
                 auto& state = lfs::vis::gui::panels::PythonConsoleState::getInstance();
                 auto* output = state.getOutputTerminal();
-                if (output) {
-                    // Use ANSI escape codes for error coloring
-                    if (is_error) {
-                        output->write("\033[31m"); // Red
-                        output->write(text);
-                        output->write("\033[0m"); // Reset
-                    } else {
-                        output->write(text);
-                    }
+                if (!output)
+                    return;
+
+                const std::string filtered = replace_braille_with_blocks(text);
+                if (is_error) {
+                    output->write("\033[31m");
+                    output->write(filtered);
+                    output->write("\033[0m");
+                } else {
+                    output->write(filtered);
                 }
             });
         });
@@ -89,66 +116,7 @@ namespace {
         if (start > 0)
             cmd = cmd.substr(start);
 
-        state.addToHistory(cmd);
-
-        auto* output = state.getOutputTerminal();
-        if (!output)
-            return;
-
-        // Clear output on each new run
-        output->clear();
-
-        // Get scene for context injection
-        lfs::vis::Scene* scene = nullptr;
-        if (auto* sm = lfs::vis::services().sceneOrNull()) {
-            scene = &sm->getScene();
-        }
-
-        // Execute in-process with GIL
-        const PyGILState_STATE gil = PyGILState_Ensure();
-
-        // Import lichtfeld and inject scene context
-        if (scene) {
-            PyObject* lf_module = PyImport_ImportModule("lichtfeld");
-            if (lf_module) {
-                PyObject* set_ctx = PyObject_GetAttrString(lf_module, "_set_scene_context");
-                if (set_ctx && PyCallable_Check(set_ctx)) {
-                    PyObject* capsule = PyCapsule_New(scene, nullptr, nullptr);
-                    if (capsule) {
-                        PyObject* args = PyTuple_Pack(1, capsule);
-                        PyObject_Call(set_ctx, args, nullptr);
-                        Py_DECREF(args);
-                        Py_DECREF(capsule);
-                    }
-                }
-                Py_XDECREF(set_ctx);
-                Py_DECREF(lf_module);
-            }
-        }
-
-        // Execute user code
-        const int result = PyRun_SimpleString(cmd.c_str());
-        if (result != 0) {
-            PyErr_Print();
-        }
-
-        // Clear scene context
-        if (scene) {
-            PyObject* lf_module = PyImport_ImportModule("lichtfeld");
-            if (lf_module) {
-                PyObject* clear_ctx = PyObject_GetAttrString(lf_module, "_clear_scene_context");
-                if (clear_ctx && PyCallable_Check(clear_ctx)) {
-                    PyObject_CallNoArgs(clear_ctx);
-                }
-                Py_XDECREF(clear_ctx);
-                Py_DECREF(lf_module);
-            }
-        }
-
-        PyGILState_Release(gil);
-
-        // Switch to Output tab
-        state.setActiveTab(0);
+        state.runScriptAsync(cmd);
     }
 
     void reset_python_state(lfs::vis::gui::panels::PythonConsoleState& state) {
@@ -238,7 +206,12 @@ namespace lfs::vis::gui::panels {
           editor_(std::make_unique<editor::PythonEditor>()) {
     }
 
-    PythonConsoleState::~PythonConsoleState() = default;
+    PythonConsoleState::~PythonConsoleState() {
+        interruptScript();
+        if (script_thread_.joinable()) {
+            script_thread_.join();
+        }
+    }
 
     PythonConsoleState& PythonConsoleState::getInstance() {
         static PythonConsoleState instance;
@@ -286,6 +259,91 @@ namespace lfs::vis::gui::panels {
             output_terminal_->clear();
         }
     }
+
+#ifdef LFS_BUILD_PYTHON_BINDINGS
+    void PythonConsoleState::interruptScript() {
+        const unsigned long tid = script_thread_id_.load();
+        if (tid != 0 && script_running_.load()) {
+            const PyGILState_STATE gil = PyGILState_Ensure();
+            // Raise KeyboardInterrupt in the script thread
+            PyThreadState_SetAsyncExc(tid, PyExc_KeyboardInterrupt);
+            PyGILState_Release(gil);
+        }
+    }
+
+    void PythonConsoleState::runScriptAsync(const std::string& code) {
+        if (script_running_.load()) {
+            addError("A script is already running");
+            return;
+        }
+
+        if (script_thread_.joinable()) {
+            script_thread_.join();
+        }
+
+        addToHistory(code);
+        clear();
+        setActiveTab(0);
+
+        script_running_ = true;
+        script_thread_id_ = 0;
+        script_thread_ = std::thread([this, code]() {
+            const PyGILState_STATE gil = PyGILState_Ensure();
+
+            // Store thread ID for interrupt support
+            script_thread_id_ = PyThreadState_Get()->thread_id;
+
+            // Import lichtfeld and inject scene context
+            lfs::vis::Scene* scene = nullptr;
+            if (auto* sm = lfs::vis::services().sceneOrNull()) {
+                scene = &sm->getScene();
+            }
+
+            if (scene) {
+                PyObject* lf_module = PyImport_ImportModule("lichtfeld");
+                if (lf_module) {
+                    PyObject* set_ctx = PyObject_GetAttrString(lf_module, "_set_scene_context");
+                    if (set_ctx && PyCallable_Check(set_ctx)) {
+                        PyObject* capsule = PyCapsule_New(scene, nullptr, nullptr);
+                        if (capsule) {
+                            PyObject* args = PyTuple_Pack(1, capsule);
+                            PyObject_Call(set_ctx, args, nullptr);
+                            Py_DECREF(args);
+                            Py_DECREF(capsule);
+                        }
+                    }
+                    Py_XDECREF(set_ctx);
+                    Py_DECREF(lf_module);
+                }
+            }
+
+            const int result = PyRun_SimpleString(code.c_str());
+            if (result != 0) {
+                PyErr_Print();
+            }
+
+            // Clear scene context
+            if (scene) {
+                PyObject* lf_module = PyImport_ImportModule("lichtfeld");
+                if (lf_module) {
+                    PyObject* clear_ctx = PyObject_GetAttrString(lf_module, "_clear_scene_context");
+                    if (clear_ctx && PyCallable_Check(clear_ctx)) {
+                        PyObject_CallNoArgs(clear_ctx);
+                    }
+                    Py_XDECREF(clear_ctx);
+                    Py_DECREF(lf_module);
+                }
+            }
+
+            script_thread_id_ = 0;
+            PyGILState_Release(gil);
+            script_running_ = false;
+        });
+    }
+#else
+    void PythonConsoleState::interruptScript() {}
+    void PythonConsoleState::runScriptAsync(const std::string&) {}
+#endif
 
     void PythonConsoleState::addToHistory(const std::string& cmd) {
         std::lock_guard lock(mutex_);
@@ -456,10 +514,12 @@ namespace lfs::vis::gui::panels {
 
             ImGui::SameLine();
 
-            // Stop button (for animations and running scripts)
+            // Stop button (for animations, running scripts, and UV operations)
             const bool has_animation = python::has_frame_callback();
-            const bool has_running_script = state.getOutputTerminal() && state.getOutputTerminal()->is_running();
-            const bool can_stop = has_animation || has_running_script;
+            const bool has_running_script = state.isScriptRunning();
+            const bool has_running_terminal = state.getOutputTerminal() && state.getOutputTerminal()->is_running();
+            const bool has_uv_operation = python::PackageManager::instance().has_running_operation();
+            const bool can_stop = has_animation || has_running_script || has_running_terminal || has_uv_operation;
             if (!can_stop) {
                 ImGui::BeginDisabled();
             }
@@ -469,6 +529,12 @@ namespace lfs::vis::gui::panels {
             if (ImGui::Button("Stop")) {
                 if (has_animation) {
                     python::clear_frame_callback();
+                }
+                if (has_running_script) {
+                    state.interruptScript();
+                }
+                if (has_uv_operation) {
+                    python::PackageManager::instance().cancel_async();
                 }
                 if (auto* output = state.getOutputTerminal()) {
                     output->interrupt();
@@ -507,7 +573,11 @@ namespace lfs::vis::gui::panels {
             ImGui::SameLine();
 
             // Status indicator
-            ImGui::TextColored(t.palette.text_dim, "Python");
+            if (can_stop) {
+                ImGui::TextColored(t.palette.warning, "Running...");
+            } else {
+                ImGui::TextColored(t.palette.text_dim, "Python");
+            }
 
             ImGui::PopStyleVar(2);
         }
@@ -813,10 +883,12 @@ namespace lfs::vis::gui::panels {
         ImGui::SameLine();
 
         // Stop button
+        const bool has_animation = python::has_frame_callback();
+        const bool has_running_script = state.isScriptRunning();
+        const bool has_running_terminal = state.getOutputTerminal() && state.getOutputTerminal()->is_running();
+        const bool has_uv_operation = python::PackageManager::instance().has_running_operation();
+        const bool can_stop = has_animation || has_running_script || has_running_terminal || has_uv_operation;
         {
-            const bool has_animation = python::has_frame_callback();
-            const bool has_running_script = state.getOutputTerminal() && state.getOutputTerminal()->is_running();
-            const bool can_stop = has_animation || has_running_script;
             if (!can_stop) {
                 ImGui::BeginDisabled();
             }
@@ -826,6 +898,12 @@ namespace lfs::vis::gui::panels {
             if (ImGui::Button("Stop")) {
                 if (has_animation) {
                     python::clear_frame_callback();
+                }
+                if (has_running_script) {
+                    state.interruptScript();
+                }
+                if (has_uv_operation) {
+                    python::PackageManager::instance().cancel_async();
                 }
                 if (auto* output = state.getOutputTerminal()) {
                     output->interrupt();
@@ -856,6 +934,17 @@ namespace lfs::vis::gui::panels {
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Clear console (Ctrl+L)");
+
+        ImGui::SameLine();
+        ImGui::TextColored(t.palette.text_dim, "|");
+        ImGui::SameLine();
+
+        // Status indicator
+        if (can_stop) {
+            ImGui::TextColored(t.palette.warning, "Running...");
+        } else {
+            ImGui::TextColored(t.palette.text_dim, "Python");
+        }
 
         ImGui::PopStyleVar(2);
 

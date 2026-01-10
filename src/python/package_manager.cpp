@@ -304,15 +304,22 @@ namespace lfs::python {
         if (cuda_tag == "auto") {
             const auto info = core::check_cuda_version();
             if (info.query_failed) {
-                cuda_tag = "cu124";
+                cuda_tag = "cu128";
             } else if (info.major >= 12) {
-                cuda_tag = info.minor >= 4 ? "cu124" : "cu121";
+                if (info.minor >= 8)
+                    cuda_tag = "cu128";
+                else if (info.minor >= 4)
+                    cuda_tag = "cu124";
+                else
+                    cuda_tag = "cu121";
             } else if (info.major == 11 && info.minor >= 8) {
                 cuda_tag = "cu118";
             } else {
                 cuda_tag = "cu118";
             }
             LOG_INFO("CUDA {}.{} -> {}", info.major, info.minor, cuda_tag);
+        } else if (cuda_tag == "12.8") {
+            cuda_tag = "cu128";
         } else if (cuda_tag == "12.4") {
             cuda_tag = "cu124";
         } else if (cuda_tag == "12.1") {
@@ -330,9 +337,12 @@ namespace lfs::python {
         std::lock_guard lock(m_mutex);
         LOG_INFO("Installing {} from {}", package, cuda_tag);
 
-        return execute_uv({"pip", "install", package,
-                           "--extra-index-url", index_url,
-                           "--python", venv_python().string()});
+        std::vector<std::string> args = {"pip", "install", package, "--extra-index-url", index_url,
+                                         "--python", venv_python().string()};
+        if (torch_version.empty())
+            args.push_back("--upgrade");
+
+        return execute_uv(args);
     }
 
     std::vector<PackageInfo> PackageManager::list_installed() const {
@@ -453,15 +463,22 @@ namespace lfs::python {
         if (cuda_tag == "auto") {
             const auto info = core::check_cuda_version();
             if (info.query_failed) {
-                cuda_tag = "cu124";
+                cuda_tag = "cu128";
             } else if (info.major >= 12) {
-                cuda_tag = info.minor >= 4 ? "cu124" : "cu121";
+                if (info.minor >= 8)
+                    cuda_tag = "cu128";
+                else if (info.minor >= 4)
+                    cuda_tag = "cu124";
+                else
+                    cuda_tag = "cu121";
             } else if (info.major == 11 && info.minor >= 8) {
                 cuda_tag = "cu118";
             } else {
                 cuda_tag = "cu118";
             }
             LOG_INFO("CUDA {}.{} -> {}", info.major, info.minor, cuda_tag);
+        } else if (cuda_tag == "12.8") {
+            cuda_tag = "cu128";
         } else if (cuda_tag == "12.4") {
             cuda_tag = "cu124";
         } else if (cuda_tag == "12.1") {
@@ -481,9 +498,12 @@ namespace lfs::python {
         m_runner->set_output_callback(std::move(on_output));
         m_runner->set_completion_callback(std::move(on_complete));
 
-        return m_runner->start({"pip", "install", package,
-                                "--extra-index-url", index_url,
-                                "--python", venv_python().string()});
+        std::vector<std::string> args = {"pip", "install", package, "--extra-index-url", index_url,
+                                         "--python", venv_python().string()};
+        if (torch_version.empty())
+            args.push_back("--upgrade");
+
+        return m_runner->start(args);
     }
 
     bool PackageManager::poll() {
