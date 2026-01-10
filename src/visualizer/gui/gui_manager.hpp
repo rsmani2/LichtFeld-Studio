@@ -186,6 +186,7 @@ namespace lfs::vis {
             void renderSequencerPanel(const UIContext& ctx);
             void renderCameraPath(const UIContext& ctx);
             void renderDockedPythonConsole(const UIContext& ctx, float panel_x, float panel_h);
+            void renderPythonPanels(const UIContext& ctx);
             void showSpeedOverlay(float current_speed, float max_speed);
             void showZoomSpeedOverlay(float zoom_speed, float max_zoom_speed);
             void renderCropBoxGizmo(const UIContext& ctx);

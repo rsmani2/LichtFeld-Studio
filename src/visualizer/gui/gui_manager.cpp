@@ -43,12 +43,13 @@
 #include "core/events.hpp"
 #include "core/parameters.hpp"
 #include "core/services.hpp"
+#include "python/package_manager.hpp"
+#include "python/py_panel_registry.hpp"
 #include "rendering/rendering.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "scene/scene.hpp"
 #include "scene/scene_manager.hpp"
 #include "theme/theme.hpp"
-#include "python/package_manager.hpp"
 #include "tools/brush_tool.hpp"
 #include "tools/selection_tool.hpp"
 #include "training/training_state.hpp"
@@ -416,11 +417,16 @@ namespace lfs::vis::gui {
 
                 // Build glyph ranges: default + box drawing + block elements
                 static const ImWchar ranges[] = {
-                    0x0020, 0x00FF, // Basic Latin + Latin Supplement
-                    0x2500, 0x257F, // Box Drawing
-                    0x2580, 0x259F, // Block Elements (used by tqdm, etc.)
-                    0x25A0, 0x25FF, // Geometric Shapes
-                    0x2190, 0x21FF, // Arrows
+                    0x0020,
+                    0x00FF, // Basic Latin + Latin Supplement
+                    0x2500,
+                    0x257F, // Box Drawing
+                    0x2580,
+                    0x259F, // Block Elements (used by tqdm, etc.)
+                    0x25A0,
+                    0x25FF, // Geometric Shapes
+                    0x2190,
+                    0x21FF, // Arrows
                     0,
                 };
 
@@ -853,10 +859,10 @@ namespace lfs::vis::gui {
         // Python console - now rendered as docked panel, handled in renderDockedPythonConsole
         // (floating mode removed)
 
-        // Python scripts panel
-        if (window_states_["python_scripts"]) {
+        if (window_states_["python_scripts"])
             panels::DrawPythonScriptsPanel(ctx, &window_states_["python_scripts"]);
-        }
+
+        renderPythonPanels(ctx);
 
         // Utility toolbar (always visible)
         const bool is_fullscreen = viewer_->getWindowManager() && viewer_->getWindowManager()->isFullscreen();
@@ -1881,6 +1887,11 @@ namespace lfs::vis::gui {
         const ImVec2 pos{panel_x, vp->WorkPos.y};
         const ImVec2 size{python_console_width_, panel_h};
         panels::DrawDockedPythonConsole(ctx, pos, size);
+    }
+
+    void GuiManager::renderPythonPanels([[maybe_unused]] const UIContext& ctx) {
+        python::draw_python_panels(python::PanelSpace::Floating);
+        python::draw_python_panels(python::PanelSpace::ViewportOverlay);
     }
 
     void GuiManager::renderStatusBar(const UIContext& ctx) {

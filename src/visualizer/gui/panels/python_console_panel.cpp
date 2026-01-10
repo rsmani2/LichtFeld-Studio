@@ -80,14 +80,14 @@ namespace {
     void execute_python_code(const std::string& code, lfs::vis::gui::panels::PythonConsoleState& state) {
         std::string cmd = code;
 
-        // Trim trailing whitespace
-        while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' ')) {
+        while (!cmd.empty() && (cmd.back() == '\n' || cmd.back() == '\r' || cmd.back() == ' '))
             cmd.pop_back();
-        }
 
-        if (cmd.empty()) {
+        const size_t start = cmd.find_first_not_of(" \t");
+        if (start == std::string::npos)
             return;
-        }
+        if (start > 0)
+            cmd = cmd.substr(start);
 
         state.addToHistory(cmd);
 

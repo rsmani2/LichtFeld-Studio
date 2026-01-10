@@ -13,6 +13,7 @@
 #include "py_scene.hpp"
 #include "py_splat_data.hpp"
 #include "py_tensor.hpp"
+#include "py_ui.hpp"
 
 #include "control/command_api.hpp"
 #include "control/control_boundary.hpp"
@@ -470,6 +471,10 @@ NB_MODULE(lichtfeld, m) {
 
     // Packages submodule (uses uv for package management)
     lfs::python::register_packages(m);
+
+    // UI submodule (ImGui widgets and panel registration)
+    auto ui_module = m.def_submodule("ui", "User interface API");
+    lfs::python::register_ui(ui_module);
 
     // Get scene function - works in both headless (during hooks) and GUI mode
     m.def(

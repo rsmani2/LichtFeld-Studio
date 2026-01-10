@@ -87,6 +87,22 @@ function(fetch_uv)
     endif()
 endfunction()
 
+# Copy uv to build/bin/ for development builds
+function(copy_uv_to_build)
+    if(NOT BUILD_PYTHON_BINDINGS OR NOT EXISTS "${UV_BINARY_PATH}")
+        return()
+    endif()
+
+    set(_DEST_DIR "${CMAKE_BINARY_DIR}/bin")
+    if(EXISTS "${_DEST_DIR}/${UV_BINARY_NAME}")
+        return()
+    endif()
+
+    file(MAKE_DIRECTORY "${_DEST_DIR}")
+    file(COPY "${UV_BINARY_PATH}" DESTINATION "${_DEST_DIR}")
+    message(STATUS "FetchUV: Copied uv to ${_DEST_DIR}/")
+endfunction()
+
 # Function to install uv to the bin directory
 function(install_uv)
     if(NOT BUILD_PYTHON_BINDINGS)

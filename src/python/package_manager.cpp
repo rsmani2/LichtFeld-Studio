@@ -136,25 +136,44 @@ namespace lfs::python {
     }
 
     std::filesystem::path PackageManager::uv_path() const {
+        static std::filesystem::path cached;
+        static bool searched = false;
+
+        if (searched)
+            return cached;
+        searched = true;
+
         const auto exe_dir = get_executable_dir();
+        bool bundled = false;
 
-        if (const auto p = exe_dir / "bin" / UV_BINARY; std::filesystem::exists(p))
-            return p;
-        if (const auto p = exe_dir / UV_BINARY; std::filesystem::exists(p))
-            return p;
-
+        if (const auto p = exe_dir / "bin" / UV_BINARY; std::filesystem::exists(p)) {
+            cached = p;
+            bundled = true;
+        } else if (const auto p = exe_dir / UV_BINARY; std::filesystem::exists(p)) {
+            cached = p;
+            bundled = true;
+        } else {
 #ifdef _WIN32
-        auto [exit_code, result] = execute_command("where uv");
+            auto [exit_code, result] = execute_command("where uv");
 #else
-        auto [exit_code, result] = execute_command("which uv");
+            auto [exit_code, result] = execute_command("which uv");
 #endif
-        if (exit_code == 0 && !result.empty()) {
-            while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
-                result.pop_back();
-            if (std::filesystem::path found(result); std::filesystem::exists(found))
-                return found;
+            if (exit_code == 0 && !result.empty()) {
+                while (!result.empty() && (result.back() == '\n' || result.back() == '\r'))
+                    result.pop_back();
+                if (std::filesystem::path found(result); std::filesystem::exists(found))
+                    cached = found;
+            }
         }
-        return {};
+
+        if (cached.empty())
+            LOG_WARN("uv not found");
+        else if (bundled)
+            LOG_INFO("Using uv: {}", cached.string());
+        else
+            LOG_WARN("Using system uv: {} (bundled version not found)", cached.string());
+
+        return cached;
     }
 
     bool PackageManager::is_uv_available() const {

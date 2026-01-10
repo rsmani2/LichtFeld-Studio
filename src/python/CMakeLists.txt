@@ -17,6 +17,8 @@ add_library(lfs_python_utils STATIC
     package_manager.cpp
     subprocess.cpp
     uv_runner.cpp
+    py_panel_registry.cpp
+    ui_hooks.cpp
 )
 
 target_include_directories(lfs_python_utils
@@ -55,6 +57,7 @@ nanobind_add_module(
     lfs/py_cameras.cpp
     lfs/py_io.cpp
     lfs/py_packages.cpp
+    lfs/py_ui.cpp
 )
 
 set_target_properties(lfs_py PROPERTIES
@@ -101,4 +104,5 @@ nanobind_add_stub(lichtfeld_stub
 # UV package manager for Python package installation support
 include(${CMAKE_SOURCE_DIR}/cmake/FetchUV.cmake)
 fetch_uv()
+copy_uv_to_build()
 install_uv()

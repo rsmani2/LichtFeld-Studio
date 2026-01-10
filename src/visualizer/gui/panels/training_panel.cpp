@@ -14,6 +14,7 @@
 #include "gui/string_keys.hpp"
 #include "gui/ui_widgets.hpp"
 #include "gui/utils/windows_utils.hpp"
+#include "python/ui_hooks.hpp"
 #include "theme/theme.hpp"
 #include "visualizer_impl.hpp"
 
@@ -1459,6 +1460,7 @@ namespace lfs::vis::gui::panels {
     }
 
     void DrawTrainingParams(const UIContext& ctx) {
+        python::invoke_python_hooks("training", "params", true);
 
         auto& state = TrainingPanelState::getInstance();
         const auto& t = theme();
@@ -1482,12 +1484,17 @@ namespace lfs::vis::gui::panels {
                 state.save_in_progress = false;
             }
         }
+
+        python::invoke_python_hooks("training", "params", false);
     }
 
     void DrawTrainingStatus(const UIContext& ctx) {
+        python::invoke_python_hooks("training", "status", true);
+
         auto* trainer_manager = ctx.viewer->getTrainerManager();
         if (!trainer_manager || !trainer_manager->hasTrainer()) {
             ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No trainer loaded");
+            python::invoke_python_hooks("training", "status", false);
             return;
         }
 
@@ -1527,9 +1534,13 @@ namespace lfs::vis::gui::panels {
 
         int num_splats = trainer_manager->getNumSplats();
         ImGui::Text(LOC(Progress::NUM_SPLATS), num_splats);
+
+        python::invoke_python_hooks("training", "status", false);
     }
 
     void DrawTrainingControls(const UIContext& ctx) {
+        python::invoke_python_hooks("training", "controls", true);
+
         ImGui::Separator();
 
         auto& state = TrainingPanelState::getInstance();
@@ -1537,6 +1548,7 @@ namespace lfs::vis::gui::panels {
         auto* trainer_manager = ctx.viewer->getTrainerManager();
         if (!trainer_manager || !trainer_manager->hasTrainer()) {
             ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No trainer loaded");
+            python::invoke_python_hooks("training", "controls", false);
             return;
         }
 
@@ -1685,6 +1697,8 @@ namespace lfs::vis::gui::panels {
                 state.save_in_progress = false;
             }
         }
+
+        python::invoke_python_hooks("training", "controls", false);
     }
 
 } // namespace lfs::vis::gui::panels

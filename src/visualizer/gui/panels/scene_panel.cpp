@@ -16,6 +16,7 @@
 #include "gui/utils/windows_utils.hpp"
 #include "gui/windows/image_preview.hpp"
 #include "internal/resource_paths.hpp"
+#include "python/ui_hooks.hpp"
 #include "rendering/rendering_manager.hpp"
 #include "scene/scene_manager.hpp"
 #include "theme/theme.hpp"
@@ -181,15 +182,19 @@ namespace lfs::vis::gui {
     }
 
     void ScenePanel::renderContent(const UIContext* ctx) {
-        if (m_showImagePreview && m_imagePreview) {
+        python::invoke_python_hooks("scene", "content", true);
+
+        if (m_showImagePreview && m_imagePreview)
             m_imagePreview->render(&m_showImagePreview);
-        }
-        if (hasPLYs(ctx)) {
+
+        if (hasPLYs(ctx))
             renderPLYSceneGraph(ctx);
-        } else {
+        else {
             ImGui::TextDisabled("%s", LOC(lichtfeld::Strings::Scene::NO_DATA_LOADED));
             ImGui::TextDisabled("%s", LOC(lichtfeld::Strings::Scene::USE_FILE_MENU));
         }
+
+        python::invoke_python_hooks("scene", "content", false);
     }
 
     void ScenePanel::renderPLYSceneGraph(const UIContext* ctx) {
