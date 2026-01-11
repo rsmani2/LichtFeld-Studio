@@ -11,6 +11,7 @@
 #include "py_io.hpp"
 #include "py_packages.hpp"
 #include "py_params.hpp"
+#include "py_plugins.hpp"
 #include "py_scene.hpp"
 #include "py_splat_data.hpp"
 #include "py_tensor.hpp"
@@ -479,6 +480,9 @@ NB_MODULE(lichtfeld, m) {
 
     // Parameters (OptimizationParameters with RNA-style property access)
     lfs::python::register_params(m);
+
+    // Plugin system (pure Python implementation, C++ bindings for convenience)
+    lfs::python::register_plugins(m);
 
     // Get scene function - works in both headless (during hooks) and GUI mode
     m.def(

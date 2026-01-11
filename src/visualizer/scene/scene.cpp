@@ -384,15 +384,14 @@ namespace lfs::vis {
         if (model_cache_valid_)
             return;
 
-        LOG_DEBUG("rebuildModelCacheIfNeeded - rebuilding combined model");
-
-        // Collect visible nodes
         std::vector<const Node*> visible_nodes;
         for (const auto& node : nodes_) {
             if (node->model && isNodeEffectivelyVisible(node->id)) {
                 visible_nodes.push_back(node.get());
             }
         }
+
+        LOG_DEBUG("rebuildModelCache: {} visible of {} nodes", visible_nodes.size(), nodes_.size());
 
         if (visible_nodes.empty()) {
             cached_combined_.reset();

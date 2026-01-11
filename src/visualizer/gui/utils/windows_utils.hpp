@@ -47,4 +47,7 @@ namespace lfs::vis::gui {
     std::filesystem::path OpenPythonFileDialog(const std::filesystem::path& startDir = {});
     std::filesystem::path SavePythonFileDialog(const std::string& defaultName);
 
+    // Image file dialog
+    std::filesystem::path OpenImageFileDialog(const std::filesystem::path& startDir = {});
+
 } // namespace lfs::vis::gui

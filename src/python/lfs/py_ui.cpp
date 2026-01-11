@@ -6,6 +6,7 @@
 #include "control/command_api.hpp"
 #include "core/logger.hpp"
 #include "core/property_registry.hpp"
+#include "gui/utils/windows_utils.hpp"
 #include "py_params.hpp"
 #include "python/ui_hooks.hpp"
 #include "visualizer/theme/theme.hpp"
@@ -1050,6 +1051,20 @@ namespace lfs::python {
             },
             nb::arg("panel"), nb::arg("section"), nb::arg("position") = "append",
             "Decorator to register a function as a UI hook");
+
+        // File dialogs
+        m.def(
+            "open_image_dialog",
+            [](const std::string& start_dir) -> std::string {
+                std::filesystem::path start_path;
+                if (!start_dir.empty()) {
+                    start_path = start_dir;
+                }
+                auto result = lfs::vis::gui::OpenImageFileDialog(start_path);
+                return result.empty() ? "" : result.string();
+            },
+            nb::arg("start_dir") = "",
+            "Open a file dialog to select an image file. Returns empty string if cancelled.");
 
         // Register callbacks for the visualizer to call into the Python panel system
         set_panel_draw_callback([](PanelSpace space) {

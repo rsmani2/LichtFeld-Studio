@@ -220,6 +220,11 @@ namespace lfs::vis::terminal {
                 if (!sel.empty())
                     ImGui::SetClipboardText(sel.c_str());
             }
+            if (ImGui::MenuItem("Copy All")) {
+                const std::string all = getAllText();
+                if (!all.empty())
+                    ImGui::SetClipboardText(all.c_str());
+            }
             if (!read_only_ && ImGui::MenuItem("Paste", "Ctrl+Shift+V")) {
                 if (const char* clipboard = ImGui::GetClipboardText()) {
                     paste(clipboard);
@@ -507,6 +512,57 @@ namespace lfs::vis::terminal {
             if (row < end.row)
                 result += '\n';
         }
+        return result;
+    }
+
+    std::string TerminalWidget::getAllText() const {
+        std::string result;
+        result.reserve(scrollback_.size() * cols_ + rows_ * cols_);
+
+        for (auto it = scrollback_.rbegin(); it != scrollback_.rend(); ++it) {
+            const auto& line = *it;
+            std::string row_text;
+            for (size_t col = 0; col < line.cells.size(); ++col) {
+                const auto& cell = line.cells[col];
+                if (cell.chars[0]) {
+                    char utf8[4];
+                    const size_t len = encodeUtf8(cell.chars[0], utf8);
+                    if (len > 0)
+                        row_text.append(utf8, len);
+                } else {
+                    row_text += ' ';
+                }
+            }
+            while (!row_text.empty() && row_text.back() == ' ')
+                row_text.pop_back();
+            result += row_text;
+            result += '\n';
+        }
+
+        for (int row = 0; row < rows_; ++row) {
+            std::string row_text;
+            for (int col = 0; col < cols_; ++col) {
+                VTermScreenCell cell;
+                vterm_screen_get_cell(screen_, {row, col}, &cell);
+                if (cell.chars[0]) {
+                    char utf8[4];
+                    const size_t len = encodeUtf8(cell.chars[0], utf8);
+                    if (len > 0)
+                        row_text.append(utf8, len);
+                } else {
+                    row_text += ' ';
+                }
+            }
+            while (!row_text.empty() && row_text.back() == ' ')
+                row_text.pop_back();
+            result += row_text;
+            if (row < rows_ - 1)
+                result += '\n';
+        }
+
+        while (!result.empty() && (result.back() == '\n' || result.back() == ' '))
+            result.pop_back();
+
         return result;
     }
 

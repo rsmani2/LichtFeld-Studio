@@ -44,7 +44,7 @@ namespace lfs::vis {
         }
         bool isEmpty() const {
             std::lock_guard<std::mutex> lock(state_mutex_);
-            return content_type_ == ContentType::Empty;
+            return content_type_ == ContentType::Empty && !scene_.hasNodes();
         }
 
         bool hasSplatFiles() const {

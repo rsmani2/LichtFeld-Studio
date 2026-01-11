@@ -15,8 +15,8 @@ namespace lfs::python {
 
     class UvRunner {
     public:
-        // is_line_update: true if this line should replace the previous one (\r progress)
         using OutputCallback = std::function<void(const std::string&, bool is_stderr, bool is_line_update)>;
+        using RawOutputCallback = std::function<void(const std::string&)>;
         using CompletionCallback = std::function<void(bool success, int exit_code)>;
 
         UvRunner() = default;
@@ -41,8 +41,8 @@ namespace lfs::python {
         [[nodiscard]] bool is_complete() const { return complete_.load(); }
         [[nodiscard]] int exit_code() const { return exit_code_; }
 
-        // Set callbacks (must be set before start())
         void set_output_callback(OutputCallback cb) { output_callback_ = std::move(cb); }
+        void set_raw_output_callback(RawOutputCallback cb) { raw_output_callback_ = std::move(cb); }
         void set_completion_callback(CompletionCallback cb) { completion_callback_ = std::move(cb); }
 
     private:
@@ -52,6 +52,7 @@ namespace lfs::python {
         SubProcess process_;
         std::string output_buffer_;
         OutputCallback output_callback_;
+        RawOutputCallback raw_output_callback_;
         CompletionCallback completion_callback_;
         std::atomic<bool> running_{false};
         std::atomic<bool> complete_{false};

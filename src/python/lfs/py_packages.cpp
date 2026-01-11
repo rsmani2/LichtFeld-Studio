@@ -103,20 +103,15 @@ namespace lfs::python {
                 if (!pm.ensure_venv())
                     throw std::runtime_error("Failed to create venv");
 
-                return pm.install_async(
+                return pm.install_async_raw(
                     package,
-                    [](const std::string& line, bool is_error, bool is_line_update) {
-                        if (is_line_update)
-                            write_output("\r" + line + "\033[K", is_error);
-                        else
-                            write_output(line + "\r\n", is_error);
-                    },
+                    [](const std::string& data) { write_output(data, false); },
                     [package](bool success, int exit_code) {
                         if (success) {
-                            write_output("Installed " + package + "\r\n", false);
+                            write_output("\nInstalled " + package + "\n", false);
                         } else {
-                            write_output("Failed to install " + package + " (exit " +
-                                             std::to_string(exit_code) + ")\r\n",
+                            write_output("\nFailed to install " + package + " (exit " +
+                                             std::to_string(exit_code) + ")\n",
                                          true);
                         }
                     });
@@ -132,20 +127,15 @@ namespace lfs::python {
                 if (!pm.ensure_venv())
                     throw std::runtime_error("Failed to create venv");
 
-                return pm.install_torch_async(
+                return pm.install_torch_async_raw(
                     cuda, version,
-                    [](const std::string& line, bool is_error, bool is_line_update) {
-                        if (is_line_update)
-                            write_output("\r" + line + "\033[K", is_error);
-                        else
-                            write_output(line + "\r\n", is_error);
-                    },
+                    [](const std::string& data) { write_output(data, false); },
                     [](bool success, int exit_code) {
                         if (success) {
-                            write_output("PyTorch installed successfully\r\n", false);
+                            write_output("\nPyTorch installed successfully\n", false);
                         } else {
-                            write_output("Failed to install PyTorch (exit " +
-                                             std::to_string(exit_code) + ")\r\n",
+                            write_output("\nFailed to install PyTorch (exit " +
+                                             std::to_string(exit_code) + ")\n",
                                          true);
                         }
                     });

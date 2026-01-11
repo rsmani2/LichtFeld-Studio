@@ -41,8 +41,12 @@ namespace lfs::vis::editor {
         void historyDown();
 
         // Focus management
-        void focus() { request_focus_ = true; }
-        bool isFocused() const { return is_focused_; }
+        void focus() {
+            request_focus_ = true;
+            force_unfocused_ = false;
+        }
+        void unfocus() { force_unfocused_ = true; }
+        bool isFocused() const { return is_focused_ && !force_unfocused_; }
 
         // Read-only mode (prevents keyboard input)
         void setReadOnly(bool readonly);
@@ -60,6 +64,7 @@ namespace lfs::vis::editor {
         bool execute_requested_ = false;
         bool request_focus_ = false;
         bool is_focused_ = false;
+        bool force_unfocused_ = false;
         bool autocomplete_triggered_ = false;
 
         // Command history

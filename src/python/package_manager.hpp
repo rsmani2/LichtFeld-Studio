@@ -60,6 +60,15 @@ namespace lfs::python {
                                  UvRunner::OutputCallback on_output = nullptr,
                                  UvRunner::CompletionCallback on_complete = nullptr);
 
+        bool install_async_raw(const std::string& package,
+                               UvRunner::RawOutputCallback on_output = nullptr,
+                               UvRunner::CompletionCallback on_complete = nullptr);
+
+        bool install_torch_async_raw(const std::string& cuda_version = "auto",
+                                     const std::string& torch_version = "",
+                                     UvRunner::RawOutputCallback on_output = nullptr,
+                                     UvRunner::CompletionCallback on_complete = nullptr);
+
         // Poll for async operation progress (call from render loop)
         // Returns true if operation is still running
         bool poll();

@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later */
 
 #include "py_scene.hpp"
+#include "core/events.hpp"
 #include <nanobind/ndarray.h>
 
 namespace lfs::python {
@@ -122,9 +123,9 @@ namespace lfs::python {
                                const PyTensor& scaling,
                                const PyTensor& rotation,
                                const PyTensor& opacity,
-                               int sh_degree,
-                               float scene_scale,
-                               int32_t parent) {
+                               const int sh_degree,
+                               const float scene_scale,
+                               const int32_t parent) {
         auto splat = std::make_unique<core::SplatData>(
             sh_degree,
             means.tensor().clone(),
@@ -134,7 +135,21 @@ namespace lfs::python {
             rotation.tensor().clone(),
             opacity.tensor().clone(),
             scene_scale);
-        return scene_->addSplat(name, std::move(splat), parent);
+
+        const size_t gaussian_count = splat->size();
+        const int32_t node_id = scene_->addSplat(name, std::move(splat), parent);
+
+        lfs::core::events::state::PLYAdded{
+            .name = name,
+            .node_gaussians = gaussian_count,
+            .total_gaussians = scene_->getTotalGaussianCount(),
+            .is_visible = true,
+            .parent_name = "",
+            .is_group = false,
+            .node_type = 0}
+            .emit();
+
+        return node_id;
     }
 
     void PyScene::remove_node(const std::string& name, bool keep_children) {

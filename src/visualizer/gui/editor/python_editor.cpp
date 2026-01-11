@@ -50,12 +50,15 @@ namespace lfs::vis::editor {
             }
         }
 
-        // Render editor
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(4, 4));
-        editor_.Render("##python_input", true, size, true);
+        editor_.Render("##python_input", !force_unfocused_, size, true);
         ImGui::PopStyleVar();
 
         is_focused_ = ImGui::IsItemFocused() || ImGui::IsWindowFocused(ImGuiFocusedFlags_ChildWindows);
+
+        if (is_focused_ && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            force_unfocused_ = false;
+        }
 
         // Handle post-render input (Ctrl+Space, history)
         if (is_focused_) {

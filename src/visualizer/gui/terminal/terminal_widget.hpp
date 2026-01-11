@@ -42,6 +42,7 @@ namespace lfs::vis::terminal {
 
         // Copy/paste
         [[nodiscard]] std::string getSelection() const;
+        [[nodiscard]] std::string getAllText() const;
         void paste(const std::string& text);
 
         // Clear screen (sends Ctrl+L to PTY, or resets vterm if no PTY)

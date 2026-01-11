@@ -454,6 +454,9 @@ namespace lfs::vis::gui::panels {
                 if (ImGui::MenuItem("Open...", "Ctrl+O")) {
                     open_script_dialog(state);
                 }
+                if (ImGui::MenuItem("Reload", "Ctrl+Shift+O", false, !state.getScriptPath().empty())) {
+                    load_script(state.getScriptPath(), state);
+                }
                 if (ImGui::MenuItem("Save", "Ctrl+S")) {
                     save_current_script(state);
                 }
@@ -470,6 +473,11 @@ namespace lfs::vis::gui::panels {
                 if (ImGui::MenuItem("Copy Selection")) {
                     if (auto* output = state.getOutputTerminal()) {
                         ImGui::SetClipboardText(output->getSelection().c_str());
+                    }
+                }
+                if (ImGui::MenuItem("Copy All")) {
+                    if (auto* output = state.getOutputTerminal()) {
+                        ImGui::SetClipboardText(output->getAllText().c_str());
                     }
                 }
                 ImGui::EndMenu();
@@ -843,6 +851,26 @@ namespace lfs::vis::gui::panels {
         }
         if (ImGui::IsItemHovered())
             ImGui::SetTooltip("Load script (Ctrl+O)");
+
+        ImGui::SameLine();
+
+        // Reload button
+        const bool has_script = !state.getScriptPath().empty();
+        if (!has_script)
+            ImGui::BeginDisabled();
+        if (ImGui::Button("Reload")) {
+            if (has_script) {
+                load_script(state.getScriptPath(), state);
+            }
+        }
+        if (!has_script)
+            ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
+            if (has_script)
+                ImGui::SetTooltip("Reload: %s", state.getScriptPath().filename().string().c_str());
+            else
+                ImGui::SetTooltip("No script loaded");
+        }
 
         ImGui::SameLine();
 

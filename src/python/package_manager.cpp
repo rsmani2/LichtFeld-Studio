@@ -456,6 +456,67 @@ namespace lfs::python {
         return m_runner->start(args);
     }
 
+    bool PackageManager::install_async_raw(const std::string& package,
+                                           UvRunner::RawOutputCallback on_output,
+                                           UvRunner::CompletionCallback on_complete) {
+        if (!ensure_venv())
+            return false;
+
+        if (!m_runner) {
+            m_runner = std::make_unique<UvRunner>();
+        }
+
+        if (m_runner->is_running()) {
+            LOG_ERROR("Another UV operation is already running");
+            return false;
+        }
+
+        LOG_INFO("Installing {} (async raw)", package);
+
+        m_runner->set_raw_output_callback(std::move(on_output));
+        m_runner->set_completion_callback(std::move(on_complete));
+
+        return m_runner->start({"pip", "install", package, "--python", venv_python().string()});
+    }
+
+    bool PackageManager::install_torch_async_raw(const std::string& cuda_version,
+                                                 const std::string& torch_version,
+                                                 UvRunner::RawOutputCallback on_output,
+                                                 UvRunner::CompletionCallback on_complete) {
+        if (!ensure_venv())
+            return false;
+
+        if (!m_runner) {
+            m_runner = std::make_unique<UvRunner>();
+        }
+
+        if (m_runner->is_running()) {
+            LOG_ERROR("Another UV operation is already running");
+            return false;
+        }
+
+        const std::string cuda_tag = core::get_pytorch_cuda_tag(cuda_version);
+        LOG_INFO("PyTorch CUDA tag (async raw): {}", cuda_tag);
+
+        std::string package = "torch";
+        if (!torch_version.empty())
+            package += "==" + torch_version;
+
+        const std::string index_url = std::string(PYTORCH_INDEX) + cuda_tag;
+
+        LOG_INFO("Installing {} from {} (async raw)", package, cuda_tag);
+
+        m_runner->set_raw_output_callback(std::move(on_output));
+        m_runner->set_completion_callback(std::move(on_complete));
+
+        std::vector<std::string> args = {"pip", "install", package, "--extra-index-url", index_url,
+                                         "--python", venv_python().string()};
+        if (torch_version.empty())
+            args.push_back("--upgrade");
+
+        return m_runner->start(args);
+    }
+
     bool PackageManager::poll() {
         if (!m_runner) {
             return false;

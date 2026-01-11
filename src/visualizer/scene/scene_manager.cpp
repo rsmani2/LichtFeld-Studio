@@ -1407,13 +1407,14 @@ namespace lfs::vis {
     const lfs::core::SplatData* SceneManager::getModelForRendering() const {
         std::lock_guard<std::mutex> lock(state_mutex_);
 
-        if (content_type_ == ContentType::SplatFiles) {
+        switch (content_type_) {
+        case ContentType::SplatFiles:
             return scene_.getCombinedModel();
-        } else if (content_type_ == ContentType::Dataset) {
-            // For dataset mode, get model from scene directly (Scene owns the model)
+        case ContentType::Dataset:
             return scene_.getTrainingModel();
+        case ContentType::Empty:
+            return scene_.hasNodes() ? scene_.getCombinedModel() : nullptr;
         }
-
         return nullptr;
     }
 

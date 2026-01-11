@@ -6,6 +6,10 @@
 
 #include <functional>
 
+namespace lfs::vis {
+    class Scene;
+}
+
 namespace lfs::python {
 
     // Panel space types
@@ -26,12 +30,9 @@ namespace lfs::python {
     void set_python_cleanup_callback(CleanupCallback cb);
     void clear_panel_callbacks();
 
-    // C++ interface for the visualizer to call into the Python panel system
-    // This header does NOT depend on nanobind
-    void draw_python_panels(PanelSpace space);
+    // C++ interface for the visualizer
+    void draw_python_panels(PanelSpace space, lfs::vis::Scene* scene = nullptr);
     bool has_python_panels(PanelSpace space);
-
-    // Called during Python finalize to clean up singletons holding nb::object
     void invoke_python_cleanup();
 
 } // namespace lfs::python

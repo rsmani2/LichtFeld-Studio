@@ -17,6 +17,7 @@
 #include "core/sogs.hpp"
 #include "core/splat_data_export.hpp"
 #include "gui/dpi_scale.hpp"
+#include "gui/editor/python_editor.hpp"
 #include "gui/html_viewer_export.hpp"
 #include "gui/localization_manager.hpp"
 #include "gui/panels/main_panel.hpp"
@@ -584,6 +585,13 @@ namespace lfs::vis::gui {
 
         ImGui::NewFrame();
 
+        if (ImGui::IsKeyPressed(ImGuiKey_Escape) && !ImGui::IsPopupOpen("", ImGuiPopupFlags_AnyPopupId)) {
+            ImGui::ClearActiveID();
+            if (auto* editor = panels::PythonConsoleState::getInstance().getEditor()) {
+                editor->unfocus();
+            }
+        }
+
         // Check for async import completion (must happen on main thread)
         checkAsyncImportCompletion();
 
@@ -627,6 +635,14 @@ namespace lfs::vis::gui {
             if (ImGui::IsMouseDown(ImGuiMouseButton_Right) ||
                 ImGui::IsMouseDown(ImGuiMouseButton_Middle)) {
                 ImGui::GetIO().WantCaptureMouse = false;
+            }
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) ||
+                ImGui::IsMouseClicked(ImGuiMouseButton_Right)) {
+                ImGui::ClearActiveID();
+                ImGui::GetIO().WantCaptureKeyboard = false;
+                if (auto* editor = panels::PythonConsoleState::getInstance().getEditor()) {
+                    editor->unfocus();
+                }
             }
         }
 
@@ -1889,8 +1905,12 @@ namespace lfs::vis::gui {
     }
 
     void GuiManager::renderPythonPanels([[maybe_unused]] const UIContext& ctx) {
-        python::draw_python_panels(python::PanelSpace::Floating);
-        python::draw_python_panels(python::PanelSpace::ViewportOverlay);
+        lfs::vis::Scene* scene = nullptr;
+        if (auto* sm = ctx.viewer->getSceneManager()) {
+            scene = &sm->getScene();
+        }
+        python::draw_python_panels(python::PanelSpace::Floating, scene);
+        python::draw_python_panels(python::PanelSpace::ViewportOverlay, scene);
     }
 
     void GuiManager::renderStatusBar(const UIContext& ctx) {
