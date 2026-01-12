@@ -130,6 +130,15 @@ nanobind_add_stub(lichtfeld_stub
     MARKER_FILE ${CMAKE_CURRENT_BINARY_DIR}/lichtfeld/py.typed
 )
 
+# Copy lfs_plugins Python module to build directory
+file(GLOB LFS_PLUGINS_FILES "${CMAKE_CURRENT_SOURCE_DIR}/lfs_plugins/*.py")
+add_custom_target(lfs_plugins_copy ALL
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_CURRENT_BINARY_DIR}/lfs_plugins
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${LFS_PLUGINS_FILES} ${CMAKE_CURRENT_BINARY_DIR}/lfs_plugins/
+    COMMENT "Copying lfs_plugins Python module"
+)
+add_dependencies(lfs_py lfs_plugins_copy)
+
 # UV package manager for Python package installation support
 include(${CMAKE_SOURCE_DIR}/cmake/FetchUV.cmake)
 fetch_uv()

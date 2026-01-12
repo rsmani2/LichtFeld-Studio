@@ -133,20 +133,18 @@ sys.stderr = OutputCapture(True)
                 Py_DECREF(py_path);
                 LOG_INFO("Added user packages dir to Python path: {}", user_packages.string());
 
-                const std::filesystem::path scripts_dir = std::filesystem::path(PROJECT_ROOT_PATH) / "scripts";
-                if (std::filesystem::exists(scripts_dir)) {
-                    PyObject* const scripts_path = PyUnicode_FromString(scripts_dir.string().c_str());
-                    PyList_Insert(sys_path, 0, scripts_path);
-                    Py_DECREF(scripts_path);
-                    LOG_DEBUG("Added scripts dir to Python path: {}", scripts_dir.string());
-                }
-
                 const std::filesystem::path build_py_dir = std::filesystem::path(PROJECT_ROOT_PATH) / "build" / "src" / "python";
                 if (std::filesystem::exists(build_py_dir)) {
                     PyObject* const build_path = PyUnicode_FromString(build_py_dir.string().c_str());
                     PyList_Insert(sys_path, 0, build_path);
                     Py_DECREF(build_path);
-                    LOG_DEBUG("Added build dir to Python path: {}", build_py_dir.string());
+                }
+
+                const std::filesystem::path src_py_dir = std::filesystem::path(PROJECT_ROOT_PATH) / "src" / "python";
+                if (std::filesystem::exists(src_py_dir)) {
+                    PyObject* const src_path = PyUnicode_FromString(src_py_dir.string().c_str());
+                    PyList_Insert(sys_path, 0, src_path);
+                    Py_DECREF(src_path);
                 }
             }
 
