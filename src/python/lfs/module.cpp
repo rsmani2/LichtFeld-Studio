@@ -19,6 +19,8 @@
 
 #include "control/command_api.hpp"
 #include "control/control_boundary.hpp"
+#include "core/event_bridge/command_center_bridge.hpp"
+#include "core/event_bridge/scoped_handler.hpp"
 #include "core/events.hpp"
 #include "core/logger.hpp"
 #include "python/runner.hpp"
@@ -49,7 +51,14 @@ namespace {
     using lfs::training::TrainingPhase;
     using lfs::training::TrainingSnapshot;
 
-    // RAII session that registers Python callbacks to the control boundary
+    CommandCenter& get_command_center() {
+        auto* cc = lfs::event::command_center();
+        if (!cc) {
+            throw std::runtime_error("Training system not initialized");
+        }
+        return *cc;
+    }
+
     class PyControlSession {
     public:
         PyControlSession() = default;
@@ -91,10 +100,54 @@ namespace {
         std::vector<nb::object> owned_callbacks_;
     };
 
-    // Context view for reading training state - caches snapshot for efficiency
+    class PyScopedHandler {
+    public:
+        PyScopedHandler() = default;
+        ~PyScopedHandler() = default;
+
+        PyScopedHandler(const PyScopedHandler&) = delete;
+        PyScopedHandler& operator=(const PyScopedHandler&) = delete;
+        PyScopedHandler(PyScopedHandler&&) = default;
+        PyScopedHandler& operator=(PyScopedHandler&&) = default;
+
+        void on_training_start(nb::callable cb) { add_hook(ControlHook::TrainingStart, cb); }
+        void on_iteration_start(nb::callable cb) { add_hook(ControlHook::IterationStart, cb); }
+        void on_pre_optimizer_step(nb::callable cb) { add_hook(ControlHook::PreOptimizerStep, cb); }
+        void on_post_step(nb::callable cb) { add_hook(ControlHook::PostStep, cb); }
+        void on_training_end(nb::callable cb) { add_hook(ControlHook::TrainingEnd, cb); }
+
+        void clear() {
+            handler_ = lfs::event::ScopedHandler();
+            owned_callbacks_.clear();
+        }
+
+    private:
+        void add_hook(ControlHook hook, nb::callable cb) {
+            nb::object fn = nb::cast<nb::object>(cb);
+            owned_callbacks_.push_back(fn);
+
+            handler_.subscribe_hook(hook, [fn](const HookContext& ctx) {
+                nb::gil_scoped_acquire gil;
+                try {
+                    nb::dict d;
+                    d["iter"] = ctx.iteration;
+                    d["loss"] = ctx.loss;
+                    d["num_splats"] = ctx.num_gaussians;
+                    d["is_refining"] = ctx.is_refining;
+                    fn(d);
+                } catch (const std::exception& e) {
+                    LOG_ERROR("Python hook error: {}", e.what());
+                }
+            });
+        }
+
+        lfs::event::ScopedHandler handler_;
+        std::vector<nb::object> owned_callbacks_;
+    };
+
     class PyContextView {
     public:
-        PyContextView() : snapshot_(CommandCenter::instance().snapshot()) {
+        PyContextView() : snapshot_(get_command_center().snapshot()) {
             if (snapshot_.trainer) {
                 strategy_ = snapshot_.trainer->getParams().optimization.strategy;
             }
@@ -123,7 +176,7 @@ namespace {
         std::string strategy() const { return strategy_; }
 
         void refresh() {
-            snapshot_ = CommandCenter::instance().snapshot();
+            snapshot_ = get_command_center().snapshot();
             if (snapshot_.trainer) {
                 strategy_ = snapshot_.trainer->getParams().optimization.strategy;
             } else {
@@ -136,24 +189,23 @@ namespace {
         std::string strategy_ = "none";
     };
 
-    // Gaussians info view
     struct PyGaussiansView {
         std::size_t count() const {
-            const auto snap = CommandCenter::instance().snapshot();
+            const auto snap = get_command_center().snapshot();
             if (!snap.trainer)
                 return 0;
             return snap.trainer->get_strategy_mutable().get_model().size();
         }
 
         int sh_degree() const {
-            const auto snap = CommandCenter::instance().snapshot();
+            const auto snap = get_command_center().snapshot();
             if (!snap.trainer)
                 return 0;
             return snap.trainer->get_strategy_mutable().get_model().get_active_sh_degree();
         }
 
         int max_sh_degree() const {
-            const auto snap = CommandCenter::instance().snapshot();
+            const auto snap = get_command_center().snapshot();
             if (!snap.trainer)
                 return 0;
             return snap.trainer->get_strategy_mutable().get_model().get_max_sh_degree();
@@ -168,7 +220,7 @@ namespace {
             cmd.target = CommandTarget::Optimizer;
             cmd.selection = {SelectionKind::All};
             cmd.args["factor"] = static_cast<double>(factor);
-            const auto result = CommandCenter::instance().execute(cmd);
+            const auto result = get_command_center().execute(cmd);
             if (!result) {
                 throw std::runtime_error(std::format("scale_lr failed: {}", result.error()));
             }
@@ -180,14 +232,14 @@ namespace {
             cmd.target = CommandTarget::Optimizer;
             cmd.selection = {SelectionKind::All};
             cmd.args["value"] = static_cast<double>(value);
-            const auto result = CommandCenter::instance().execute(cmd);
+            const auto result = get_command_center().execute(cmd);
             if (!result) {
                 throw std::runtime_error(std::format("set_lr failed: {}", result.error()));
             }
         }
 
         float get_lr() const {
-            const auto snap = CommandCenter::instance().snapshot();
+            const auto snap = get_command_center().snapshot();
             if (!snap.trainer)
                 return 0.0f;
             return snap.trainer->get_strategy_mutable().get_optimizer().get_lr();
@@ -206,7 +258,7 @@ namespace {
                 cmd.args["min"] = static_cast<double>(*min_val);
             if (max_val)
                 cmd.args["max"] = static_cast<double>(*max_val);
-            const auto result = CommandCenter::instance().execute(cmd);
+            const auto result = get_command_center().execute(cmd);
             if (!result) {
                 throw std::runtime_error(std::format("clamp failed: {}", result.error()));
             }
@@ -219,7 +271,7 @@ namespace {
             cmd.selection = {SelectionKind::All};
             cmd.args["attribute"] = attr;
             cmd.args["factor"] = static_cast<double>(factor);
-            const auto result = CommandCenter::instance().execute(cmd);
+            const auto result = get_command_center().execute(cmd);
             if (!result) {
                 throw std::runtime_error(std::format("scale failed: {}", result.error()));
             }
@@ -232,7 +284,7 @@ namespace {
             cmd.selection = {SelectionKind::All};
             cmd.args["attribute"] = attr;
             cmd.args["value"] = static_cast<double>(value);
-            const auto result = CommandCenter::instance().execute(cmd);
+            const auto result = get_command_center().execute(cmd);
             if (!result) {
                 throw std::runtime_error(std::format("set failed: {}", result.error()));
             }
@@ -249,7 +301,7 @@ namespace {
             cmd.op = "pause";
             cmd.target = CommandTarget::Session;
             cmd.selection = {SelectionKind::All};
-            const auto result = CommandCenter::instance().execute(cmd);
+            const auto result = get_command_center().execute(cmd);
             if (!result) {
                 throw std::runtime_error(std::format("pause failed: {}", result.error()));
             }
@@ -260,7 +312,7 @@ namespace {
             cmd.op = "resume";
             cmd.target = CommandTarget::Session;
             cmd.selection = {SelectionKind::All};
-            const auto result = CommandCenter::instance().execute(cmd);
+            const auto result = get_command_center().execute(cmd);
             if (!result) {
                 throw std::runtime_error(std::format("resume failed: {}", result.error()));
             }
@@ -271,7 +323,7 @@ namespace {
             cmd.op = "request_stop";
             cmd.target = CommandTarget::Session;
             cmd.selection = {SelectionKind::All};
-            const auto result = CommandCenter::instance().execute(cmd);
+            const auto result = get_command_center().execute(cmd);
             if (!result) {
                 throw std::runtime_error(std::format("request_stop failed: {}", result.error()));
             }
@@ -369,6 +421,20 @@ NB_MODULE(lichtfeld, m) {
         .def("on_post_step", &PyControlSession::on_post_step, "Register post-step callback")
         .def("on_training_end", &PyControlSession::on_training_end, "Register training end callback")
         .def("clear", &PyControlSession::clear, "Unregister all callbacks");
+
+    nb::class_<PyScopedHandler>(m, "ScopedHandler")
+        .def(nb::init<>())
+        .def("on_training_start", &PyScopedHandler::on_training_start, nb::arg("callback"),
+             "Register training start callback")
+        .def("on_iteration_start", &PyScopedHandler::on_iteration_start, nb::arg("callback"),
+             "Register iteration start callback")
+        .def("on_pre_optimizer_step", &PyScopedHandler::on_pre_optimizer_step, nb::arg("callback"),
+             "Register pre-optimizer callback")
+        .def("on_post_step", &PyScopedHandler::on_post_step, nb::arg("callback"),
+             "Register post-step callback")
+        .def("on_training_end", &PyScopedHandler::on_training_end, nb::arg("callback"),
+             "Register training end callback")
+        .def("clear", &PyScopedHandler::clear, "Unregister all callbacks");
 
     // Context view class (caches snapshot on creation, call refresh() to update)
     nb::class_<PyContextView>(m, "Context")
@@ -729,6 +795,11 @@ Hooks (decorators):
   @lf.on_pre_optimizer_step
   @lf.on_training_end
 
+Plugin Hooks (RAII):
+  handler = lf.ScopedHandler()
+  handler.on_iteration_start(callback)
+  # Auto-unregisters when handler is destroyed
+
 Utilities:
   lf.run("script.py") - Execute a Python script file
   lf.help()           - Show this help
@@ -760,7 +831,7 @@ Example:
         "context", "gaussians", "session", "get_scene",
         "train_cameras", "val_cameras",
         // Types
-        "Tensor", "Hook",
+        "Tensor", "Hook", "ScopedHandler",
         // Hook decorators
         "on_training_start", "on_iteration_start",
         "on_post_step", "on_pre_optimizer_step", "on_training_end",

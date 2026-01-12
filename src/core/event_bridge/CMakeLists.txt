@@ -6,12 +6,21 @@
 
 add_library(lfs_event_bridge SHARED
     event_bridge.cpp
+    control_boundary.cpp
+    command_center_bridge.cpp
+    scoped_handler.cpp
 )
 
 target_include_directories(lfs_event_bridge
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
         ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/src/core/include
+)
+
+target_link_libraries(lfs_event_bridge
+    PUBLIC
+        CUDA::cudart
 )
 
 target_compile_definitions(lfs_event_bridge

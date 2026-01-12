@@ -4,7 +4,9 @@
 
 #include "app/application.hpp"
 #include "app/splash_screen.hpp"
+#include "control/command_api.hpp"
 #include "core/cuda_version.hpp"
+#include "core/event_bridge/command_center_bridge.hpp"
 #include "core/logger.hpp"
 #include "core/path_utils.hpp"
 #include "core/tensor/internal/memory_pool.hpp"
@@ -40,6 +42,8 @@ namespace lfs::app {
             }
 
             checkCudaDriverVersion();
+            lfs::event::CommandCenterBridge::instance().set(&lfs::training::CommandCenter::instance());
+
             LOG_INFO("Starting headless training...");
 
             vis::Scene scene;
@@ -138,6 +142,8 @@ namespace lfs::app {
             } else {
                 SplashScreen::runWithDelay([]() { warmupCuda(); return 0; });
             }
+
+            lfs::event::CommandCenterBridge::instance().set(&lfs::training::CommandCenter::instance());
 
             auto viewer = vis::Visualizer::create({
                 .title = "LichtFeld Studio",

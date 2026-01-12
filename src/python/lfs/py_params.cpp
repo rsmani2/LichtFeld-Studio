@@ -5,6 +5,7 @@
 #include "py_params.hpp"
 
 #include "control/command_api.hpp"
+#include "core/event_bridge/command_center_bridge.hpp"
 #include "core/logger.hpp"
 
 #include <nanobind/stl/optional.h>
@@ -229,14 +230,17 @@ namespace lfs::python {
     }
 
     void PyOptimizationParams::refresh() {
-        auto snap = CommandCenter::instance().snapshot();
-        if (snap.trainer) {
-            params_ = snap.trainer->getParams().optimization;
-            has_active_trainer_ = true;
-        } else {
-            params_ = OptimizationParameters{};
-            has_active_trainer_ = false;
+        const auto* cc = lfs::event::command_center();
+        if (cc) {
+            const auto snap = cc->snapshot();
+            if (snap.trainer) {
+                params_ = snap.trainer->getParams().optimization;
+                has_active_trainer_ = true;
+                return;
+            }
         }
+        params_ = OptimizationParameters{};
+        has_active_trainer_ = false;
     }
 
     core::param::OptimizationParameters& PyOptimizationParams::params() {

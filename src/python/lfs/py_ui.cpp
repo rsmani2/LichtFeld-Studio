@@ -4,6 +4,7 @@
 
 #include "py_ui.hpp"
 #include "control/command_api.hpp"
+#include "core/event_bridge/command_center_bridge.hpp"
 #include "core/logger.hpp"
 #include "core/property_registry.hpp"
 #include "gui/utils/windows_utils.hpp"
@@ -29,9 +30,9 @@ namespace lfs::python {
         }
     } // namespace
 
-    // PyPanelContext implementation
     bool PyPanelContext::is_training() const {
-        return CommandCenter::instance().snapshot().is_running;
+        const auto* cc = lfs::event::command_center();
+        return cc ? cc->snapshot().is_running : false;
     }
 
     bool PyPanelContext::has_scene() const {
@@ -45,15 +46,18 @@ namespace lfs::python {
     }
 
     size_t PyPanelContext::num_gaussians() const {
-        return CommandCenter::instance().snapshot().num_gaussians;
+        const auto* cc = lfs::event::command_center();
+        return cc ? cc->snapshot().num_gaussians : 0;
     }
 
     int PyPanelContext::iteration() const {
-        return CommandCenter::instance().snapshot().iteration;
+        const auto* cc = lfs::event::command_center();
+        return cc ? cc->snapshot().iteration : 0;
     }
 
     float PyPanelContext::loss() const {
-        return CommandCenter::instance().snapshot().loss;
+        const auto* cc = lfs::event::command_center();
+        return cc ? cc->snapshot().loss : 0.0f;
     }
 
     // PyUILayout implementation - Text
