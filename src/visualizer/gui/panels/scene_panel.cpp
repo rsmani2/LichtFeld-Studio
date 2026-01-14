@@ -660,6 +660,10 @@ namespace lfs::vis::gui {
                 }
 
                 if (is_cropbox) {
+                    if (ImGui::MenuItem(LOC(lichtfeld::Strings::Common::APPLY))) {
+                        cmd::ApplyCropBox{}.emit();
+                    }
+                    ImGui::Separator();
                     if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::FIT_TO_SCENE))) {
                         cmd::FitCropBoxToScene{.use_percentile = false}.emit();
                     }
@@ -678,6 +682,10 @@ namespace lfs::vis::gui {
                 }
 
                 if (is_ellipsoid) {
+                    if (ImGui::MenuItem(LOC(lichtfeld::Strings::Common::APPLY))) {
+                        cmd::ApplyEllipsoid{}.emit();
+                    }
+                    ImGui::Separator();
                     if (ImGui::MenuItem(LOC(lichtfeld::Strings::Scene::FIT_TO_SCENE))) {
                         cmd::FitEllipsoidToScene{.use_percentile = false}.emit();
                     }

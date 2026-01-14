@@ -68,6 +68,11 @@ namespace lfs::rendering {
             const Tensor* crop_box_max = nullptr;
             bool crop_inverse = false;
             bool crop_desaturate = false;
+            // Ellipsoid filtering
+            const Tensor* ellipsoid_transform = nullptr;
+            const Tensor* ellipsoid_radii = nullptr;
+            bool ellipsoid_inverse = false;
+            bool ellipsoid_desaturate = false;
             // Depth filter (Selection tool - separate from crop box, always desaturates outside)
             const Tensor* depth_filter_transform = nullptr;
             const Tensor* depth_filter_min = nullptr;

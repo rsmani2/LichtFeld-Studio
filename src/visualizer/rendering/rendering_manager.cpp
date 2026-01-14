@@ -733,6 +733,24 @@ namespace lfs::vis {
             }
         }
 
+        // Ellipsoid from scene graph
+        if (settings_.use_ellipsoid || settings_.show_ellipsoid) {
+            const auto visible_ellipsoids = scene_manager->getScene().getVisibleEllipsoids();
+            const NodeId selected_ellipsoid_id = scene_manager->getSelectedNodeEllipsoidId();
+            for (const auto& el : visible_ellipsoids) {
+                if (!el.data)
+                    continue;
+                if (selected_ellipsoid_id != NULL_NODE && el.node_id != selected_ellipsoid_id)
+                    continue;
+                request.ellipsoid = lfs::rendering::Ellipsoid{
+                    .radii = el.data->radii,
+                    .transform = glm::inverse(el.world_transform)};
+                request.ellipsoid_inverse = el.data->inverse;
+                request.ellipsoid_desaturate = settings_.show_ellipsoid && !settings_.use_ellipsoid;
+                break;
+            }
+        }
+
         // Add depth filter (Selection tool only - separate from crop box)
         // Depth filter always desaturates outside, never actually filters
         if (settings_.depth_filter_enabled) {

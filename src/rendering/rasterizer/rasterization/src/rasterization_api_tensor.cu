@@ -162,6 +162,10 @@ namespace lfs::rendering {
         const Tensor* crop_box_max,
         bool crop_inverse,
         bool crop_desaturate,
+        const Tensor* ellipsoid_transform,
+        const Tensor* ellipsoid_radii,
+        bool ellipsoid_inverse,
+        bool ellipsoid_desaturate,
         const Tensor* depth_filter_transform,
         const Tensor* depth_filter_min,
         const Tensor* depth_filter_max,
@@ -263,6 +267,18 @@ namespace lfs::rendering {
             crop_box_max_ptr = reinterpret_cast<const float3*>(crop_box_max_contig.ptr<float>());
         }
 
+        // Prepare ellipsoid parameters
+        const float* ellipsoid_transform_ptr = nullptr;
+        const float3* ellipsoid_radii_ptr = nullptr;
+        Tensor ellipsoid_transform_contig, ellipsoid_radii_contig;
+        if (ellipsoid_transform != nullptr && ellipsoid_transform->is_valid() &&
+            ellipsoid_radii != nullptr && ellipsoid_radii->is_valid()) {
+            ellipsoid_transform_contig = ellipsoid_transform->is_contiguous() ? *ellipsoid_transform : ellipsoid_transform->contiguous();
+            ellipsoid_radii_contig = ellipsoid_radii->is_contiguous() ? *ellipsoid_radii : ellipsoid_radii->contiguous();
+            ellipsoid_transform_ptr = ellipsoid_transform_contig.ptr<float>();
+            ellipsoid_radii_ptr = reinterpret_cast<const float3*>(ellipsoid_radii_contig.ptr<float>());
+        }
+
         // Prepare depth filter parameters (Selection tool - separate from crop box)
         const float* depth_filter_transform_ptr = nullptr;
         const float3* depth_filter_min_ptr = nullptr;
@@ -361,6 +377,10 @@ namespace lfs::rendering {
             crop_box_max_ptr,
             crop_inverse,
             crop_desaturate,
+            ellipsoid_transform_ptr,
+            ellipsoid_radii_ptr,
+            ellipsoid_inverse,
+            ellipsoid_desaturate,
             depth_filter_transform_ptr,
             depth_filter_min_ptr,
             depth_filter_max_ptr,
