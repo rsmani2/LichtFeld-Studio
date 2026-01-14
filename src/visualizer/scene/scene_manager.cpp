@@ -2331,8 +2331,7 @@ namespace lfs::vis {
         // Fit ellipsoid to parent bounds
         glm::vec3 min_bounds, max_bounds;
         if (scene_.getNodeBounds(node->id, min_bounds, max_bounds)) {
-            // Scale radii by sqrt(3) so ellipsoid circumscribes the bounding box
-            constexpr float CIRCUMSCRIBE_FACTOR = 1.732050808f;
+            constexpr float CIRCUMSCRIBE_FACTOR = 1.732050808f; // sqrt(3)
             const glm::vec3 half_size = (max_bounds - min_bounds) * 0.5f;
 
             EllipsoidData data;
@@ -2586,7 +2585,9 @@ namespace lfs::vis {
             node->transform_dirty = true;
         }
 
-        services().renderingOrNull()->markDirty();
+        if (auto* rm = services().renderingOrNull()) {
+            rm->markDirty();
+        }
 
         LOG_INFO("Fit ellipsoid '{}' to '{}': center({:.2f},{:.2f},{:.2f}) radii({:.2f},{:.2f},{:.2f})",
                  ellipsoid_node->name, target_node->name, center.x, center.y, center.z,
