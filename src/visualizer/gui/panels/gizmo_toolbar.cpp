@@ -178,6 +178,7 @@ namespace lfs::vis::gui::panels {
         state.mirror_x_texture = LoadIconTexture("mirror-x.png");
         state.mirror_y_texture = LoadIconTexture("mirror-y.png");
         state.mirror_z_texture = LoadIconTexture("mirror-z.png");
+        state.sequencer_texture = LoadIconTexture("video.png");
         state.initialized = true;
     }
 
@@ -245,6 +246,8 @@ namespace lfs::vis::gui::panels {
             glDeleteTextures(1, &state.mirror_y_texture);
         if (state.mirror_z_texture)
             glDeleteTextures(1, &state.mirror_z_texture);
+        if (state.sequencer_texture)
+            glDeleteTextures(1, &state.sequencer_texture);
 
         state.selection_texture = 0;
         state.rectangle_texture = 0;
@@ -268,6 +271,7 @@ namespace lfs::vis::gui::panels {
         state.mirror_x_texture = 0;
         state.mirror_y_texture = 0;
         state.mirror_z_texture = 0;
+        state.sequencer_texture = 0;
         state.initialized = false;
     }
 
@@ -283,7 +287,7 @@ namespace lfs::vis::gui::panels {
 
         editor->validateActiveTool();
 
-        constexpr int NUM_MAIN_BUTTONS = 8;
+        constexpr int NUM_MAIN_BUTTONS = 9;
         const float scale = getDpiScale();
         const float TOOLBAR_MARGIN_Y = 5.0f * scale;
         const float SUBTOOLBAR_OFFSET_Y = BASE_SUBTOOLBAR_OFFSET_Y * scale;
@@ -320,8 +324,10 @@ namespace lfs::vis::gui::panels {
 
                     if (clicked && enabled) {
                         editor->setActiveTool(is_selected ? ToolType::None : tool);
-                        if (!is_selected)
+                        if (!is_selected) {
                             state.current_operation = op;
+                            state.show_sequencer = false;
+                        }
                     }
 
                     if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled)) {
@@ -348,6 +354,15 @@ namespace lfs::vis::gui::panels {
                 ToolButton("##align", state.align_texture, ToolType::Align, ImGuizmo::TRANSLATE, "A", LOC(Toolbar::ALIGN_3POINT));
                 ImGui::SameLine();
                 ToolButton("##cropbox", state.cropbox_texture, ToolType::CropBox, ImGuizmo::BOUNDS, "C", LOC(Toolbar::CROP_BOX));
+
+                ImGui::SameLine();
+                if (widgets::IconButton("##sequencer", state.sequencer_texture, btn_size, state.show_sequencer, "Q")) {
+                    state.show_sequencer = !state.show_sequencer;
+                    if (state.show_sequencer)
+                        editor->setActiveTool(ToolType::None);
+                }
+                if (ImGui::IsItemHovered())
+                    widgets::SetThemedTooltip("%s", LOC(Toolbar::SEQUENCER));
             }
             ImGui::End();
         }

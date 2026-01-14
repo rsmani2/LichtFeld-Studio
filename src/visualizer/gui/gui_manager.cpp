@@ -851,8 +851,10 @@ namespace lfs::vis::gui {
                 // Rendering content helper
                 const auto draw_rendering = [&ctx, this] {
                     panels::DrawRenderingSettings(ctx);
-                    ImGui::Separator();
-                    panels::DrawSequencerSection(ctx, sequencer_ui_state_);
+                    if (gizmo_toolbar_state_.show_sequencer) {
+                        ImGui::Separator();
+                        panels::DrawSequencerSection(ctx, sequencer_ui_state_);
+                    }
                     ImGui::Separator();
                     panels::DrawSelectionGroups(ctx);
                     ImGui::Separator();
@@ -1196,8 +1198,8 @@ namespace lfs::vis::gui {
             }
         }
 
-        // Render sequencer panel above status bar (only in edit mode)
-        if (!ui_hidden_ && ctx.editor && !ctx.editor->isToolsDisabled()) {
+        // Sequencer panel (above status bar)
+        if (!ui_hidden_ && ctx.editor && !ctx.editor->isToolsDisabled() && gizmo_toolbar_state_.show_sequencer) {
             if (sequencer_ui_state_.show_camera_path) {
                 renderCameraPath(ctx);
                 renderKeyframeGizmo(ctx);

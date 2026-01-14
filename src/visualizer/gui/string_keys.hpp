@@ -475,6 +475,7 @@ namespace lichtfeld::Strings {
         inline constexpr const char* CENTER_MARKERS = "toolbar.center_markers";
         inline constexpr const char* PERSPECTIVE = "toolbar.perspective";
         inline constexpr const char* ORTHOGRAPHIC = "toolbar.orthographic";
+        inline constexpr const char* SEQUENCER = "toolbar.sequencer";
     } // namespace Toolbar
 
     namespace Transform {

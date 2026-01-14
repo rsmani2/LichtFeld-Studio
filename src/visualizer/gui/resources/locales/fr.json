@@ -420,7 +420,8 @@
     "gaussian_rings": "Anneaux Gaussiens",
     "center_markers": "Marqueurs Centraux",
     "perspective": "Perspective (O)",
-    "orthographic": "Orthographique (O)"
+    "orthographic": "Orthographique (O)",
+    "sequencer": "Séquenceur"
   },
 
   "transform": {

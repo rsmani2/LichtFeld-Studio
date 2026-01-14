@@ -420,7 +420,8 @@
     "gaussian_rings": "가우시안 링",
     "center_markers": "중심 마커",
     "perspective": "원근 투영 (O)",
-    "orthographic": "직교 투영 (O)"
+    "orthographic": "직교 투영 (O)",
+    "sequencer": "시퀀서"
   },
 
   "transform": {

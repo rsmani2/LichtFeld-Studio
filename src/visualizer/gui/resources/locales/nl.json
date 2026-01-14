@@ -420,7 +420,8 @@
     "gaussian_rings": "Gaussian Ringen",
     "center_markers": "Centrum Markeringen",
     "perspective": "Perspectief (O)",
-    "orthographic": "Orthografisch (O)"
+    "orthographic": "Orthografisch (O)",
+    "sequencer": "Sequencer"
   },
 
   "transform": {

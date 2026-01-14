@@ -53,6 +53,7 @@ namespace lfs::vis::gui::panels {
         bool reset_cropbox_requested = false;
         SelectionSubMode selection_mode = SelectionSubMode::Centers;
         TransformSpace transform_space = TransformSpace::Local;
+        bool show_sequencer = false;
         bool initialized = false;
 
         // Icon textures
@@ -92,6 +93,7 @@ namespace lfs::vis::gui::panels {
         unsigned int mirror_x_texture = 0;
         unsigned int mirror_y_texture = 0;
         unsigned int mirror_z_texture = 0;
+        unsigned int sequencer_texture = 0;
     };
 
     void InitGizmoToolbar(GizmoToolbarState& state);
