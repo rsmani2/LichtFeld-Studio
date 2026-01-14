@@ -1669,7 +1669,7 @@ namespace lfs::vis {
             const auto& cb = cropboxes[0];
             const glm::mat4 inv_transform = glm::inverse(cb.world_transform);
             const float* const t_ptr = glm::value_ptr(inv_transform);
-            crop_t = lfs::core::Tensor::from_vector({t_ptr, t_ptr + 16}, {4, 4}, lfs::core::Device::CPU).cuda();
+            crop_t = lfs::core::Tensor::from_vector(std::vector<float>(t_ptr, t_ptr + 16), {4, 4}, lfs::core::Device::CPU).cuda();
             crop_min = lfs::core::Tensor::from_vector(
                            {cb.data->min.x, cb.data->min.y, cb.data->min.z}, {3}, lfs::core::Device::CPU)
                            .cuda();
@@ -1687,7 +1687,7 @@ namespace lfs::vis {
             const auto& el = ellipsoids[0];
             const glm::mat4 inv_transform = glm::inverse(el.world_transform);
             const float* const t_ptr = glm::value_ptr(inv_transform);
-            ellip_t = lfs::core::Tensor::from_vector({t_ptr, t_ptr + 16}, {4, 4}, lfs::core::Device::CPU).cuda();
+            ellip_t = lfs::core::Tensor::from_vector(std::vector<float>(t_ptr, t_ptr + 16), {4, 4}, lfs::core::Device::CPU).cuda();
             ellip_radii = lfs::core::Tensor::from_vector(
                               {el.data->radii.x, el.data->radii.y, el.data->radii.z}, {3}, lfs::core::Device::CPU)
                               .cuda();
