@@ -2099,13 +2099,20 @@ namespace lfs::vis::gui {
         // Use the general toolbar operation for crop gizmo
         const ImGuizmo::OPERATION gizmo_op = gizmo_toolbar_state_.current_operation;
 
+        // Use BOUNDS mode for resize handles when Scale is active
+        static const float local_bounds[6] = {-0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f};
+        const bool use_bounds = (gizmo_op == ImGuizmo::SCALE);
+        const ImGuizmo::OPERATION effective_op = use_bounds ? ImGuizmo::BOUNDS : gizmo_op;
+        const float* bounds_ptr = use_bounds ? local_bounds : nullptr;
+
         {
             static bool s_hovered_axis = false;
             const bool is_using = ImGuizmo::IsUsing();
             if (!is_using) {
                 s_hovered_axis = ImGuizmo::IsOver(ImGuizmo::TRANSLATE_X) ||
                                  ImGuizmo::IsOver(ImGuizmo::TRANSLATE_Y) ||
-                                 ImGuizmo::IsOver(ImGuizmo::TRANSLATE_Z);
+                                 ImGuizmo::IsOver(ImGuizmo::TRANSLATE_Z) ||
+                                 ImGuizmo::IsOver(ImGuizmo::BOUNDS);
                 ImGuizmo::SetAxisMask(false, false, false);
             } else {
                 ImGuizmo::SetAxisMask(s_hovered_axis, s_hovered_axis, s_hovered_axis);
@@ -2121,14 +2128,14 @@ namespace lfs::vis::gui {
 
         glm::mat4 delta_matrix;
 
-        const ImGuizmo::MODE gizmo_mode = (gizmo_op == ImGuizmo::TRANSLATE)
+        const ImGuizmo::MODE gizmo_mode = (effective_op == ImGuizmo::TRANSLATE)
                                               ? ImGuizmo::WORLD
                                               : ImGuizmo::LOCAL;
 
         const bool gizmo_changed = ImGuizmo::Manipulate(
             glm::value_ptr(view), glm::value_ptr(projection),
-            gizmo_op, gizmo_mode, glm::value_ptr(gizmo_matrix),
-            glm::value_ptr(delta_matrix), nullptr, nullptr);
+            effective_op, gizmo_mode, glm::value_ptr(gizmo_matrix),
+            glm::value_ptr(delta_matrix), nullptr, bounds_ptr);
 
         const bool is_using = ImGuizmo::IsUsing();
 
@@ -2274,13 +2281,21 @@ namespace lfs::vis::gui {
         // Use the general toolbar operation for ellipsoid gizmo
         const ImGuizmo::OPERATION gizmo_op = gizmo_toolbar_state_.current_operation;
 
+        // Use BOUNDS mode for resize handles when Scale is active
+        // Ellipsoid uses unit sphere bounds (-1 to 1) since radii are in the scale component
+        static const float local_bounds[6] = {-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f};
+        const bool use_bounds = (gizmo_op == ImGuizmo::SCALE);
+        const ImGuizmo::OPERATION effective_op = use_bounds ? ImGuizmo::BOUNDS : gizmo_op;
+        const float* bounds_ptr = use_bounds ? local_bounds : nullptr;
+
         {
             static bool s_hovered_axis = false;
             const bool is_using = ImGuizmo::IsUsing();
             if (!is_using) {
                 s_hovered_axis = ImGuizmo::IsOver(ImGuizmo::TRANSLATE_X) ||
                                  ImGuizmo::IsOver(ImGuizmo::TRANSLATE_Y) ||
-                                 ImGuizmo::IsOver(ImGuizmo::TRANSLATE_Z);
+                                 ImGuizmo::IsOver(ImGuizmo::TRANSLATE_Z) ||
+                                 ImGuizmo::IsOver(ImGuizmo::BOUNDS);
                 ImGuizmo::SetAxisMask(false, false, false);
             } else {
                 ImGuizmo::SetAxisMask(s_hovered_axis, s_hovered_axis, s_hovered_axis);
@@ -2295,14 +2310,14 @@ namespace lfs::vis::gui {
 
         glm::mat4 delta_matrix;
 
-        const ImGuizmo::MODE gizmo_mode = (gizmo_op == ImGuizmo::TRANSLATE)
+        const ImGuizmo::MODE gizmo_mode = (effective_op == ImGuizmo::TRANSLATE)
                                               ? ImGuizmo::WORLD
                                               : ImGuizmo::LOCAL;
 
         const bool gizmo_changed = ImGuizmo::Manipulate(
             glm::value_ptr(view), glm::value_ptr(projection),
-            gizmo_op, gizmo_mode, glm::value_ptr(gizmo_matrix),
-            glm::value_ptr(delta_matrix), nullptr, nullptr);
+            effective_op, gizmo_mode, glm::value_ptr(gizmo_matrix),
+            glm::value_ptr(delta_matrix), nullptr, bounds_ptr);
 
         const bool is_using = ImGuizmo::IsUsing();
 

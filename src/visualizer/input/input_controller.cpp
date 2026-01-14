@@ -391,8 +391,9 @@ namespace lfs::vis {
             case input::Action::SELECTION_REPLACE:
             case input::Action::SELECTION_ADD:
             case input::Action::SELECTION_REMOVE:
-                // Skip selection if clicking on viewport gizmo
-                if (!over_gui && !over_gizmo && tool_context_) {
+                // Skip selection if clicking on viewport gizmo or ImGuizmo
+                if (!over_gui && !over_gizmo && tool_context_ &&
+                    !ImGuizmo::IsOver() && !ImGuizmo::IsUsing()) {
                     if (selection_tool_ && selection_tool_->isEnabled()) {
                         if (selection_tool_->handleMouseButton(button, action, mods, x, y, *tool_context_)) {
                             drag_mode_ = DragMode::Brush;
@@ -615,9 +616,10 @@ namespace lfs::vis {
             }
         }
 
-        // Skip selection if viewport gizmo is being dragged
+        // Skip selection if viewport gizmo or ImGuizmo is being dragged
         const bool gizmo_dragging = services().guiOrNull() && services().guiOrNull()->isViewportGizmoDragging();
-        if (selection_tool_ && selection_tool_->isEnabled() && tool_context_ && !gizmo_dragging) {
+        if (selection_tool_ && selection_tool_->isEnabled() && tool_context_ && !gizmo_dragging &&
+            !ImGuizmo::IsUsing()) {
             if (drag_mode_ == DragMode::Brush) {
                 selection_tool_->handleMouseMove(x, y, *tool_context_);
                 last_mouse_pos_ = {x, y};
@@ -631,11 +633,15 @@ namespace lfs::vis {
         glm::vec2 pos(x, y);
         last_mouse_pos_ = current_pos;
 
-        // Node rectangle dragging
+        // Node rectangle dragging - cancel if ImGuizmo takes over
         if (is_node_rect_dragging_) {
-            node_rect_end_ = glm::vec2(static_cast<float>(x), static_cast<float>(y));
-            if (tool_context_)
-                tool_context_->requestRender();
+            if (ImGuizmo::IsUsing()) {
+                is_node_rect_dragging_ = false;
+            } else {
+                node_rect_end_ = glm::vec2(static_cast<float>(x), static_cast<float>(y));
+                if (tool_context_)
+                    tool_context_->requestRender();
+            }
         }
 
         // Block camera dragging if ImGuizmo is being used
