@@ -2368,11 +2368,12 @@ namespace lfs::core {
         void* data_ptr = nullptr;
         cudaError_t err = cudaMalloc(&data_ptr, total_bytes);
         if (err != cudaSuccess) {
+            std::string error_str = cudaGetErrorString(err);
             cudaGetLastError(); // Clear sticky error state
             throw TensorError(std::format(
-                "CUDA out of memory: failed to allocate {} bytes ({:.2f} GB). "
+                "CUDA allocation failed ({}): {} bytes ({:.2f} GB). "
                 "Try reducing max_cap, sh_degree, or image resolution.",
-                total_bytes, total_bytes / (1024.0 * 1024.0 * 1024.0)));
+                error_str, total_bytes, total_bytes / (1024.0 * 1024.0 * 1024.0)));
         }
 
         // Zero full capacity
