@@ -868,6 +868,11 @@ namespace lfs::vis::gui {
         auto* selection_tool = ctx.viewer->getSelectionTool();
         if (selection_tool && selection_tool->isEnabled() && !ui_hidden_) {
             selection_tool->renderUI(ctx, nullptr);
+
+            // Mini-toolbar for gizmo operation when crop filter is enabled
+            if (selection_tool->isCropFilterEnabled()) {
+                renderCropGizmoMiniToolbar(ctx);
+            }
         }
 
         auto* align_tool = ctx.viewer->getAlignTool();
@@ -2057,16 +2062,26 @@ namespace lfs::vis::gui {
         if (!settings.show_crop_box)
             return;
 
-        // Only show gizmo when cropbox itself is selected, not parent splat
-        if (scene_manager->getSelectedNodeType() != NodeType::CROPBOX)
-            return;
+        NodeId cropbox_id = NULL_NODE;
+        const SceneNode* cropbox_node = nullptr;
 
-        // Get selected cropbox from scene graph
-        const NodeId cropbox_id = scene_manager->getSelectedNodeCropBoxId();
+        const auto* const selection_tool = ctx.viewer->getSelectionTool();
+        const bool crop_filter_active = selection_tool && selection_tool->isEnabled() &&
+                                        selection_tool->isCropFilterEnabled();
+
+        if (scene_manager->getSelectedNodeType() == NodeType::CROPBOX) {
+            cropbox_id = scene_manager->getSelectedNodeCropBoxId();
+        } else if (crop_filter_active) {
+            const auto& visible = scene_manager->getScene().getVisibleCropBoxes();
+            if (!visible.empty()) {
+                cropbox_id = visible[0].node_id;
+            }
+        }
+
         if (cropbox_id == NULL_NODE)
             return;
 
-        const auto* cropbox_node = scene_manager->getScene().getNodeById(cropbox_id);
+        cropbox_node = scene_manager->getScene().getNodeById(cropbox_id);
         if (!cropbox_node || !cropbox_node->visible || !cropbox_node->cropbox)
             return;
         if (!scene_manager->getScene().isNodeEffectivelyVisible(cropbox_id))
@@ -2238,6 +2253,60 @@ namespace lfs::vis::gui {
         overlay_drawlist->PopClipRect();
     }
 
+    void GuiManager::renderCropGizmoMiniToolbar(const UIContext&) {
+        constexpr float MARGIN_X = 10.0f;
+        constexpr float MARGIN_BOTTOM = 100.0f;
+        constexpr int BUTTON_COUNT = 3;
+        constexpr ImGuiWindowFlags WINDOW_FLAGS =
+            ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove |
+            ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoSavedSettings;
+
+        const auto& t = theme();
+        const float scale = getDpiScale();
+        const float btn_size = t.sizes.toolbar_button_size * scale;
+        const float spacing = t.sizes.toolbar_spacing * scale;
+        const float padding = t.sizes.toolbar_padding * scale;
+        const float toolbar_width = BUTTON_COUNT * btn_size + (BUTTON_COUNT - 1) * spacing + 2.0f * padding;
+        const float toolbar_height = btn_size + 2.0f * padding;
+        const float toolbar_x = viewport_pos_.x + MARGIN_X * scale;
+        const float toolbar_y = viewport_pos_.y + viewport_size_.y - MARGIN_BOTTOM * scale;
+
+        widgets::DrawWindowShadow({toolbar_x, toolbar_y}, {toolbar_width, toolbar_height}, t.sizes.window_rounding);
+        ImGui::SetNextWindowPos({toolbar_x, toolbar_y});
+        ImGui::SetNextWindowSize({toolbar_width, toolbar_height});
+
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, t.sizes.window_rounding);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, {padding, padding});
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, {spacing, 0.0f});
+        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, {0.0f, 0.0f});
+        ImGui::PushStyleColor(ImGuiCol_WindowBg, t.subtoolbar_background());
+
+        if (ImGui::Begin("##CropGizmoMiniToolbar", nullptr, WINDOW_FLAGS)) {
+            const ImVec2 btn_sz(btn_size, btn_size);
+            const auto& state = gizmo_toolbar_state_;
+
+            const auto button = [&](const char* id, const unsigned int tex, const ImGuizmo::OPERATION op,
+                                    const char* fallback, const char* tip) {
+                if (widgets::IconButton(id, tex, btn_sz, state.current_operation == op, fallback)) {
+                    gizmo_toolbar_state_.current_operation = op;
+                }
+                if (ImGui::IsItemHovered()) {
+                    widgets::SetThemedTooltip("%s", tip);
+                }
+            };
+
+            button("##mini_t", state.translation_texture, ImGuizmo::TRANSLATE, "T", "Translate (T)");
+            ImGui::SameLine();
+            button("##mini_r", state.rotation_texture, ImGuizmo::ROTATE, "R", "Rotate (R)");
+            ImGui::SameLine();
+            button("##mini_s", state.scaling_texture, ImGuizmo::SCALE, "S", "Scale (S)");
+        }
+        ImGui::End();
+
+        ImGui::PopStyleColor();
+        ImGui::PopStyleVar(4);
+    }
+
     void GuiManager::renderEllipsoidGizmo(const UIContext& ctx) {
         auto* const render_manager = ctx.viewer->getRenderingManager();
         auto* const scene_manager = ctx.viewer->getSceneManager();
@@ -2248,15 +2317,26 @@ namespace lfs::vis::gui {
         if (!settings.show_ellipsoid)
             return;
 
-        // Only show gizmo when ellipsoid itself is selected, not parent splat
-        if (scene_manager->getSelectedNodeType() != NodeType::ELLIPSOID)
-            return;
+        NodeId ellipsoid_id = NULL_NODE;
+        const SceneNode* ellipsoid_node = nullptr;
 
-        const NodeId ellipsoid_id = scene_manager->getSelectedNodeEllipsoidId();
+        const auto* const selection_tool = ctx.viewer->getSelectionTool();
+        const bool crop_filter_active = selection_tool && selection_tool->isEnabled() &&
+                                        selection_tool->isCropFilterEnabled();
+
+        if (scene_manager->getSelectedNodeType() == NodeType::ELLIPSOID) {
+            ellipsoid_id = scene_manager->getSelectedNodeEllipsoidId();
+        } else if (crop_filter_active) {
+            const auto& visible = scene_manager->getScene().getVisibleEllipsoids();
+            if (!visible.empty()) {
+                ellipsoid_id = visible[0].node_id;
+            }
+        }
+
         if (ellipsoid_id == NULL_NODE)
             return;
 
-        const auto* ellipsoid_node = scene_manager->getScene().getNodeById(ellipsoid_id);
+        ellipsoid_node = scene_manager->getScene().getNodeById(ellipsoid_id);
         if (!ellipsoid_node || !ellipsoid_node->visible || !ellipsoid_node->ellipsoid)
             return;
         if (!scene_manager->getScene().isNodeEffectivelyVisible(ellipsoid_id))

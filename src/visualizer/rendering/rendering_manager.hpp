@@ -100,6 +100,9 @@ namespace lfs::vis {
         glm::vec3 depth_filter_min = glm::vec3(-50.0f, -10000.0f, 0.0f);
         glm::vec3 depth_filter_max = glm::vec3(50.0f, 10000.0f, 100.0f);
         lfs::geometry::EuclideanTransform depth_filter_transform;
+
+        // Crop filter for selection (use scene crop box/ellipsoid as selection filter)
+        bool crop_filter_for_selection = false;
     };
 
     struct SplitViewInfo {
@@ -257,6 +260,9 @@ namespace lfs::vis {
 
         // Brush selection on GPU - mouse_x/y in image coords (not window coords!)
         void brushSelect(float mouse_x, float mouse_y, float radius, lfs::core::Tensor& selection_out);
+
+        // Apply crop filter to selection - filters out selections outside crop box/ellipsoid
+        void applyCropFilter(lfs::core::Tensor& selection);
 
         void setBrushState(bool active, float x, float y, float radius, bool add_mode = true,
                            lfs::core::Tensor* selection_tensor = nullptr,

@@ -190,6 +190,19 @@ namespace lfs::rendering {
         const Tensor& transform_indices,
         const std::vector<bool>& valid_nodes);
 
+    // Filter selection by crop box and/or ellipsoid
+    // Only gaussians inside the crop region(s) remain selected
+    void filter_selection_by_crop(
+        Tensor& selection,
+        const Tensor& means,              // [N, 3] gaussian positions
+        const Tensor* crop_box_transform, // [4, 4] world-to-local, nullptr if not active
+        const Tensor* crop_box_min,       // [3] local min bounds
+        const Tensor* crop_box_max,       // [3] local max bounds
+        bool crop_inverse,
+        const Tensor* ellipsoid_transform, // [4, 4] world-to-local, nullptr if not active
+        const Tensor* ellipsoid_radii,     // [3] radii
+        bool ellipsoid_inverse);
+
     // GUT forward rasterization - returns (image [3,H,W], alpha [1,H,W], depth [1,H,W])
     std::tuple<Tensor, Tensor, Tensor>
     forward_gut_tensor(

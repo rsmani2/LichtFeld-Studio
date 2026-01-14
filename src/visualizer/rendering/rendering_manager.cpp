@@ -20,6 +20,7 @@
 #include "training/training_manager.hpp"
 #include <cuda_runtime.h>
 #include <glad/glad.h>
+#include <glm/gtc/type_ptr.hpp>
 #include <shared_mutex>
 #include <stdexcept>
 
@@ -1642,6 +1643,66 @@ namespace lfs::vis {
             return;
         }
         lfs::rendering::brush_select_tensor(*cached_result_.screen_positions, mouse_x, mouse_y, radius, selection_out);
+    }
+
+    void RenderingManager::applyCropFilter(lfs::core::Tensor& selection) {
+        if (!selection.is_valid() || !settings_.crop_filter_for_selection)
+            return;
+
+        auto* const sm = services().sceneOrNull();
+        if (!sm)
+            return;
+
+        const auto* const model = sm->getModelForRendering();
+        if (!model || model->size() == 0)
+            return;
+
+        const auto& means = model->means();
+        if (!means.is_valid() || means.size(0) != selection.size(0))
+            return;
+
+        lfs::core::Tensor crop_t, crop_min, crop_max;
+        bool crop_inverse = false;
+
+        const auto& cropboxes = sm->buildRenderState().cropboxes;
+        if (!cropboxes.empty() && cropboxes[0].data) {
+            const auto& cb = cropboxes[0];
+            const glm::mat4 inv_transform = glm::inverse(cb.world_transform);
+            const float* const t_ptr = glm::value_ptr(inv_transform);
+            crop_t = lfs::core::Tensor::from_vector({t_ptr, t_ptr + 16}, {4, 4}, lfs::core::Device::CPU).cuda();
+            crop_min = lfs::core::Tensor::from_vector(
+                           {cb.data->min.x, cb.data->min.y, cb.data->min.z}, {3}, lfs::core::Device::CPU)
+                           .cuda();
+            crop_max = lfs::core::Tensor::from_vector(
+                           {cb.data->max.x, cb.data->max.y, cb.data->max.z}, {3}, lfs::core::Device::CPU)
+                           .cuda();
+            crop_inverse = cb.data->inverse;
+        }
+
+        lfs::core::Tensor ellip_t, ellip_radii;
+        bool ellipsoid_inverse = false;
+
+        const auto& ellipsoids = sm->getScene().getVisibleEllipsoids();
+        if (!ellipsoids.empty() && ellipsoids[0].data) {
+            const auto& el = ellipsoids[0];
+            const glm::mat4 inv_transform = glm::inverse(el.world_transform);
+            const float* const t_ptr = glm::value_ptr(inv_transform);
+            ellip_t = lfs::core::Tensor::from_vector({t_ptr, t_ptr + 16}, {4, 4}, lfs::core::Device::CPU).cuda();
+            ellip_radii = lfs::core::Tensor::from_vector(
+                              {el.data->radii.x, el.data->radii.y, el.data->radii.z}, {3}, lfs::core::Device::CPU)
+                              .cuda();
+            ellipsoid_inverse = el.data->inverse;
+        }
+
+        lfs::rendering::filter_selection_by_crop(
+            selection, means,
+            crop_t.is_valid() ? &crop_t : nullptr,
+            crop_min.is_valid() ? &crop_min : nullptr,
+            crop_max.is_valid() ? &crop_max : nullptr,
+            crop_inverse,
+            ellip_t.is_valid() ? &ellip_t : nullptr,
+            ellip_radii.is_valid() ? &ellip_radii : nullptr,
+            ellipsoid_inverse);
     }
 
     void RenderingManager::setBrushState(const bool active, const float x, const float y, const float radius,

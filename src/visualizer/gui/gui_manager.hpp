@@ -162,6 +162,7 @@ namespace lfs::vis {
             void showZoomSpeedOverlay(float zoom_speed, float max_zoom_speed);
             void renderCropBoxGizmo(const UIContext& ctx);
             void renderEllipsoidGizmo(const UIContext& ctx);
+            void renderCropGizmoMiniToolbar(const UIContext& ctx);
             void renderNodeTransformGizmo(const UIContext& ctx);
 
             std::unique_ptr<MenuBar> menu_bar_;
