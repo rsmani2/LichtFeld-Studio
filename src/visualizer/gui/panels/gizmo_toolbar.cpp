@@ -160,6 +160,7 @@ namespace lfs::vis::gui::panels {
         state.painting_texture = LoadIconTexture("painting.png");
         state.align_texture = LoadIconTexture("align.png");
         state.cropbox_texture = LoadIconTexture("cropbox.png");
+        state.ellipsoid_texture = LoadIconTexture("sphere.png");
         state.bounds_texture = LoadIconTexture("bounds.png");
         state.reset_texture = LoadIconTexture("reset.png");
         state.local_texture = LoadIconTexture("local.png");
@@ -209,6 +210,8 @@ namespace lfs::vis::gui::panels {
             glDeleteTextures(1, &state.align_texture);
         if (state.cropbox_texture)
             glDeleteTextures(1, &state.cropbox_texture);
+        if (state.ellipsoid_texture)
+            glDeleteTextures(1, &state.ellipsoid_texture);
         if (state.bounds_texture)
             glDeleteTextures(1, &state.bounds_texture);
         if (state.reset_texture)
@@ -257,6 +260,7 @@ namespace lfs::vis::gui::panels {
         state.brush_texture = 0;
         state.align_texture = 0;
         state.cropbox_texture = 0;
+        state.ellipsoid_texture = 0;
         state.bounds_texture = 0;
         state.reset_texture = 0;
         state.local_texture = 0;
@@ -283,7 +287,7 @@ namespace lfs::vis::gui::panels {
 
         editor->validateActiveTool();
 
-        constexpr int NUM_MAIN_BUTTONS = 8;
+        constexpr int NUM_MAIN_BUTTONS = 9;
         const float scale = getDpiScale();
         const float TOOLBAR_MARGIN_Y = 5.0f * scale;
         const float SUBTOOLBAR_OFFSET_Y = BASE_SUBTOOLBAR_OFFSET_Y * scale;
@@ -348,6 +352,8 @@ namespace lfs::vis::gui::panels {
                 ToolButton("##align", state.align_texture, ToolType::Align, ImGuizmo::TRANSLATE, "A", LOC(Toolbar::ALIGN_3POINT));
                 ImGui::SameLine();
                 ToolButton("##cropbox", state.cropbox_texture, ToolType::CropBox, ImGuizmo::BOUNDS, "C", LOC(Toolbar::CROP_BOX));
+                ImGui::SameLine();
+                ToolButton("##ellipsoid", state.ellipsoid_texture, ToolType::Ellipsoid, ImGuizmo::BOUNDS, "E", LOC(Toolbar::ELLIPSOID));
             }
             ImGui::End();
         }
@@ -480,6 +486,52 @@ namespace lfs::vis::gui::panels {
 
                 if (widgets::IconButton("##crop_reset", state.reset_texture, btn_size, false, "X")) {
                     state.reset_cropbox_requested = true;
+                }
+                if (ImGui::IsItemHovered())
+                    widgets::SetThemedTooltip("%s", LOC(Toolbar::RESET_DEFAULT));
+            }
+            ImGui::End();
+        }
+
+        // Ellipsoid operations toolbar
+        if (active_tool == ToolType::Ellipsoid) {
+            constexpr int NUM_ELLIPSOID_BUTTONS = 5;
+            const ImVec2 sub_size = ComputeToolbarSize(NUM_ELLIPSOID_BUTTONS);
+            const float sub_x = viewport_pos.x + (viewport_size.x - sub_size.x) * 0.5f;
+            const float sub_y = viewport_pos.y + toolbar_size.y + SUBTOOLBAR_OFFSET_Y;
+
+            widgets::DrawWindowShadow({sub_x, sub_y}, sub_size, theme().sizes.window_rounding);
+            ImGui::SetNextWindowPos(ImVec2(sub_x, sub_y), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(sub_size, ImGuiCond_Always);
+
+            const SubToolbarStyle style;
+            if (ImGui::Begin("##EllipsoidToolbar", nullptr, TOOLBAR_FLAGS)) {
+                const auto& t = theme();
+                const float btn_sz = t.sizes.toolbar_button_size * scale;
+                const ImVec2 btn_size(btn_sz, btn_sz);
+
+                const auto EllipsoidOpButton = [&](const char* id, unsigned int tex,
+                                                   EllipsoidOperation op, const char* fallback,
+                                                   const char* tooltip) {
+                    const bool selected = (state.ellipsoid_operation == op);
+                    if (widgets::IconButton(id, tex, btn_size, selected, fallback)) {
+                        state.ellipsoid_operation = op;
+                    }
+                    if (ImGui::IsItemHovered())
+                        widgets::SetThemedTooltip("%s", tooltip);
+                };
+
+                EllipsoidOpButton("##ellipsoid_bounds", state.bounds_texture, EllipsoidOperation::Bounds, "B", LOC(Toolbar::RESIZE_BOUNDS));
+                ImGui::SameLine();
+                EllipsoidOpButton("##ellipsoid_translate", state.translation_texture, EllipsoidOperation::Translate, "T", LOC(Toolbar::TRANSLATE));
+                ImGui::SameLine();
+                EllipsoidOpButton("##ellipsoid_rotate", state.rotation_texture, EllipsoidOperation::Rotate, "R", LOC(Toolbar::ROTATE));
+                ImGui::SameLine();
+                EllipsoidOpButton("##ellipsoid_scale", state.scaling_texture, EllipsoidOperation::Scale, "S", LOC(Toolbar::SCALE));
+                ImGui::SameLine();
+
+                if (widgets::IconButton("##ellipsoid_reset", state.reset_texture, btn_size, false, "X")) {
+                    state.reset_ellipsoid_requested = true;
                 }
                 if (ImGui::IsItemHovered())
                     widgets::SetThemedTooltip("%s", LOC(Toolbar::RESET_DEFAULT));

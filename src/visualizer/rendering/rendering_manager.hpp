@@ -40,6 +40,9 @@ namespace lfs::vis {
         // Crop box (data stored in scene graph CropBoxData, these are UI toggles only)
         bool show_crop_box = false;
         bool use_crop_box = false;
+        // Ellipsoid (data stored in scene graph EllipsoidData, these are UI toggles only)
+        bool show_ellipsoid = false;
+        bool use_ellipsoid = false;
         bool desaturate_unselected = false; // Desaturate unselected PLYs when one is selected
 
         // Background

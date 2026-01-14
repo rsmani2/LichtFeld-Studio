@@ -87,6 +87,7 @@ namespace lfs::vis {
         case ToolType::Align:
             return selected_node_type_ == NodeType::SPLAT;
         case ToolType::CropBox:
+        case ToolType::Ellipsoid:
             return has_selection_;
         }
         return false;
@@ -112,6 +113,7 @@ namespace lfs::vis {
         case ToolType::Align:
             return selected_node_type_ == NodeType::SPLAT ? nullptr : "select PLY node";
         case ToolType::CropBox:
+        case ToolType::Ellipsoid:
             return nullptr;
         }
         return nullptr;

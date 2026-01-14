@@ -802,11 +802,13 @@ namespace lfs::vis::gui {
             const bool is_align_mode = (current_tool == ToolType::Align);
             const bool is_selection_mode = (current_tool == ToolType::Selection);
             const bool is_cropbox_mode = (current_tool == ToolType::CropBox);
+            const bool is_ellipsoid_mode = (current_tool == ToolType::Ellipsoid);
 
-            // Materialize deletions when switching away from selection or cropbox tools
+            // Materialize deletions when switching away from selection or cropbox or ellipsoid tools
             const bool was_selection_mode = (previous_tool_ == ToolType::Selection);
             const bool was_cropbox_mode = (previous_tool_ == ToolType::CropBox);
-            if ((was_selection_mode || was_cropbox_mode) && current_tool != previous_tool_) {
+            const bool was_ellipsoid_mode = (previous_tool_ == ToolType::Ellipsoid);
+            if ((was_selection_mode || was_cropbox_mode || was_ellipsoid_mode) && current_tool != previous_tool_) {
                 if (auto* sm = ctx.viewer->getSceneManager()) {
                     sm->applyDeleted();
                 }
@@ -818,6 +820,14 @@ namespace lfs::vis::gui {
                     sm->ensureCropBoxForSelectedNode();
                     // Auto-select the cropbox for the current node (or first POINTCLOUD)
                     sm->selectCropBoxForCurrentNode();
+                }
+            }
+
+            // Auto-create and select ellipsoid when switching to Ellipsoid tool
+            if (is_ellipsoid_mode && !was_ellipsoid_mode) {
+                if (auto* sm = ctx.viewer->getSceneManager()) {
+                    sm->ensureEllipsoidForSelectedNode();
+                    sm->selectEllipsoidForCurrentNode();
                 }
             }
 
@@ -870,11 +880,29 @@ namespace lfs::vis::gui {
                 }
             }
 
+            if (is_ellipsoid_mode) {
+                switch (gizmo_toolbar_state_.ellipsoid_operation) {
+                case panels::EllipsoidOperation::Bounds: ellipsoid_gizmo_operation_ = ImGuizmo::BOUNDS; break;
+                case panels::EllipsoidOperation::Translate: ellipsoid_gizmo_operation_ = ImGuizmo::TRANSLATE; break;
+                case panels::EllipsoidOperation::Rotate: ellipsoid_gizmo_operation_ = ImGuizmo::ROTATE; break;
+                case panels::EllipsoidOperation::Scale: ellipsoid_gizmo_operation_ = ImGuizmo::SCALE; break;
+                }
+            }
+
             // Toggle cropbox visibility with tool
             if (auto* render_manager = ctx.viewer->getRenderingManager()) {
                 auto settings = render_manager->getSettings();
                 if (is_cropbox_mode != settings.show_crop_box) {
                     settings.show_crop_box = is_cropbox_mode;
+                    render_manager->updateSettings(settings);
+                }
+            }
+
+            // Toggle ellipsoid visibility with tool
+            if (auto* render_manager = ctx.viewer->getRenderingManager()) {
+                auto settings = render_manager->getSettings();
+                if (is_ellipsoid_mode != settings.show_ellipsoid) {
+                    settings.show_ellipsoid = is_ellipsoid_mode;
                     render_manager->updateSettings(settings);
                 }
             }
@@ -924,6 +952,45 @@ namespace lfs::vis::gui {
                     }
                 }
             }
+
+            // Handle reset ellipsoid request from toolbar
+            if (gizmo_toolbar_state_.reset_ellipsoid_requested) {
+                gizmo_toolbar_state_.reset_ellipsoid_requested = false;
+                auto* const viewer_scene_manager = ctx.viewer->getSceneManager();
+                auto* const render_manager = ctx.viewer->getRenderingManager();
+                if (viewer_scene_manager && render_manager) {
+                    const NodeId ellipsoid_id = viewer_scene_manager->getSelectedNodeEllipsoidId();
+                    if (ellipsoid_id != NULL_NODE) {
+                        auto* node = viewer_scene_manager->getScene().getMutableNode(
+                            viewer_scene_manager->getScene().getNodeById(ellipsoid_id)->name);
+                        if (node && node->ellipsoid) {
+                            const command::EllipsoidState old_state{
+                                .radii = node->ellipsoid->radii,
+                                .local_transform = node->local_transform.get(),
+                                .inverse = node->ellipsoid->inverse};
+
+                            node->ellipsoid->radii = glm::vec3(1.0f);
+                            node->ellipsoid->inverse = false;
+                            node->local_transform = glm::mat4(1.0f);
+                            node->transform_dirty = true;
+                            viewer_scene_manager->getScene().invalidateCache();
+
+                            const command::EllipsoidState new_state{
+                                .radii = node->ellipsoid->radii,
+                                .local_transform = node->local_transform.get(),
+                                .inverse = node->ellipsoid->inverse};
+
+                            auto cmd = std::make_unique<command::EllipsoidCommand>(
+                                viewer_scene_manager, node->name, old_state, new_state);
+                            viewer_->getCommandHistory().execute(std::move(cmd));
+
+                            auto settings = render_manager->getSettings();
+                            settings.use_ellipsoid = false;
+                            render_manager->updateSettings(settings);
+                        }
+                    }
+                }
+            }
         } else {
             show_node_gizmo_ = false;
             auto* brush_tool = ctx.viewer->getBrushTool();
@@ -962,6 +1029,9 @@ namespace lfs::vis::gui {
 
         // Render crop box gizmo over viewport
         renderCropBoxGizmo(ctx);
+
+        // Render ellipsoid gizmo over viewport
+        renderEllipsoidGizmo(ctx);
 
         // Render node transform gizmo (for translating selected PLY nodes)
         renderNodeTransformGizmo(ctx);
@@ -2288,6 +2358,161 @@ namespace lfs::vis::gui {
                         .emit();
                 }
                 cropbox_state_before_drag_.reset();
+            }
+        }
+
+        overlay_drawlist->PopClipRect();
+    }
+
+    void GuiManager::renderEllipsoidGizmo(const UIContext& ctx) {
+        auto* const render_manager = ctx.viewer->getRenderingManager();
+        auto* const scene_manager = ctx.viewer->getSceneManager();
+        if (!render_manager || !scene_manager)
+            return;
+
+        const auto& settings = render_manager->getSettings();
+        if (!settings.show_ellipsoid)
+            return;
+
+        const NodeId ellipsoid_id = scene_manager->getSelectedNodeEllipsoidId();
+        if (ellipsoid_id == NULL_NODE)
+            return;
+
+        const auto* ellipsoid_node = scene_manager->getScene().getNodeById(ellipsoid_id);
+        if (!ellipsoid_node || !ellipsoid_node->visible || !ellipsoid_node->ellipsoid)
+            return;
+        if (!scene_manager->getScene().isNodeEffectivelyVisible(ellipsoid_id))
+            return;
+
+        auto& viewport = ctx.viewer->getViewport();
+        const glm::mat4 view = viewport.getViewMatrix();
+        const glm::ivec2 vp_size(static_cast<int>(viewport_size_.x), static_cast<int>(viewport_size_.y));
+        const glm::mat4 projection = lfs::rendering::createProjectionMatrix(
+            vp_size, settings.fov, settings.orthographic, settings.ortho_scale);
+
+        const glm::vec3 radii = ellipsoid_node->ellipsoid->radii;
+        const glm::mat4 world_transform = scene_manager->getScene().getWorldTransform(ellipsoid_id);
+
+        const glm::vec3 translation = glm::vec3(world_transform[3]);
+        const glm::mat3 rotation3x3 = glm::mat3(world_transform);
+
+        glm::mat4 gizmo_matrix = glm::translate(glm::mat4(1.0f), translation);
+        gizmo_matrix = gizmo_matrix * glm::mat4(rotation3x3);
+        gizmo_matrix = glm::scale(gizmo_matrix, radii);
+
+        ImGuizmo::SetOrthographic(settings.orthographic);
+        ImGuizmo::SetRect(viewport_pos_.x, viewport_pos_.y, viewport_size_.x, viewport_size_.y);
+        ImGuizmo::SetAxisLimit(GIZMO_AXIS_LIMIT);
+        ImGuizmo::SetPlaneLimit(GIZMO_AXIS_LIMIT);
+
+        if (ellipsoid_gizmo_operation_ == ImGuizmo::BOUNDS) {
+            ImGuizmo::SetAxisMask(true, true, true);
+        } else {
+            static bool s_hovered_axis = false;
+            const bool is_using = ImGuizmo::IsUsing();
+            if (!is_using) {
+                s_hovered_axis = ImGuizmo::IsOver(ImGuizmo::TRANSLATE_X) ||
+                                 ImGuizmo::IsOver(ImGuizmo::TRANSLATE_Y) ||
+                                 ImGuizmo::IsOver(ImGuizmo::TRANSLATE_Z);
+                ImGuizmo::SetAxisMask(false, false, false);
+            } else {
+                ImGuizmo::SetAxisMask(s_hovered_axis, s_hovered_axis, s_hovered_axis);
+            }
+        }
+
+        ImDrawList* overlay_drawlist = isModalWindowOpen() ? ImGui::GetBackgroundDrawList() : ImGui::GetForegroundDrawList();
+        const ImVec2 clip_min(viewport_pos_.x, viewport_pos_.y);
+        const ImVec2 clip_max(clip_min.x + viewport_size_.x, clip_min.y + viewport_size_.y);
+        overlay_drawlist->PushClipRect(clip_min, clip_max, true);
+        ImGuizmo::SetDrawlist(overlay_drawlist);
+
+        glm::mat4 delta_matrix;
+        constexpr float LOCAL_BOUNDS[6] = {-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f};
+
+        const ImGuizmo::MODE gizmo_mode = (ellipsoid_gizmo_operation_ == ImGuizmo::TRANSLATE)
+                                              ? ImGuizmo::WORLD
+                                              : ImGuizmo::LOCAL;
+
+        const bool gizmo_changed = ImGuizmo::Manipulate(
+            glm::value_ptr(view), glm::value_ptr(projection),
+            ellipsoid_gizmo_operation_, gizmo_mode, glm::value_ptr(gizmo_matrix),
+            glm::value_ptr(delta_matrix), nullptr,
+            ellipsoid_gizmo_operation_ == ImGuizmo::BOUNDS ? LOCAL_BOUNDS : nullptr);
+
+        const bool is_using = ImGuizmo::IsUsing();
+
+        if (is_using && !ellipsoid_gizmo_active_) {
+            ellipsoid_gizmo_active_ = true;
+            ellipsoid_node_name_ = ellipsoid_node->name;
+            ellipsoid_state_before_drag_ = command::EllipsoidState{
+                .radii = ellipsoid_node->ellipsoid->radii,
+                .local_transform = ellipsoid_node->local_transform.get(),
+                .inverse = ellipsoid_node->ellipsoid->inverse};
+        }
+
+        if (gizmo_changed) {
+            float mat_trans[3], mat_rot[3], mat_scale[3];
+            ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(gizmo_matrix), mat_trans, mat_rot, mat_scale);
+
+            const float rad_x = glm::radians(mat_rot[0]);
+            const float rad_y = glm::radians(mat_rot[1]);
+            const float rad_z = glm::radians(mat_rot[2]);
+
+            glm::vec3 new_radii(mat_scale[0], mat_scale[1], mat_scale[2]);
+            new_radii = glm::max(new_radii, glm::vec3(0.001f));
+
+            const glm::mat3 new_rotation = glm::mat3(
+                glm::rotate(glm::mat4(1.0f), rad_x, glm::vec3(1, 0, 0)) *
+                glm::rotate(glm::mat4(1.0f), rad_y, glm::vec3(0, 1, 0)) *
+                glm::rotate(glm::mat4(1.0f), rad_z, glm::vec3(0, 0, 1)));
+
+            const glm::vec3 world_center(mat_trans[0], mat_trans[1], mat_trans[2]);
+
+            auto* mutable_node = scene_manager->getScene().getMutableNode(ellipsoid_node->name);
+            if (mutable_node && mutable_node->ellipsoid) {
+                glm::mat4 new_world_transform;
+
+                if (ellipsoid_gizmo_operation_ == ImGuizmo::SCALE || ellipsoid_gizmo_operation_ == ImGuizmo::BOUNDS) {
+                    mutable_node->ellipsoid->radii = new_radii;
+                    new_world_transform = glm::translate(glm::mat4(1.0f), world_center) * glm::mat4(new_rotation);
+                } else {
+                    new_world_transform = glm::translate(glm::mat4(1.0f), world_center) * glm::mat4(new_rotation);
+                }
+
+                if (mutable_node->parent_id != NULL_NODE) {
+                    const glm::mat4 parent_world = scene_manager->getScene().getWorldTransform(mutable_node->parent_id);
+                    mutable_node->local_transform = glm::inverse(parent_world) * new_world_transform;
+                } else {
+                    mutable_node->local_transform = new_world_transform;
+                }
+                mutable_node->transform_dirty = true;
+                scene_manager->getScene().invalidateCache();
+                render_manager->markDirty();
+            }
+        }
+
+        if (!is_using && ellipsoid_gizmo_active_) {
+            ellipsoid_gizmo_active_ = false;
+
+            if (ellipsoid_state_before_drag_.has_value()) {
+                auto* node = scene_manager->getScene().getMutableNode(ellipsoid_node_name_);
+                if (node && node->ellipsoid) {
+                    const command::EllipsoidState new_state{
+                        .radii = node->ellipsoid->radii,
+                        .local_transform = node->local_transform.get(),
+                        .inverse = node->ellipsoid->inverse};
+
+                    auto cmd = std::make_unique<command::EllipsoidCommand>(
+                        scene_manager, ellipsoid_node_name_, *ellipsoid_state_before_drag_, new_state);
+                    viewer_->getCommandHistory().execute(std::move(cmd));
+
+                    using namespace lfs::core::events;
+                    ui::EllipsoidChanged{
+                        .radii = node->ellipsoid->radii,
+                        .enabled = settings.use_ellipsoid}
+                        .emit();
+                }
+                ellipsoid_state_before_drag_.reset();
             }
         }
 

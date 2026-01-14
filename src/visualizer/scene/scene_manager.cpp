@@ -1015,6 +1015,168 @@ namespace lfs::vis {
         }
     }
 
+    // ========== Ellipsoid Operations ==========
+
+    void SceneManager::ensureEllipsoidForSelectedNode() {
+        std::string node_name;
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (selected_nodes_.empty()) {
+                for (const auto* node : scene_.getNodes()) {
+                    if (node->type == NodeType::POINTCLOUD) {
+                        node_name = node->name;
+                        break;
+                    }
+                }
+                if (node_name.empty())
+                    return;
+            } else {
+                node_name = *selected_nodes_.begin();
+            }
+        }
+        if (node_name.empty())
+            return;
+
+        const auto* node = scene_.getNode(node_name);
+        if (!node)
+            return;
+
+        NodeId target_id = node->id;
+        if (node->type == NodeType::ELLIPSOID && node->parent_id != NULL_NODE) {
+            target_id = node->parent_id;
+        } else if (node->type == NodeType::GROUP) {
+            for (const NodeId child_id : node->children) {
+                if (const auto* child = scene_.getNodeById(child_id)) {
+                    if (child->type == NodeType::SPLAT || child->type == NodeType::POINTCLOUD) {
+                        target_id = child_id;
+                        break;
+                    }
+                }
+            }
+        }
+
+        const auto* target = scene_.getNodeById(target_id);
+        if (!target || (target->type != NodeType::SPLAT && target->type != NodeType::POINTCLOUD))
+            return;
+
+        const NodeId existing = scene_.getEllipsoidForSplat(target_id);
+        if (existing != NULL_NODE)
+            return;
+
+        const NodeId ellipsoid_id = scene_.getOrCreateEllipsoidForSplat(target_id);
+        if (ellipsoid_id == NULL_NODE)
+            return;
+
+        glm::vec3 min_bounds, max_bounds;
+        if (scene_.getNodeBounds(target_id, min_bounds, max_bounds)) {
+            EllipsoidData data;
+            data.radii = (max_bounds - min_bounds) * 0.5f;
+            data.enabled = true;
+            scene_.setEllipsoidData(ellipsoid_id, data);
+        }
+
+        if (const auto* ellipsoid = scene_.getNodeById(ellipsoid_id)) {
+            state::PLYAdded{
+                .name = ellipsoid->name,
+                .node_gaussians = 0,
+                .total_gaussians = scene_.getTotalGaussianCount(),
+                .is_visible = ellipsoid->visible,
+                .parent_name = target->name,
+                .is_group = false,
+                .node_type = static_cast<int>(NodeType::ELLIPSOID)}
+                .emit();
+        }
+
+        LOG_DEBUG("Created ellipsoid for node '{}'", target->name);
+    }
+
+    void SceneManager::selectEllipsoidForCurrentNode() {
+        NodeId target_id = NULL_NODE;
+
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            if (!selected_nodes_.empty()) {
+                const auto* node = scene_.getNode(*selected_nodes_.begin());
+                if (node) {
+                    if (node->type == NodeType::SPLAT || node->type == NodeType::POINTCLOUD) {
+                        target_id = node->id;
+                    } else if (node->type == NodeType::ELLIPSOID) {
+                        return;
+                    }
+                }
+            }
+        }
+
+        if (target_id == NULL_NODE) {
+            for (const auto* node : scene_.getNodes()) {
+                if (node->type == NodeType::POINTCLOUD) {
+                    target_id = node->id;
+                    break;
+                }
+            }
+        }
+
+        if (target_id == NULL_NODE)
+            return;
+
+        const NodeId ellipsoid_id = scene_.getEllipsoidForSplat(target_id);
+        if (ellipsoid_id == NULL_NODE)
+            return;
+
+        const auto* ellipsoid = scene_.getNodeById(ellipsoid_id);
+        if (!ellipsoid)
+            return;
+
+        {
+            std::lock_guard<std::mutex> lock(state_mutex_);
+            selected_nodes_.clear();
+            selected_nodes_.insert(ellipsoid->name);
+        }
+
+        LOG_DEBUG("Auto-selected ellipsoid '{}'", ellipsoid->name);
+        emitSceneChanged();
+    }
+
+    NodeId SceneManager::getSelectedNodeEllipsoidId() const {
+        std::lock_guard<std::mutex> lock(state_mutex_);
+        if (selected_nodes_.empty())
+            return NULL_NODE;
+
+        const auto* node = scene_.getNode(*selected_nodes_.begin());
+        if (!node)
+            return NULL_NODE;
+
+        if (node->type == NodeType::ELLIPSOID) {
+            return node->id;
+        }
+
+        if (node->type == NodeType::SPLAT || node->type == NodeType::POINTCLOUD) {
+            return scene_.getEllipsoidForSplat(node->id);
+        }
+
+        return NULL_NODE;
+    }
+
+    EllipsoidData* SceneManager::getSelectedNodeEllipsoid() {
+        const NodeId ellipsoid_id = getSelectedNodeEllipsoidId();
+        if (ellipsoid_id == NULL_NODE)
+            return nullptr;
+        return scene_.getEllipsoidData(ellipsoid_id);
+    }
+
+    const EllipsoidData* SceneManager::getSelectedNodeEllipsoid() const {
+        const NodeId ellipsoid_id = getSelectedNodeEllipsoidId();
+        if (ellipsoid_id == NULL_NODE)
+            return nullptr;
+        return scene_.getEllipsoidData(ellipsoid_id);
+    }
+
+    void SceneManager::syncEllipsoidToRenderSettings() {
+        if (services().renderingOrNull()) {
+            services().renderingOrNull()->markDirty();
+        }
+    }
+
     std::expected<void, std::string> SceneManager::applyLoadedDataset(
         const std::filesystem::path& path,
         const lfs::core::param::TrainingParameters& params,

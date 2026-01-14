@@ -430,6 +430,13 @@ namespace lfs::vis {
             markDirty();
         });
 
+        // Ellipsoid changes (scene graph is source of truth, this just handles enable flag)
+        ui::EllipsoidChanged::when([this](const auto& event) {
+            std::lock_guard<std::mutex> lock(settings_mutex_);
+            settings_.use_ellipsoid = event.enabled;
+            markDirty();
+        });
+
         // Point cloud mode changes
         ui::PointCloudModeChanged::when([this](const auto& event) {
             std::lock_guard<std::mutex> lock(settings_mutex_);
@@ -1373,6 +1380,35 @@ namespace lfs::vis {
                 auto bbox_result = engine_->renderBoundingBox(box, viewport, color, line_width);
                 if (!bbox_result) {
                     LOG_WARN("Failed to render bounding box: {}", bbox_result.error());
+                }
+            }
+        }
+
+        // Render ellipsoid wireframe overlays
+        if (settings_.show_ellipsoid && engine_ && context.scene_manager) {
+            const auto visible_ellipsoids = context.scene_manager->getScene().getVisibleEllipsoids();
+            const NodeId selected_ellipsoid_id = context.scene_manager->getSelectedNodeEllipsoidId();
+
+            for (const auto& el : visible_ellipsoids) {
+                if (!el.data)
+                    continue;
+
+                const lfs::rendering::Ellipsoid ellipsoid{
+                    .radii = el.data->radii,
+                    .transform = el.world_transform};
+
+                const glm::vec3 base_color = el.data->inverse
+                                                 ? glm::vec3(1.0f, 0.2f, 0.2f)
+                                                 : el.data->color;
+                const bool is_selected = (el.node_id == selected_ellipsoid_id);
+                const float flash = is_selected ? el.data->flash_intensity : 0.0f;
+                constexpr float FLASH_LINE_BOOST = 4.0f;
+                const glm::vec3 color = glm::mix(base_color, glm::vec3(1.0f), flash);
+                const float line_width = el.data->line_width + flash * FLASH_LINE_BOOST;
+
+                auto ellipsoid_result = engine_->renderEllipsoid(ellipsoid, viewport, color, line_width);
+                if (!ellipsoid_result) {
+                    LOG_WARN("Failed to render ellipsoid: {}", ellipsoid_result.error());
                 }
             }
         }

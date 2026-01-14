@@ -454,6 +454,7 @@ namespace lichtfeld::Strings {
         inline constexpr const char* PAINTING = "toolbar.painting";
         inline constexpr const char* ALIGN_3POINT = "toolbar.align_3point";
         inline constexpr const char* CROP_BOX = "toolbar.crop_box";
+        inline constexpr const char* ELLIPSOID = "toolbar.ellipsoid";
         inline constexpr const char* BRUSH_SELECTION = "toolbar.brush_selection";
         inline constexpr const char* RECT_SELECTION = "toolbar.rect_selection";
         inline constexpr const char* POLYGON_SELECTION = "toolbar.polygon_selection";
@@ -505,6 +506,19 @@ namespace lichtfeld::Strings {
         inline constexpr const char* LINE_WIDTH = "cropbox.line_width";
         inline constexpr const char* INSTRUCTIONS = "cropbox.instructions";
     } // namespace CropBox
+
+    namespace Ellipsoid {
+        inline constexpr const char* TITLE = "ellipsoid.title";
+        inline constexpr const char* NOT_VISIBLE = "ellipsoid.not_visible";
+        inline constexpr const char* NO_SELECTION = "ellipsoid.no_selection";
+        inline constexpr const char* INVALID = "ellipsoid.invalid";
+        inline constexpr const char* POSITION = "ellipsoid.position";
+        inline constexpr const char* ROTATION = "ellipsoid.rotation";
+        inline constexpr const char* RADII = "ellipsoid.radii";
+        inline constexpr const char* APPEARANCE = "ellipsoid.appearance";
+        inline constexpr const char* LINE_WIDTH = "ellipsoid.line_width";
+        inline constexpr const char* INSTRUCTIONS = "ellipsoid.instructions";
+    } // namespace Ellipsoid
 
     namespace FileBrowser {
         inline constexpr const char* TITLE = "file_browser.title";

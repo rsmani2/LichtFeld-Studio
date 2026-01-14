@@ -5,6 +5,7 @@
 #include "gui/panels/tools_panel.hpp"
 #include "gui/gui_manager.hpp"
 #include "gui/panels/crop_box_panel.hpp"
+#include "gui/panels/ellipsoid_panel.hpp"
 #include "gui/panels/transform_panel.hpp"
 #include "visualizer_impl.hpp"
 #include <imgui.h>
@@ -23,6 +24,10 @@ namespace lfs::vis::gui::panels {
 
         if (current_tool == ToolType::CropBox) {
             DrawCropBoxControls(ctx);
+        }
+
+        if (current_tool == ToolType::Ellipsoid) {
+            DrawEllipsoidControls(ctx);
         }
     }
 

@@ -6,6 +6,7 @@
 
 #include "command/commands/composite_command.hpp"
 #include "command/commands/cropbox_command.hpp"
+#include "command/commands/ellipsoid_command.hpp"
 #include "command/commands/transform_command.hpp"
 #include "core/events.hpp"
 #include "core/parameters.hpp"
@@ -165,11 +166,16 @@ namespace lfs::vis {
             ImGuizmo::OPERATION crop_gizmo_operation_ = ImGuizmo::TRANSLATE;
             ImGuizmo::MODE crop_gizmo_mode_ = ImGuizmo::WORLD;
 
+            // Ellipsoid gizmo state
+            ImGuizmo::OPERATION ellipsoid_gizmo_operation_ = ImGuizmo::TRANSLATE;
+            ImGuizmo::MODE ellipsoid_gizmo_mode_ = ImGuizmo::WORLD;
+
             // Method declarations
             void renderStatusBar(const UIContext& ctx);
             void showSpeedOverlay(float current_speed, float max_speed);
             void showZoomSpeedOverlay(float zoom_speed, float max_zoom_speed);
             void renderCropBoxGizmo(const UIContext& ctx);
+            void renderEllipsoidGizmo(const UIContext& ctx);
             void renderNodeTransformGizmo(const UIContext& ctx);
 
             std::unique_ptr<MenuBar> menu_bar_;
@@ -187,6 +193,11 @@ namespace lfs::vis {
             bool cropbox_gizmo_active_ = false;
             std::string cropbox_node_name_;
             std::optional<command::CropBoxState> cropbox_state_before_drag_;
+
+            // Ellipsoid undo/redo state
+            bool ellipsoid_gizmo_active_ = false;
+            std::string ellipsoid_node_name_;
+            std::optional<command::EllipsoidState> ellipsoid_state_before_drag_;
 
             // Node transform undo/redo state (supports multi-selection)
             bool node_gizmo_active_ = false;

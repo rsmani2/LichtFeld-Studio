@@ -27,6 +27,13 @@ namespace lfs::vis::gui::panels {
         Scale
     };
 
+    enum class EllipsoidOperation {
+        Bounds,
+        Translate,
+        Rotate,
+        Scale
+    };
+
     enum class SelectionSubMode {
         Centers,
         Rectangle,
@@ -50,7 +57,9 @@ namespace lfs::vis::gui::panels {
     struct GizmoToolbarState {
         ImGuizmo::OPERATION current_operation = ImGuizmo::TRANSLATE;
         CropBoxOperation cropbox_operation = CropBoxOperation::Bounds;
+        EllipsoidOperation ellipsoid_operation = EllipsoidOperation::Bounds;
         bool reset_cropbox_requested = false;
+        bool reset_ellipsoid_requested = false;
         SelectionSubMode selection_mode = SelectionSubMode::Centers;
         TransformSpace transform_space = TransformSpace::Local;
         bool initialized = false;
@@ -68,6 +77,7 @@ namespace lfs::vis::gui::panels {
         unsigned int painting_texture = 0;
         unsigned int align_texture = 0;
         unsigned int cropbox_texture = 0;
+        unsigned int ellipsoid_texture = 0;
         unsigned int bounds_texture = 0;
         unsigned int reset_texture = 0;
         unsigned int local_texture = 0;

@@ -400,6 +400,7 @@
     "painting": "Painting",
     "align_3point": "3-Point Align",
     "crop_box": "Crop Box",
+    "ellipsoid": "Ellipsoid",
     "brush_selection": "Brush selection (Ctrl+1)",
     "rect_selection": "Rectangle selection (Ctrl+2)",
     "polygon_selection": "Polygon selection (Ctrl+3)",
@@ -450,6 +451,19 @@
     "appearance": "Appearance",
     "line_width": "Line Width",
     "instructions": "Enter: Commit crop | Ctrl+C: Copy contents"
+  },
+
+  "ellipsoid": {
+    "title": "Ellipsoid",
+    "not_visible": "Ellipsoid not visible",
+    "no_selection": "No ellipsoid selected",
+    "invalid": "Invalid ellipsoid",
+    "position": "Position",
+    "rotation": "Rotation",
+    "radii": "Radii",
+    "appearance": "Appearance",
+    "line_width": "Line Width",
+    "instructions": "Enter: Commit selection | Ctrl+C: Copy contents"
   },
 
   "file_browser": {

@@ -144,7 +144,15 @@ namespace lfs::vis {
         NodeId getSelectedNodeCropBoxId() const;
         CropBoxData* getSelectedNodeCropBox();
         const CropBoxData* getSelectedNodeCropBox() const;
-        void syncCropBoxToRenderSettings(); // Sync selected node's cropbox to render settings
+        void syncCropBoxToRenderSettings();
+
+        // Ellipsoid operations for selected node
+        void ensureEllipsoidForSelectedNode();
+        void selectEllipsoidForCurrentNode();
+        NodeId getSelectedNodeEllipsoidId() const;
+        EllipsoidData* getSelectedNodeEllipsoid();
+        const EllipsoidData* getSelectedNodeEllipsoid() const;
+        void syncEllipsoidToRenderSettings();
 
         void loadDataset(const std::filesystem::path& path,
                          const lfs::core::param::TrainingParameters& params);

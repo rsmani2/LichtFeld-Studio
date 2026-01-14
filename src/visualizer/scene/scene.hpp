@@ -36,6 +36,7 @@ namespace lfs::vis {
         POINTCLOUD,   // Contains point cloud (pre-training, can be cropped)
         GROUP,        // Empty transform node for organization
         CROPBOX,      // Crop box visualization (child of SPLAT or POINTCLOUD)
+        ELLIPSOID,    // Ellipsoid selection (child of SPLAT or POINTCLOUD)
         DATASET,      // Root node for training dataset (contains cameras + model)
         CAMERA_GROUP, // Container for camera nodes (e.g., "Training", "Validation")
         CAMERA,       // Individual camera from dataset (may have mask_path)
@@ -50,6 +51,16 @@ namespace lfs::vis {
         bool inverse = false; // Invert crop (keep outside instead of inside)
         bool enabled = false; // Whether to use for filtering gaussians
         glm::vec3 color{1.0f, 1.0f, 0.0f};
+        float line_width = 2.0f;
+        float flash_intensity = 0.0f;
+    };
+
+    // Ellipsoid data for ELLIPSOID nodes
+    struct EllipsoidData {
+        glm::vec3 radii{1.0f, 1.0f, 1.0f};
+        bool inverse = false;
+        bool enabled = false;
+        glm::vec3 color{0.3f, 0.8f, 1.0f};
         float line_width = 2.0f;
         float flash_intensity = 0.0f;
     };
@@ -86,6 +97,7 @@ namespace lfs::vis {
         std::unique_ptr<lfs::core::SplatData> model;        // For SPLAT nodes
         std::shared_ptr<lfs::core::PointCloud> point_cloud; // For POINTCLOUD nodes
         std::unique_ptr<CropBoxData> cropbox;
+        std::unique_ptr<EllipsoidData> ellipsoid;
         size_t gaussian_count = 0; // For SPLAT: num gaussians, for POINTCLOUD: num points
         glm::vec3 centroid{0.0f};
 
@@ -146,8 +158,9 @@ namespace lfs::vis {
         NodeId addGroup(const std::string& name, NodeId parent = NULL_NODE);
         NodeId addSplat(const std::string& name, std::unique_ptr<lfs::core::SplatData> model, NodeId parent = NULL_NODE);
         NodeId addPointCloud(const std::string& name, std::shared_ptr<lfs::core::PointCloud> point_cloud, NodeId parent = NULL_NODE);
-        NodeId addCropBox(const std::string& name, NodeId parent_node); // Parent can be SPLAT or POINTCLOUD
-        NodeId addDataset(const std::string& name);                     // Root node for training dataset
+        NodeId addCropBox(const std::string& name, NodeId parent_node);   // Parent can be SPLAT or POINTCLOUD
+        NodeId addEllipsoid(const std::string& name, NodeId parent_node); // Parent can be SPLAT or POINTCLOUD
+        NodeId addDataset(const std::string& name);                       // Root node for training dataset
         NodeId addCameraGroup(const std::string& name, NodeId parent, size_t camera_count);
         NodeId addCamera(const std::string& name, NodeId parent, int camera_index, int camera_uid,
                          const std::string& image_path = "", const std::string& mask_path = "");
@@ -188,6 +201,23 @@ namespace lfs::vis {
             glm::mat4 local_transform{1.0f}; // Cropbox's local transform (relative to parent)
         };
         [[nodiscard]] std::vector<RenderableCropBox> getVisibleCropBoxes() const;
+
+        // Ellipsoid operations
+        [[nodiscard]] NodeId getEllipsoidForSplat(NodeId splat_id) const;
+        [[nodiscard]] NodeId getOrCreateEllipsoidForSplat(NodeId splat_id);
+        [[nodiscard]] EllipsoidData* getEllipsoidData(NodeId ellipsoid_id);
+        [[nodiscard]] const EllipsoidData* getEllipsoidData(NodeId ellipsoid_id) const;
+        void setEllipsoidData(NodeId ellipsoid_id, const EllipsoidData& data);
+
+        // Renderable ellipsoid info for rendering
+        struct RenderableEllipsoid {
+            NodeId node_id = NULL_NODE;
+            NodeId parent_splat_id = NULL_NODE;
+            const EllipsoidData* data = nullptr;
+            glm::mat4 world_transform{1.0f};
+            glm::mat4 local_transform{1.0f};
+        };
+        [[nodiscard]] std::vector<RenderableEllipsoid> getVisibleEllipsoids() const;
 
         // Get combined model for rendering (transforms NOT baked, applied at render time)
         const lfs::core::SplatData* getCombinedModel() const;

@@ -1125,6 +1125,48 @@ namespace lfs::vis {
         return id;
     }
 
+    NodeId Scene::addEllipsoid(const std::string& name, const NodeId parent_node) {
+        const auto* parent = getNodeById(parent_node);
+        if (!parent || (parent->type != NodeType::SPLAT && parent->type != NodeType::POINTCLOUD)) {
+            LOG_WARN("Cannot add ellipsoid '{}': parent must be a SPLAT or POINTCLOUD node", name);
+            return NULL_NODE;
+        }
+
+        for (const NodeId child_id : parent->children) {
+            if (const auto* child = getNodeById(child_id)) {
+                if (child->type == NodeType::ELLIPSOID) {
+                    LOG_DEBUG("Node '{}' already has ellipsoid '{}'", parent->name, child->name);
+                    return child_id;
+                }
+            }
+        }
+
+        const NodeId id = next_node_id_++;
+        auto node = std::make_unique<Node>();
+        node->id = id;
+        node->parent_id = parent_node;
+        node->type = NodeType::ELLIPSOID;
+        node->name = name;
+        node->ellipsoid = std::make_unique<EllipsoidData>();
+
+        glm::vec3 bounds_min, bounds_max;
+        if (getNodeBounds(parent_node, bounds_min, bounds_max)) {
+            const glm::vec3 size = bounds_max - bounds_min;
+            node->ellipsoid->radii = size * 0.5f;
+        }
+
+        if (auto* p = getNodeById(parent_node)) {
+            p->children.push_back(id);
+        }
+
+        id_to_index_[id] = nodes_.size();
+        node->initObservables(this);
+        nodes_.push_back(std::move(node));
+
+        LOG_DEBUG("Added ellipsoid node '{}' (id={}) as child of '{}'", name, id, parent->name);
+        return id;
+    }
+
     NodeId Scene::addDataset(const std::string& name) {
         const NodeId id = next_node_id_++;
         auto node = std::make_unique<Node>();
@@ -1752,6 +1794,89 @@ namespace lfs::vis {
             rcb.world_transform = getWorldTransform(node->id);
             rcb.local_transform = node->local_transform.get();
             result.push_back(rcb);
+        }
+
+        return result;
+    }
+
+    // ========== Ellipsoid Operations ==========
+
+    NodeId Scene::getEllipsoidForSplat(const NodeId splat_id) const {
+        const auto* node = getNodeById(splat_id);
+        if (!node || (node->type != NodeType::SPLAT && node->type != NodeType::POINTCLOUD)) {
+            return NULL_NODE;
+        }
+
+        for (const NodeId child_id : node->children) {
+            if (const auto* child = getNodeById(child_id)) {
+                if (child->type == NodeType::ELLIPSOID) {
+                    return child_id;
+                }
+            }
+        }
+        return NULL_NODE;
+    }
+
+    NodeId Scene::getOrCreateEllipsoidForSplat(const NodeId splat_id) {
+        NodeId existing = getEllipsoidForSplat(splat_id);
+        if (existing != NULL_NODE) {
+            return existing;
+        }
+
+        const auto* node = getNodeById(splat_id);
+        if (!node || (node->type != NodeType::SPLAT && node->type != NodeType::POINTCLOUD)) {
+            return NULL_NODE;
+        }
+
+        const std::string ellipsoid_name = node->name + "_ellipsoid";
+        return addEllipsoid(ellipsoid_name, splat_id);
+    }
+
+    EllipsoidData* Scene::getEllipsoidData(const NodeId ellipsoid_id) {
+        auto* node = getNodeById(ellipsoid_id);
+        if (!node || node->type != NodeType::ELLIPSOID) {
+            return nullptr;
+        }
+        return node->ellipsoid.get();
+    }
+
+    const EllipsoidData* Scene::getEllipsoidData(const NodeId ellipsoid_id) const {
+        const auto* node = getNodeById(ellipsoid_id);
+        if (!node || node->type != NodeType::ELLIPSOID) {
+            return nullptr;
+        }
+        return node->ellipsoid.get();
+    }
+
+    void Scene::setEllipsoidData(const NodeId ellipsoid_id, const EllipsoidData& data) {
+        auto* node = getNodeById(ellipsoid_id);
+        if (!node || node->type != NodeType::ELLIPSOID || !node->ellipsoid) {
+            return;
+        }
+        *node->ellipsoid = data;
+    }
+
+    std::vector<Scene::RenderableEllipsoid> Scene::getVisibleEllipsoids() const {
+        std::vector<RenderableEllipsoid> result;
+
+        for (const auto& node : nodes_) {
+            if (node->type != NodeType::ELLIPSOID)
+                continue;
+            if (!node->visible)
+                continue;
+            if (!node->ellipsoid)
+                continue;
+
+            if (!isNodeEffectivelyVisible(node->parent_id))
+                continue;
+
+            RenderableEllipsoid rel;
+            rel.node_id = node->id;
+            rel.parent_splat_id = node->parent_id;
+            rel.data = node->ellipsoid.get();
+            rel.world_transform = getWorldTransform(node->id);
+            rel.local_transform = node->local_transform.get();
+            result.push_back(rel);
         }
 
         return result;

@@ -208,6 +208,10 @@ namespace lfs::core {
                   glm::vec3 max_bounds;
                   bool enabled;);
             EVENT(CropBoxVisibilityChanged, bool visible;);
+            EVENT(EllipsoidChanged,
+                  glm::vec3 radii;
+                  bool enabled;);
+            EVENT(EllipsoidVisibilityChanged, bool visible;);
             EVENT(ConsoleResult, std::string command; std::string result;);
             EVENT(SplitPositionChanged, float position;);
             EVENT(GTComparisonModeChanged, bool enabled;);

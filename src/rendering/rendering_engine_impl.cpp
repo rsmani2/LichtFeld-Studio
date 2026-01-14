@@ -56,6 +56,13 @@ namespace lfs::rendering {
         }
         LOG_DEBUG("Bounding box renderer initialized");
 
+        if (auto result = ellipsoid_renderer_.init(); !result) {
+            LOG_ERROR("Failed to initialize ellipsoid renderer: {}", result.error());
+            shutdown();
+            return std::unexpected(result.error());
+        }
+        LOG_DEBUG("Ellipsoid renderer initialized");
+
         if (auto result = axes_renderer_.init(); !result) {
             LOG_ERROR("Failed to initialize axes renderer: {}", result.error());
             shutdown();
@@ -449,6 +456,28 @@ namespace lfs::rendering {
         auto proj = createProjectionMatrix(viewport);
 
         return bbox_renderer_.render(view, proj);
+    }
+
+    Result<void> RenderingEngineImpl::renderEllipsoid(
+        const Ellipsoid& ellipsoid,
+        const ViewportData& viewport,
+        const glm::vec3& color,
+        float line_width) {
+
+        if (!isInitialized() || !ellipsoid_renderer_.isInitialized()) {
+            LOG_ERROR("Ellipsoid renderer not initialized");
+            return std::unexpected("Ellipsoid renderer not initialized");
+        }
+
+        ellipsoid_renderer_.setRadii(ellipsoid.radii);
+        ellipsoid_renderer_.setTransform(ellipsoid.transform);
+        ellipsoid_renderer_.setColor(color);
+        ellipsoid_renderer_.setLineWidth(line_width);
+
+        auto view = createViewMatrix(viewport);
+        auto proj = createProjectionMatrix(viewport);
+
+        return ellipsoid_renderer_.render(view, proj);
     }
 
     Result<void> RenderingEngineImpl::renderCoordinateAxes(

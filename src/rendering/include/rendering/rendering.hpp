@@ -60,6 +60,11 @@ namespace lfs::rendering {
         glm::mat4 transform{1.0f};
     };
 
+    struct Ellipsoid {
+        glm::vec3 radii{1.0f, 1.0f, 1.0f};
+        glm::mat4 transform{1.0f};
+    };
+
     struct RenderRequest {
         ViewportData viewport;
         float scaling_modifier = 1.0f;
@@ -321,6 +326,12 @@ namespace lfs::rendering {
             const BoundingBox& box,
             const ViewportData& viewport,
             const glm::vec3& color = glm::vec3(1.0f, 1.0f, 0.0f),
+            float line_width = 2.0f) = 0;
+
+        virtual Result<void> renderEllipsoid(
+            const Ellipsoid& ellipsoid,
+            const ViewportData& viewport,
+            const glm::vec3& color = glm::vec3(0.3f, 0.8f, 1.0f),
             float line_width = 2.0f) = 0;
 
         virtual Result<void> renderCoordinateAxes(
