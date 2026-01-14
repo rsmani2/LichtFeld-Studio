@@ -439,22 +439,8 @@ namespace lfs::vis {
         const auto* node = scene_.getNode(name);
         scene_.setNodeVisibility(name, visible);
 
-        // Sync render settings for crop tools
-        if (node && visible) {
-            if (auto* rm = services().renderingOrNull()) {
-                auto settings = rm->getSettings();
-                bool update = false;
-                if (node->type == NodeType::CROPBOX && !settings.show_crop_box) {
-                    settings.show_crop_box = true;
-                    update = true;
-                } else if (node->type == NodeType::ELLIPSOID && !settings.show_ellipsoid) {
-                    settings.show_ellipsoid = true;
-                    update = true;
-                }
-                if (update)
-                    rm->updateSettings(settings);
-            }
-        }
+        if (visible)
+            syncCropToolRenderSettings(node);
 
         emitSceneChanged();
     }
@@ -470,20 +456,7 @@ namespace lfs::vis {
                 selected_nodes_.insert(name);
             }
 
-            // Enable render settings for crop tools when selected
-            if (auto* rm = services().renderingOrNull()) {
-                auto settings = rm->getSettings();
-                bool update = false;
-                if (node->type == NodeType::CROPBOX && !settings.show_crop_box) {
-                    settings.show_crop_box = true;
-                    update = true;
-                } else if (node->type == NodeType::ELLIPSOID && !settings.show_ellipsoid) {
-                    settings.show_ellipsoid = true;
-                    update = true;
-                }
-                if (update)
-                    rm->updateSettings(settings);
-            }
+            syncCropToolRenderSettings(node);
 
             ui::NodeSelected{
                 .path = name,
@@ -1711,6 +1684,23 @@ namespace lfs::vis {
 
     void SceneManager::emitSceneChanged() {
         state::SceneChanged{}.emit();
+    }
+
+    void SceneManager::syncCropToolRenderSettings(const SceneNode* node) {
+        if (!node)
+            return;
+        auto* rm = services().renderingOrNull();
+        if (!rm)
+            return;
+
+        auto settings = rm->getSettings();
+        if (node->type == NodeType::CROPBOX && !settings.show_crop_box) {
+            settings.show_crop_box = true;
+            rm->updateSettings(settings);
+        } else if (node->type == NodeType::ELLIPSOID && !settings.show_ellipsoid) {
+            settings.show_ellipsoid = true;
+            rm->updateSettings(settings);
+        }
     }
 
     void SceneManager::handleCropActivePly(const lfs::geometry::BoundingBox& crop_box, const bool inverse) {

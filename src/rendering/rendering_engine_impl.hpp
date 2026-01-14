@@ -6,8 +6,8 @@
 
 #include "axes_renderer.hpp"
 #include "bbox_renderer.hpp"
-#include "ellipsoid_renderer.hpp"
 #include "camera_frustum_renderer.hpp"
+#include "ellipsoid_renderer.hpp"
 #include "grid_renderer.hpp"
 #include "pivot_renderer.hpp"
 #include "rendering/rendering.hpp"

@@ -209,6 +209,7 @@ namespace lfs::vis {
     private:
         void setupEventHandlers();
         void emitSceneChanged();
+        void syncCropToolRenderSettings(const SceneNode* node);
         void handleCropActivePly(const lfs::geometry::BoundingBox& crop_box, bool inverse);
         void handleCropByEllipsoid(const glm::mat4& world_transform, const glm::vec3& radii, bool inverse);
         void handleRenamePly(const lfs::core::events::cmd::RenamePLY& event);

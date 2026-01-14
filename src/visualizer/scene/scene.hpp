@@ -158,9 +158,9 @@ namespace lfs::vis {
         NodeId addGroup(const std::string& name, NodeId parent = NULL_NODE);
         NodeId addSplat(const std::string& name, std::unique_ptr<lfs::core::SplatData> model, NodeId parent = NULL_NODE);
         NodeId addPointCloud(const std::string& name, std::shared_ptr<lfs::core::PointCloud> point_cloud, NodeId parent = NULL_NODE);
-        NodeId addCropBox(const std::string& name, NodeId parent_id);    // Child of splat node
+        NodeId addCropBox(const std::string& name, NodeId parent_id);   // Child of splat node
         NodeId addEllipsoid(const std::string& name, NodeId parent_id); // Child of splat node
-        NodeId addDataset(const std::string& name);                                       // Root node for training dataset
+        NodeId addDataset(const std::string& name);                     // Root node for training dataset
         NodeId addCameraGroup(const std::string& name, NodeId parent, size_t camera_count);
         NodeId addCamera(const std::string& name, NodeId parent, int camera_index, int camera_uid,
                          const std::string& image_path = "", const std::string& mask_path = "");
