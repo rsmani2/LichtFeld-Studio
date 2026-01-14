@@ -210,12 +210,18 @@ namespace lfs::vis {
         void setupEventHandlers();
         void emitSceneChanged();
         void handleCropActivePly(const lfs::geometry::BoundingBox& crop_box, bool inverse);
+        void handleCropByEllipsoid(const glm::mat4& world_transform, const glm::vec3& radii, bool inverse);
         void handleRenamePly(const lfs::core::events::cmd::RenamePLY& event);
         void handleReparentNode(const std::string& node_name, const std::string& new_parent_name);
         void handleAddGroup(const std::string& name, const std::string& parent_name);
         void handleDuplicateNode(const std::string& name);
         void handleMergeGroup(const std::string& name);
+        void handleAddCropBox(const std::string& node_name);
+        void handleAddCropEllipsoid(const std::string& node_name);
+        void handleResetCropBox();
+        void handleResetEllipsoid();
         void updateCropBoxToFitScene(bool use_percentile);
+        void updateEllipsoidToFitScene(bool use_percentile);
 
         Scene scene_;
         mutable std::mutex state_mutex_;

@@ -78,12 +78,6 @@ namespace lfs::vis {
             bool isResizingPanel() const { return resizing_panel_ || hovering_panel_edge_; }
             bool isPositionInViewportGizmo(double x, double y) const;
 
-            // Crop box gizmo state access
-            void setCropGizmoOperation(ImGuizmo::OPERATION op) { crop_gizmo_operation_ = op; }
-            void setCropGizmoMode(ImGuizmo::MODE mode) { crop_gizmo_mode_ = mode; }
-            ImGuizmo::OPERATION getCropGizmoOperation() const { return crop_gizmo_operation_; }
-            ImGuizmo::MODE getCropGizmoMode() const { return crop_gizmo_mode_; }
-
             // Selection sub-mode shortcuts (Ctrl+1..5)
             void setSelectionSubMode(panels::SelectionSubMode mode);
             panels::SelectionSubMode getSelectionSubMode() const { return gizmo_toolbar_state_.selection_mode; }
@@ -161,14 +155,6 @@ namespace lfs::vis {
 
             // Status bar layout
             static constexpr float STATUS_BAR_HEIGHT = 22.0f;
-
-            // Crop box gizmo state (shared between panel and rendering)
-            ImGuizmo::OPERATION crop_gizmo_operation_ = ImGuizmo::TRANSLATE;
-            ImGuizmo::MODE crop_gizmo_mode_ = ImGuizmo::WORLD;
-
-            // Ellipsoid gizmo state
-            ImGuizmo::OPERATION ellipsoid_gizmo_operation_ = ImGuizmo::TRANSLATE;
-            ImGuizmo::MODE ellipsoid_gizmo_mode_ = ImGuizmo::WORLD;
 
             // Method declarations
             void renderStatusBar(const UIContext& ctx);

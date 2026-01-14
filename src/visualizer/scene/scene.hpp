@@ -35,8 +35,8 @@ namespace lfs::vis {
         SPLAT,        // Contains gaussian splat data
         POINTCLOUD,   // Contains point cloud (pre-training, can be cropped)
         GROUP,        // Empty transform node for organization
-        CROPBOX,      // Crop box visualization (child of SPLAT or POINTCLOUD)
-        ELLIPSOID,    // Ellipsoid selection (child of SPLAT or POINTCLOUD)
+        CROPBOX,      // Crop box visualization (child of SPLAT, POINTCLOUD, or DATASET)
+        ELLIPSOID,    // Ellipsoid selection (child of SPLAT, POINTCLOUD, or DATASET)
         DATASET,      // Root node for training dataset (contains cameras + model)
         CAMERA_GROUP, // Container for camera nodes (e.g., "Training", "Validation")
         CAMERA,       // Individual camera from dataset (may have mask_path)
@@ -44,7 +44,7 @@ namespace lfs::vis {
         IMAGE         // Individual image file reference (not loaded, just path)
     };
 
-    // Crop box data for CROPBOX nodes
+    // Crop box data for CROPBOX nodes (parent_id references associated splat)
     struct CropBoxData {
         glm::vec3 min{-1.0f, -1.0f, -1.0f};
         glm::vec3 max{1.0f, 1.0f, 1.0f};
@@ -55,12 +55,12 @@ namespace lfs::vis {
         float flash_intensity = 0.0f;
     };
 
-    // Ellipsoid data for ELLIPSOID nodes
+    // Ellipsoid data for ELLIPSOID nodes (parent_id references associated splat)
     struct EllipsoidData {
         glm::vec3 radii{1.0f, 1.0f, 1.0f};
         bool inverse = false;
         bool enabled = false;
-        glm::vec3 color{0.3f, 0.8f, 1.0f};
+        glm::vec3 color{1.0f, 1.0f, 0.0f};
         float line_width = 2.0f;
         float flash_intensity = 0.0f;
     };
@@ -158,9 +158,9 @@ namespace lfs::vis {
         NodeId addGroup(const std::string& name, NodeId parent = NULL_NODE);
         NodeId addSplat(const std::string& name, std::unique_ptr<lfs::core::SplatData> model, NodeId parent = NULL_NODE);
         NodeId addPointCloud(const std::string& name, std::shared_ptr<lfs::core::PointCloud> point_cloud, NodeId parent = NULL_NODE);
-        NodeId addCropBox(const std::string& name, NodeId parent_node);   // Parent can be SPLAT or POINTCLOUD
-        NodeId addEllipsoid(const std::string& name, NodeId parent_node); // Parent can be SPLAT or POINTCLOUD
-        NodeId addDataset(const std::string& name);                       // Root node for training dataset
+        NodeId addCropBox(const std::string& name, NodeId parent_id);    // Child of splat node
+        NodeId addEllipsoid(const std::string& name, NodeId parent_id); // Child of splat node
+        NodeId addDataset(const std::string& name);                                       // Root node for training dataset
         NodeId addCameraGroup(const std::string& name, NodeId parent, size_t camera_count);
         NodeId addCamera(const std::string& name, NodeId parent, int camera_index, int camera_uid,
                          const std::string& image_path = "", const std::string& mask_path = "");

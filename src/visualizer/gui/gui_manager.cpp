@@ -801,33 +801,12 @@ namespace lfs::vis::gui {
             const bool is_brush_mode = (current_tool == ToolType::Brush);
             const bool is_align_mode = (current_tool == ToolType::Align);
             const bool is_selection_mode = (current_tool == ToolType::Selection);
-            const bool is_cropbox_mode = (current_tool == ToolType::CropBox);
-            const bool is_ellipsoid_mode = (current_tool == ToolType::Ellipsoid);
 
-            // Materialize deletions when switching away from selection or cropbox or ellipsoid tools
+            // Materialize deletions when switching away from selection tool
             const bool was_selection_mode = (previous_tool_ == ToolType::Selection);
-            const bool was_cropbox_mode = (previous_tool_ == ToolType::CropBox);
-            const bool was_ellipsoid_mode = (previous_tool_ == ToolType::Ellipsoid);
-            if ((was_selection_mode || was_cropbox_mode || was_ellipsoid_mode) && current_tool != previous_tool_) {
+            if (was_selection_mode && current_tool != previous_tool_) {
                 if (auto* sm = ctx.viewer->getSceneManager()) {
                     sm->applyDeleted();
-                }
-            }
-
-            // Auto-create and select cropbox when switching to CropBox tool
-            if (is_cropbox_mode && !was_cropbox_mode) {
-                if (auto* sm = ctx.viewer->getSceneManager()) {
-                    sm->ensureCropBoxForSelectedNode();
-                    // Auto-select the cropbox for the current node (or first POINTCLOUD)
-                    sm->selectCropBoxForCurrentNode();
-                }
-            }
-
-            // Auto-create and select ellipsoid when switching to Ellipsoid tool
-            if (is_ellipsoid_mode && !was_ellipsoid_mode) {
-                if (auto* sm = ctx.viewer->getSceneManager()) {
-                    sm->ensureEllipsoidForSelectedNode();
-                    sm->selectEllipsoidForCurrentNode();
                 }
             }
 
@@ -871,126 +850,6 @@ namespace lfs::vis::gui {
                 }
             }
 
-            if (is_cropbox_mode) {
-                switch (gizmo_toolbar_state_.cropbox_operation) {
-                case panels::CropBoxOperation::Bounds: crop_gizmo_operation_ = ImGuizmo::BOUNDS; break;
-                case panels::CropBoxOperation::Translate: crop_gizmo_operation_ = ImGuizmo::TRANSLATE; break;
-                case panels::CropBoxOperation::Rotate: crop_gizmo_operation_ = ImGuizmo::ROTATE; break;
-                case panels::CropBoxOperation::Scale: crop_gizmo_operation_ = ImGuizmo::SCALE; break;
-                }
-            }
-
-            if (is_ellipsoid_mode) {
-                switch (gizmo_toolbar_state_.ellipsoid_operation) {
-                case panels::EllipsoidOperation::Bounds: ellipsoid_gizmo_operation_ = ImGuizmo::BOUNDS; break;
-                case panels::EllipsoidOperation::Translate: ellipsoid_gizmo_operation_ = ImGuizmo::TRANSLATE; break;
-                case panels::EllipsoidOperation::Rotate: ellipsoid_gizmo_operation_ = ImGuizmo::ROTATE; break;
-                case panels::EllipsoidOperation::Scale: ellipsoid_gizmo_operation_ = ImGuizmo::SCALE; break;
-                }
-            }
-
-            // Toggle cropbox visibility with tool
-            if (auto* render_manager = ctx.viewer->getRenderingManager()) {
-                auto settings = render_manager->getSettings();
-                if (is_cropbox_mode != settings.show_crop_box) {
-                    settings.show_crop_box = is_cropbox_mode;
-                    render_manager->updateSettings(settings);
-                }
-            }
-
-            // Toggle ellipsoid visibility with tool
-            if (auto* render_manager = ctx.viewer->getRenderingManager()) {
-                auto settings = render_manager->getSettings();
-                if (is_ellipsoid_mode != settings.show_ellipsoid) {
-                    settings.show_ellipsoid = is_ellipsoid_mode;
-                    render_manager->updateSettings(settings);
-                }
-            }
-
-            // Handle reset cropbox request from toolbar
-            if (gizmo_toolbar_state_.reset_cropbox_requested) {
-                gizmo_toolbar_state_.reset_cropbox_requested = false;
-                auto* const viewer_scene_manager = ctx.viewer->getSceneManager();
-                auto* const render_manager = ctx.viewer->getRenderingManager();
-                if (viewer_scene_manager && render_manager) {
-                    const NodeId cropbox_id = viewer_scene_manager->getSelectedNodeCropBoxId();
-                    if (cropbox_id != NULL_NODE) {
-                        auto* node = viewer_scene_manager->getScene().getMutableNode(
-                            viewer_scene_manager->getScene().getNodeById(cropbox_id)->name);
-                        if (node && node->cropbox) {
-                            // Capture state before reset
-                            const command::CropBoxState old_state{
-                                .min = node->cropbox->min,
-                                .max = node->cropbox->max,
-                                .local_transform = node->local_transform.get(),
-                                .inverse = node->cropbox->inverse};
-
-                            // Apply reset to scene graph
-                            node->cropbox->min = glm::vec3(-1.0f);
-                            node->cropbox->max = glm::vec3(1.0f);
-                            node->cropbox->inverse = false;
-                            node->local_transform = glm::mat4(1.0f);
-                            node->transform_dirty = true;
-                            viewer_scene_manager->getScene().invalidateCache();
-
-                            // Capture state after reset
-                            const command::CropBoxState new_state{
-                                .min = node->cropbox->min,
-                                .max = node->cropbox->max,
-                                .local_transform = node->local_transform.get(),
-                                .inverse = node->cropbox->inverse};
-
-                            // Create undo command
-                            auto cmd = std::make_unique<command::CropBoxCommand>(
-                                viewer_scene_manager, node->name, old_state, new_state);
-                            viewer_->getCommandHistory().execute(std::move(cmd));
-
-                            auto settings = render_manager->getSettings();
-                            settings.use_crop_box = false;
-                            render_manager->updateSettings(settings);
-                        }
-                    }
-                }
-            }
-
-            // Handle reset ellipsoid request from toolbar
-            if (gizmo_toolbar_state_.reset_ellipsoid_requested) {
-                gizmo_toolbar_state_.reset_ellipsoid_requested = false;
-                auto* const viewer_scene_manager = ctx.viewer->getSceneManager();
-                auto* const render_manager = ctx.viewer->getRenderingManager();
-                if (viewer_scene_manager && render_manager) {
-                    const NodeId ellipsoid_id = viewer_scene_manager->getSelectedNodeEllipsoidId();
-                    if (ellipsoid_id != NULL_NODE) {
-                        auto* node = viewer_scene_manager->getScene().getMutableNode(
-                            viewer_scene_manager->getScene().getNodeById(ellipsoid_id)->name);
-                        if (node && node->ellipsoid) {
-                            const command::EllipsoidState old_state{
-                                .radii = node->ellipsoid->radii,
-                                .local_transform = node->local_transform.get(),
-                                .inverse = node->ellipsoid->inverse};
-
-                            node->ellipsoid->radii = glm::vec3(1.0f);
-                            node->ellipsoid->inverse = false;
-                            node->local_transform = glm::mat4(1.0f);
-                            node->transform_dirty = true;
-                            viewer_scene_manager->getScene().invalidateCache();
-
-                            const command::EllipsoidState new_state{
-                                .radii = node->ellipsoid->radii,
-                                .local_transform = node->local_transform.get(),
-                                .inverse = node->ellipsoid->inverse};
-
-                            auto cmd = std::make_unique<command::EllipsoidCommand>(
-                                viewer_scene_manager, node->name, old_state, new_state);
-                            viewer_->getCommandHistory().execute(std::move(cmd));
-
-                            auto settings = render_manager->getSettings();
-                            settings.use_ellipsoid = false;
-                            render_manager->updateSettings(settings);
-                        }
-                    }
-                }
-            }
         } else {
             show_node_gizmo_ = false;
             auto* brush_tool = ctx.viewer->getBrushTool();
@@ -1783,15 +1642,6 @@ namespace lfs::vis::gui {
         }
 
         auto& editor = viewer_->getEditorContext();
-        if (editor.getActiveTool() == ToolType::CropBox) {
-            if (auto* const rm = viewer_->getRenderingManager()) {
-                auto settings = rm->getSettings();
-                settings.show_crop_box = false;
-                settings.use_crop_box = false;
-                rm->updateSettings(settings);
-            }
-        }
-
         editor.setActiveTool(ToolType::None);
         gizmo_toolbar_state_.current_operation = ImGuizmo::TRANSLATE;
     }
@@ -1850,20 +1700,14 @@ namespace lfs::vis::gui {
         lfs::core::events::tools::SetToolbarTool::when([this](const auto& e) {
             auto& editor = viewer_->getEditorContext();
             editor.setActiveTool(static_cast<ToolType>(e.tool_mode));
-            if (editor.getActiveTool() == ToolType::CropBox) {
-                gizmo_toolbar_state_.cropbox_operation = panels::CropBoxOperation::Bounds;
-                crop_gizmo_operation_ = ImGuizmo::BOUNDS;
-            }
         });
 
         cmd::ApplyCropBox::when([this](const auto&) {
-            if (viewer_->getEditorContext().getActiveTool() != ToolType::CropBox) {
-                return;
-            }
             auto* const sm = viewer_->getSceneManager();
             if (!sm)
                 return;
 
+            // Check if a cropbox node is selected
             const NodeId cropbox_id = sm->getSelectedNodeCropBoxId();
             if (cropbox_id == NULL_NODE)
                 return;
@@ -1881,15 +1725,38 @@ namespace lfs::vis::gui {
             triggerCropFlash();
         });
 
-        // Handle Ctrl+T to toggle crop inverse mode
-        cmd::ToggleCropInverse::when([this](const auto&) {
-            if (viewer_->getEditorContext().getActiveTool() != ToolType::CropBox) {
-                return;
-            }
+        cmd::ApplyEllipsoid::when([this](const auto&) {
             auto* const sm = viewer_->getSceneManager();
             if (!sm)
                 return;
 
+            const NodeId ellipsoid_id = sm->getSelectedNodeEllipsoidId();
+            if (ellipsoid_id == NULL_NODE)
+                return;
+
+            const auto* ellipsoid_node = sm->getScene().getNodeById(ellipsoid_id);
+            if (!ellipsoid_node || !ellipsoid_node->ellipsoid)
+                return;
+
+            const glm::mat4 world_transform = sm->getScene().getWorldTransform(ellipsoid_id);
+            const glm::vec3 radii = ellipsoid_node->ellipsoid->radii;
+            const bool inverse = ellipsoid_node->ellipsoid->inverse;
+
+            cmd::CropPLYEllipsoid{
+                .world_transform = world_transform,
+                .radii = radii,
+                .inverse = inverse}
+                .emit();
+            triggerCropFlash();
+        });
+
+        // Handle Ctrl+T to toggle crop inverse mode
+        cmd::ToggleCropInverse::when([this](const auto&) {
+            auto* const sm = viewer_->getSceneManager();
+            if (!sm)
+                return;
+
+            // Check if a cropbox node is selected
             const NodeId cropbox_id = sm->getSelectedNodeCropBoxId();
             if (cropbox_id == NULL_NODE)
                 return;
@@ -2229,9 +2096,10 @@ namespace lfs::vis::gui {
         ImGuizmo::SetAxisLimit(GIZMO_AXIS_LIMIT);
         ImGuizmo::SetPlaneLimit(GIZMO_AXIS_LIMIT);
 
-        if (crop_gizmo_operation_ == ImGuizmo::BOUNDS) {
-            ImGuizmo::SetAxisMask(true, true, true);
-        } else {
+        // Use the general toolbar operation for crop gizmo
+        const ImGuizmo::OPERATION gizmo_op = gizmo_toolbar_state_.current_operation;
+
+        {
             static bool s_hovered_axis = false;
             const bool is_using = ImGuizmo::IsUsing();
             if (!is_using) {
@@ -2252,17 +2120,15 @@ namespace lfs::vis::gui {
         ImGuizmo::SetDrawlist(overlay_drawlist);
 
         glm::mat4 delta_matrix;
-        constexpr float LOCAL_BOUNDS[6] = {-0.5f, -0.5f, -0.5f, 0.5f, 0.5f, 0.5f};
 
-        const ImGuizmo::MODE gizmo_mode = (crop_gizmo_operation_ == ImGuizmo::TRANSLATE)
+        const ImGuizmo::MODE gizmo_mode = (gizmo_op == ImGuizmo::TRANSLATE)
                                               ? ImGuizmo::WORLD
                                               : ImGuizmo::LOCAL;
 
         const bool gizmo_changed = ImGuizmo::Manipulate(
             glm::value_ptr(view), glm::value_ptr(projection),
-            crop_gizmo_operation_, gizmo_mode, glm::value_ptr(gizmo_matrix),
-            glm::value_ptr(delta_matrix), nullptr,
-            crop_gizmo_operation_ == ImGuizmo::BOUNDS ? LOCAL_BOUNDS : nullptr);
+            gizmo_op, gizmo_mode, glm::value_ptr(gizmo_matrix),
+            glm::value_ptr(delta_matrix), nullptr, nullptr);
 
         const bool is_using = ImGuizmo::IsUsing();
 
@@ -2303,7 +2169,7 @@ namespace lfs::vis::gui {
                 glm::vec3 new_min, new_max;
                 glm::mat4 new_world_transform;
 
-                if (crop_gizmo_operation_ == ImGuizmo::SCALE || crop_gizmo_operation_ == ImGuizmo::BOUNDS) {
+                if (gizmo_op == ImGuizmo::SCALE) {
                     const glm::vec3 new_half = new_size * 0.5f;
                     new_min = -new_half;
                     new_max = new_half;
@@ -2405,9 +2271,10 @@ namespace lfs::vis::gui {
         ImGuizmo::SetAxisLimit(GIZMO_AXIS_LIMIT);
         ImGuizmo::SetPlaneLimit(GIZMO_AXIS_LIMIT);
 
-        if (ellipsoid_gizmo_operation_ == ImGuizmo::BOUNDS) {
-            ImGuizmo::SetAxisMask(true, true, true);
-        } else {
+        // Use the general toolbar operation for ellipsoid gizmo
+        const ImGuizmo::OPERATION gizmo_op = gizmo_toolbar_state_.current_operation;
+
+        {
             static bool s_hovered_axis = false;
             const bool is_using = ImGuizmo::IsUsing();
             if (!is_using) {
@@ -2427,17 +2294,15 @@ namespace lfs::vis::gui {
         ImGuizmo::SetDrawlist(overlay_drawlist);
 
         glm::mat4 delta_matrix;
-        constexpr float LOCAL_BOUNDS[6] = {-1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f};
 
-        const ImGuizmo::MODE gizmo_mode = (ellipsoid_gizmo_operation_ == ImGuizmo::TRANSLATE)
+        const ImGuizmo::MODE gizmo_mode = (gizmo_op == ImGuizmo::TRANSLATE)
                                               ? ImGuizmo::WORLD
                                               : ImGuizmo::LOCAL;
 
         const bool gizmo_changed = ImGuizmo::Manipulate(
             glm::value_ptr(view), glm::value_ptr(projection),
-            ellipsoid_gizmo_operation_, gizmo_mode, glm::value_ptr(gizmo_matrix),
-            glm::value_ptr(delta_matrix), nullptr,
-            ellipsoid_gizmo_operation_ == ImGuizmo::BOUNDS ? LOCAL_BOUNDS : nullptr);
+            gizmo_op, gizmo_mode, glm::value_ptr(gizmo_matrix),
+            glm::value_ptr(delta_matrix), nullptr, nullptr);
 
         const bool is_using = ImGuizmo::IsUsing();
 
@@ -2472,7 +2337,7 @@ namespace lfs::vis::gui {
             if (mutable_node && mutable_node->ellipsoid) {
                 glm::mat4 new_world_transform;
 
-                if (ellipsoid_gizmo_operation_ == ImGuizmo::SCALE || ellipsoid_gizmo_operation_ == ImGuizmo::BOUNDS) {
+                if (gizmo_op == ImGuizmo::SCALE) {
                     mutable_node->ellipsoid->radii = new_radii;
                     new_world_transform = glm::translate(glm::mat4(1.0f), world_center) * glm::mat4(new_rotation);
                 } else {

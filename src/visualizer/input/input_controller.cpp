@@ -837,9 +837,20 @@ namespace lfs::vis {
                     cmd::PasteSelection{}.emit();
                     return;
 
-                case input::Action::APPLY_CROP_BOX:
+                case input::Action::APPLY_CROP_BOX: {
+                    // Check if ellipsoid is selected, otherwise apply cropbox
+                    if (tool_context_) {
+                        if (auto* sm = tool_context_->getSceneManager()) {
+                            const auto ellipsoid_id = sm->getSelectedNodeEllipsoidId();
+                            if (ellipsoid_id != NULL_NODE) {
+                                cmd::ApplyEllipsoid{}.emit();
+                                return;
+                            }
+                        }
+                    }
                     cmd::ApplyCropBox{}.emit();
                     return;
+                }
 
                 case input::Action::CYCLE_BRUSH_MODE:
                     if (brush_tool_ && brush_tool_->isEnabled() && tool_context_) {
@@ -1426,11 +1437,9 @@ namespace lfs::vis {
             return input::ToolMode::BRUSH;
         if (align_tool_ && align_tool_->isEnabled())
             return input::ToolMode::ALIGN;
-        // Check GUI tool mode for CropBox (and transform tools)
+        // Check GUI tool mode for transform tools
         if (services().guiOrNull()) {
             const auto gui_tool = services().guiOrNull()->getCurrentToolMode();
-            if (gui_tool == gui::panels::ToolType::CropBox)
-                return input::ToolMode::CROP_BOX;
             if (gui_tool == gui::panels::ToolType::Translate)
                 return input::ToolMode::TRANSLATE;
             if (gui_tool == gui::panels::ToolType::Rotate)

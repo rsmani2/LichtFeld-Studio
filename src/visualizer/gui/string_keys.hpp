@@ -301,6 +301,9 @@ namespace lichtfeld::Strings {
         inline constexpr const char* GO_TO_CAM_VIEW = "scene.go_to_cam_view";
         inline constexpr const char* FIT_TO_SCENE = "scene.fit_to_scene";
         inline constexpr const char* FIT_TO_SCENE_TRIMMED = "scene.fit_to_scene_trimmed";
+        inline constexpr const char* ADD_CROP_BOX = "scene.add_crop_box";
+        inline constexpr const char* ADD_CROP_ELLIPSOID = "scene.add_crop_ellipsoid";
+        inline constexpr const char* RESET_CROP = "scene.reset_crop";
         inline constexpr const char* MERGE_TO_SINGLE_PLY = "scene.merge_to_single_ply";
         inline constexpr const char* MOVE_TO = "scene.move_to";
         inline constexpr const char* MOVE_TO_ROOT = "scene.move_to_root";

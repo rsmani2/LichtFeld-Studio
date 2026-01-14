@@ -31,9 +31,7 @@ namespace lfs::vis {
         Scale,
         Mirror,
         Brush,
-        Align,
-        CropBox,
-        Ellipsoid
+        Align
     };
 
     // Centralized editor state - single source of truth for tool availability

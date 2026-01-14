@@ -127,7 +127,7 @@ namespace lfs::vis {
         removeNodeInternal(name, keep_children, false);
     }
 
-    void Scene::removeNodeInternal(const std::string& name, const bool keep_children, const bool force) {
+    void Scene::removeNodeInternal(const std::string& name, const bool keep_children, [[maybe_unused]] const bool force) {
         if (name.empty())
             return;
 
@@ -135,12 +135,6 @@ namespace lfs::vis {
                                      [&name](const std::unique_ptr<Node>& node) { return node->name == name; });
         if (it == nodes_.end())
             return;
-
-        // Prevent direct deletion of CROPBOX nodes (but allow when deleting parent)
-        if (!force && (*it)->type == NodeType::CROPBOX) {
-            LOG_WARN("Cannot delete CROPBOX node '{}' - use recalculate instead", name);
-            return;
-        }
 
         const NodeId id = (*it)->id;
         const NodeId parent_id = (*it)->parent_id;
@@ -1079,19 +1073,16 @@ namespace lfs::vis {
         return id;
     }
 
-    NodeId Scene::addCropBox(const std::string& name, const NodeId parent_node) {
-        // Verify parent is a SPLAT or POINTCLOUD node
-        const auto* parent = getNodeById(parent_node);
-        if (!parent || (parent->type != NodeType::SPLAT && parent->type != NodeType::POINTCLOUD)) {
-            LOG_WARN("Cannot add cropbox '{}': parent must be a SPLAT or POINTCLOUD node", name);
-            return NULL_NODE;
-        }
+    NodeId Scene::addCropBox(const std::string& name, const NodeId parent_id) {
+        assert(parent_id != NULL_NODE && "CropBox must have a parent splat node");
 
-        // Check if this node already has a cropbox
-        for (const NodeId child_id : parent->children) {
-            if (const auto* child = getNodeById(child_id)) {
-                if (child->type == NodeType::CROPBOX) {
-                    LOG_DEBUG("Node '{}' already has cropbox '{}'", parent->name, child->name);
+        // Check if parent already has a cropbox child
+        const auto* parent = getNodeById(parent_id);
+        if (parent) {
+            for (const NodeId child_id : parent->children) {
+                const auto* child = getNodeById(child_id);
+                if (child && child->type == NodeType::CROPBOX) {
+                    LOG_DEBUG("Parent {} already has cropbox child '{}'", parent_id, child->name);
                     return child_id;
                 }
             }
@@ -1100,42 +1091,41 @@ namespace lfs::vis {
         const NodeId id = next_node_id_++;
         auto node = std::make_unique<Node>();
         node->id = id;
-        node->parent_id = parent_node;
+        node->parent_id = parent_id;
         node->type = NodeType::CROPBOX;
         node->name = name;
         node->cropbox = std::make_unique<CropBoxData>();
 
-        // Initialize cropbox bounds from parent's bounding box
+        // Initialize cropbox bounds from parent splat
         glm::vec3 bounds_min, bounds_max;
-        if (getNodeBounds(parent_node, bounds_min, bounds_max)) {
+        if (getNodeBounds(parent_id, bounds_min, bounds_max)) {
             node->cropbox->min = bounds_min;
             node->cropbox->max = bounds_max;
-        }
-
-        // Add to parent's children (must re-get parent as vector may have changed)
-        if (auto* p = getNodeById(parent_node)) {
-            p->children.push_back(id);
         }
 
         id_to_index_[id] = nodes_.size();
         node->initObservables(this);
         nodes_.push_back(std::move(node));
 
-        LOG_DEBUG("Added cropbox node '{}' (id={}) as child of '{}'", name, id, parent->name);
+        // Add to parent's children list
+        if (auto* mutable_parent = getMutableNode(parent->name)) {
+            mutable_parent->children.push_back(id);
+        }
+
+        LOG_DEBUG("Added cropbox node '{}' (id={}) as child of node id={}", name, id, parent_id);
         return id;
     }
 
-    NodeId Scene::addEllipsoid(const std::string& name, const NodeId parent_node) {
-        const auto* parent = getNodeById(parent_node);
-        if (!parent || (parent->type != NodeType::SPLAT && parent->type != NodeType::POINTCLOUD)) {
-            LOG_WARN("Cannot add ellipsoid '{}': parent must be a SPLAT or POINTCLOUD node", name);
-            return NULL_NODE;
-        }
+    NodeId Scene::addEllipsoid(const std::string& name, const NodeId parent_id) {
+        assert(parent_id != NULL_NODE && "Ellipsoid must have a parent splat node");
 
-        for (const NodeId child_id : parent->children) {
-            if (const auto* child = getNodeById(child_id)) {
-                if (child->type == NodeType::ELLIPSOID) {
-                    LOG_DEBUG("Node '{}' already has ellipsoid '{}'", parent->name, child->name);
+        // Check if parent already has an ellipsoid child
+        const auto* parent = getNodeById(parent_id);
+        if (parent) {
+            for (const NodeId child_id : parent->children) {
+                const auto* child = getNodeById(child_id);
+                if (child && child->type == NodeType::ELLIPSOID) {
+                    LOG_DEBUG("Parent {} already has ellipsoid child '{}'", parent_id, child->name);
                     return child_id;
                 }
             }
@@ -1144,26 +1134,30 @@ namespace lfs::vis {
         const NodeId id = next_node_id_++;
         auto node = std::make_unique<Node>();
         node->id = id;
-        node->parent_id = parent_node;
+        node->parent_id = parent_id;
         node->type = NodeType::ELLIPSOID;
         node->name = name;
         node->ellipsoid = std::make_unique<EllipsoidData>();
 
+        // Initialize radii from parent splat bounds
         glm::vec3 bounds_min, bounds_max;
-        if (getNodeBounds(parent_node, bounds_min, bounds_max)) {
+        if (getNodeBounds(parent_id, bounds_min, bounds_max)) {
             const glm::vec3 size = bounds_max - bounds_min;
             node->ellipsoid->radii = size * 0.5f;
-        }
-
-        if (auto* p = getNodeById(parent_node)) {
-            p->children.push_back(id);
+            const glm::vec3 center = (bounds_min + bounds_max) * 0.5f;
+            node->local_transform = glm::translate(glm::mat4(1.0f), center);
         }
 
         id_to_index_[id] = nodes_.size();
         node->initObservables(this);
         nodes_.push_back(std::move(node));
 
-        LOG_DEBUG("Added ellipsoid node '{}' (id={}) as child of '{}'", name, id, parent->name);
+        // Add to parent's children list
+        if (auto* mutable_parent = getMutableNode(parent->name)) {
+            mutable_parent->children.push_back(id);
+        }
+
+        LOG_DEBUG("Added ellipsoid node '{}' (id={}) as child of node id={}", name, id, parent_id);
         return id;
     }
 
@@ -1669,8 +1663,12 @@ namespace lfs::vis {
             expand_bounds(node->cropbox->min, node->cropbox->max);
         }
 
-        // Recursively include children bounds
+        // Recursively include children bounds (skip crop tools - they don't contribute to data bounds)
         for (const NodeId child_id : node->children) {
+            const auto* child_node = getNodeById(child_id);
+            if (child_node && (child_node->type == NodeType::CROPBOX || child_node->type == NodeType::ELLIPSOID))
+                continue;
+
             glm::vec3 child_min, child_max;
             if (getNodeBounds(child_id, child_min, child_max)) {
                 // Transform child bounds by child's local transform relative to this node
@@ -1713,17 +1711,20 @@ namespace lfs::vis {
     // ========== CropBox Operations ==========
 
     NodeId Scene::getCropBoxForSplat(const NodeId splat_id) const {
-        const auto* node = getNodeById(splat_id);
-        // Support both SPLAT and POINTCLOUD nodes
-        if (!node || (node->type != NodeType::SPLAT && node->type != NodeType::POINTCLOUD)) {
+        if (splat_id == NULL_NODE) {
             return NULL_NODE;
         }
 
-        for (const NodeId child_id : node->children) {
-            if (const auto* child = getNodeById(child_id)) {
-                if (child->type == NodeType::CROPBOX) {
-                    return child_id;
-                }
+        // Search children of splat for CROPBOX node
+        const auto* splat = getNodeById(splat_id);
+        if (!splat) {
+            return NULL_NODE;
+        }
+
+        for (const NodeId child_id : splat->children) {
+            const auto* child = getNodeById(child_id);
+            if (child && child->type == NodeType::CROPBOX) {
+                return child_id;
             }
         }
         return NULL_NODE;
@@ -1783,8 +1784,8 @@ namespace lfs::vis {
             if (!node->cropbox)
                 continue;
 
-            // Check if parent (splat or pointcloud) is effectively visible
-            if (!isNodeEffectivelyVisible(node->parent_id))
+            // Check if parent splat is visible
+            if (node->parent_id != NULL_NODE && !isNodeEffectivelyVisible(node->parent_id))
                 continue;
 
             RenderableCropBox rcb;
@@ -1802,16 +1803,20 @@ namespace lfs::vis {
     // ========== Ellipsoid Operations ==========
 
     NodeId Scene::getEllipsoidForSplat(const NodeId splat_id) const {
-        const auto* node = getNodeById(splat_id);
-        if (!node || (node->type != NodeType::SPLAT && node->type != NodeType::POINTCLOUD)) {
+        if (splat_id == NULL_NODE) {
             return NULL_NODE;
         }
 
-        for (const NodeId child_id : node->children) {
-            if (const auto* child = getNodeById(child_id)) {
-                if (child->type == NodeType::ELLIPSOID) {
-                    return child_id;
-                }
+        // Search children of splat for ELLIPSOID node
+        const auto* splat = getNodeById(splat_id);
+        if (!splat) {
+            return NULL_NODE;
+        }
+
+        for (const NodeId child_id : splat->children) {
+            const auto* child = getNodeById(child_id);
+            if (child && child->type == NodeType::ELLIPSOID) {
+                return child_id;
             }
         }
         return NULL_NODE;
@@ -1867,7 +1872,8 @@ namespace lfs::vis {
             if (!node->ellipsoid)
                 continue;
 
-            if (!isNodeEffectivelyVisible(node->parent_id))
+            // Check if parent splat is visible
+            if (node->parent_id != NULL_NODE && !isNodeEffectivelyVisible(node->parent_id))
                 continue;
 
             RenderableEllipsoid rel;

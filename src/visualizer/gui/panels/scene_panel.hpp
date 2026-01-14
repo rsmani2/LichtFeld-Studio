@@ -92,6 +92,7 @@ namespace lfs::vis {
                 unsigned int camera = 0;
                 unsigned int splat = 0;
                 unsigned int cropbox = 0;
+                unsigned int ellipsoid = 0;
                 unsigned int pointcloud = 0;
                 unsigned int mask = 0;
                 unsigned int trash = 0;

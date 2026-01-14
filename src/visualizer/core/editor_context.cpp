@@ -55,8 +55,10 @@ namespace lfs::vis {
     }
 
     bool EditorContext::isTransformableNodeType(const NodeType type) {
-        // Only SPLAT (PLY files) and DATASET root can be transformed
-        return type == NodeType::DATASET || type == NodeType::SPLAT;
+        return type == NodeType::DATASET ||
+               type == NodeType::SPLAT ||
+               type == NodeType::CROPBOX ||
+               type == NodeType::ELLIPSOID;
     }
 
     bool EditorContext::canTransformSelectedNode() const {
@@ -86,9 +88,6 @@ namespace lfs::vis {
             return canTransformSelectedNode();
         case ToolType::Align:
             return selected_node_type_ == NodeType::SPLAT;
-        case ToolType::CropBox:
-        case ToolType::Ellipsoid:
-            return has_selection_;
         }
         return false;
     }
@@ -112,9 +111,6 @@ namespace lfs::vis {
             return isTransformableNodeType(selected_node_type_) ? nullptr : "select parent node";
         case ToolType::Align:
             return selected_node_type_ == NodeType::SPLAT ? nullptr : "select PLY node";
-        case ToolType::CropBox:
-        case ToolType::Ellipsoid:
-            return nullptr;
         }
         return nullptr;
     }
