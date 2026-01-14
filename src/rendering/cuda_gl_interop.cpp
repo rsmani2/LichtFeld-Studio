@@ -321,13 +321,17 @@ namespace lfs::rendering {
         return {};
     }
 
-    Result<void> CudaGLInteropTextureImpl<true>::readToTensor(Tensor& output) {
+    Result<void> CudaGLInteropTextureImpl<true>::readToTensor(Tensor& output, int target_width, int target_height) {
         LOG_TIMER_TRACE("CudaGLInteropTextureImpl<true>::readToTensor");
 
         if (!is_registered_) {
             LOG_ERROR("Texture not registered");
             return std::unexpected("Texture not registered");
         }
+
+        // Use target dimensions if provided, otherwise use full texture dimensions
+        const int out_width = (target_width > 0 && target_width <= width_) ? target_width : width_;
+        const int out_height = (target_height > 0 && target_height <= height_) ? target_height : height_;
 
         // Map CUDA resource
         auto raw_resource = static_cast<cudaGraphicsResource_t>(cuda_resource_.get());
@@ -358,29 +362,30 @@ namespace lfs::rendering {
                                                cudaGetErrorString(err)));
         }
 
-        // Allocate output tensor if needed [H, W, 3] in float32
-        if (!output.is_valid() || output.size(0) != static_cast<size_t>(height_) ||
-            output.size(1) != static_cast<size_t>(width_) || output.size(2) != 3) {
-            output = Tensor::empty({static_cast<size_t>(height_),
-                                    static_cast<size_t>(width_),
+        // Allocate output tensor [H, W, 3] in float32
+        if (!output.is_valid() || output.size(0) != static_cast<size_t>(out_height) ||
+            output.size(1) != static_cast<size_t>(out_width) || output.size(2) != 3) {
+            output = Tensor::empty({static_cast<size_t>(out_height),
+                                    static_cast<size_t>(out_width),
                                     3},
                                    lfs::core::Device::CUDA, lfs::core::DataType::Float32);
         }
 
-        // Allocate temp buffer for RGBA data
-        auto rgba_temp = Tensor::empty({static_cast<size_t>(height_),
-                                        static_cast<size_t>(width_),
+        // Allocate temp buffer for RGBA data (only the region we need)
+        auto rgba_temp = Tensor::empty({static_cast<size_t>(out_height),
+                                        static_cast<size_t>(out_width),
                                         4},
                                        lfs::core::Device::CUDA, lfs::core::DataType::Float32);
 
         // Copy from CUDA array to temp buffer (RGBA float32)
+        // Only copy the target region (top-left corner of the texture)
         err = cudaMemcpy2DFromArray(
             rgba_temp.ptr<float>(),
-            width_ * 4 * sizeof(float), // pitch
+            out_width * 4 * sizeof(float), // dst pitch
             cuda_array,
-            0, 0,                       // offset
-            width_ * 4 * sizeof(float), // width in bytes
-            height_,
+            0, 0,                          // src offset (x, y)
+            out_width * 4 * sizeof(float), // width in bytes to copy
+            out_height,                    // height (rows) to copy
             cudaMemcpyDeviceToDevice);
 
         if (err != cudaSuccess) {
@@ -392,7 +397,7 @@ namespace lfs::rendering {
         // Extract RGB channels (drop alpha)
         output = rgba_temp.slice(2, 0, 3).contiguous();
 
-        LOG_TRACE("Successfully read texture to tensor");
+        LOG_TRACE("Successfully read texture to tensor ({}x{})", out_width, out_height);
         return {};
     }
 
