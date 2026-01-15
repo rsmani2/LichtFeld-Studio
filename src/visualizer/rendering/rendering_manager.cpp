@@ -28,7 +28,7 @@ namespace lfs::vis {
 
     namespace {
         constexpr int GPU_ALIGNMENT = 16; // 16-pixel alignment for GPU texture efficiency
-    } // namespace
+    }                                     // namespace
 
     using namespace lfs::core::events;
 
@@ -1382,15 +1382,22 @@ namespace lfs::vis {
                 if (!cb.data)
                     continue;
 
+                const bool is_selected = (cb.node_id == selected_cropbox_id);
+
+                // Use pending state for selected cropbox during gizmo manipulation
+                const bool use_pending = is_selected && cropbox_gizmo_active_;
+                const glm::vec3 box_min = use_pending ? pending_cropbox_min_ : cb.data->min;
+                const glm::vec3 box_max = use_pending ? pending_cropbox_max_ : cb.data->max;
+                const glm::mat4 box_transform = use_pending ? pending_cropbox_transform_ : cb.world_transform;
+
                 const lfs::rendering::BoundingBox box{
-                    .min = cb.data->min,
-                    .max = cb.data->max,
-                    .transform = glm::inverse(cb.world_transform)};
+                    .min = box_min,
+                    .max = box_max,
+                    .transform = glm::inverse(box_transform)};
 
                 const glm::vec3 base_color = cb.data->inverse
                                                  ? glm::vec3(1.0f, 0.2f, 0.2f)
                                                  : cb.data->color;
-                const bool is_selected = (cb.node_id == selected_cropbox_id);
                 const float flash = is_selected ? cb.data->flash_intensity : 0.0f;
                 constexpr float FLASH_LINE_BOOST = 4.0f;
                 const glm::vec3 color = glm::mix(base_color, glm::vec3(1.0f), flash);
@@ -1412,14 +1419,23 @@ namespace lfs::vis {
                 if (!el.data)
                     continue;
 
+                const bool is_selected = (el.node_id == selected_ellipsoid_id);
+
+                // Use pending state for selected ellipsoid during gizmo manipulation
+                const glm::vec3 radii = (is_selected && ellipsoid_gizmo_active_)
+                                            ? pending_ellipsoid_radii_
+                                            : el.data->radii;
+                const glm::mat4 transform = (is_selected && ellipsoid_gizmo_active_)
+                                                ? pending_ellipsoid_transform_
+                                                : el.world_transform;
+
                 const lfs::rendering::Ellipsoid ellipsoid{
-                    .radii = el.data->radii,
-                    .transform = el.world_transform};
+                    .radii = radii,
+                    .transform = transform};
 
                 const glm::vec3 base_color = el.data->inverse
                                                  ? glm::vec3(1.0f, 0.2f, 0.2f)
                                                  : el.data->color;
-                const bool is_selected = (el.node_id == selected_ellipsoid_id);
                 const float flash = is_selected ? el.data->flash_intensity : 0.0f;
                 constexpr float FLASH_LINE_BOOST = 4.0f;
                 const glm::vec3 color = glm::mix(base_color, glm::vec3(1.0f), flash);

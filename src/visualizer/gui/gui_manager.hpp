@@ -85,6 +85,10 @@ namespace lfs::vis {
             const panels::GizmoToolbarState& getGizmoToolbarState() const { return gizmo_toolbar_state_; }
             panels::TransformPanelState& getTransformPanelState() { return transform_panel_state_; }
 
+            // Gizmo manipulation state (for wireframe sync)
+            bool isCropboxGizmoActive() const { return cropbox_gizmo_active_; }
+            bool isEllipsoidGizmoActive() const { return ellipsoid_gizmo_active_; }
+
             bool isForceExit() const { return force_exit_; }
 
             // Exit confirmation

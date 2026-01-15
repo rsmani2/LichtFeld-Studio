@@ -290,6 +290,27 @@ namespace lfs::vis {
         // Sync selection group colors to GPU constant memory
         void syncSelectionGroupColor(int group_id, const glm::vec3& color);
 
+        // Gizmo state for wireframe sync during manipulation
+        void setCropboxGizmoState(bool active, const glm::vec3& min, const glm::vec3& max,
+                                  const glm::mat4& world_transform) {
+            cropbox_gizmo_active_ = active;
+            if (active) {
+                pending_cropbox_min_ = min;
+                pending_cropbox_max_ = max;
+                pending_cropbox_transform_ = world_transform;
+            }
+        }
+        void setEllipsoidGizmoState(bool active, const glm::vec3& radii,
+                                    const glm::mat4& world_transform) {
+            ellipsoid_gizmo_active_ = active;
+            if (active) {
+                pending_ellipsoid_radii_ = radii;
+                pending_ellipsoid_transform_ = world_transform;
+            }
+        }
+        void setCropboxGizmoActive(bool active) { cropbox_gizmo_active_ = active; }
+        void setEllipsoidGizmoActive(bool active) { ellipsoid_gizmo_active_ = active; }
+
     private:
         void doFullRender(const RenderContext& context, SceneManager* scene_manager, const lfs::core::SplatData* model);
         void renderOverlays(const RenderContext& context);
@@ -382,6 +403,15 @@ namespace lfs::vis {
         // Viewport state
         glm::ivec2 last_viewport_size_{0, 0}; // Last requested viewport size
         glm::ivec2 cached_result_size_{0, 0}; // Size at which cached_result_ was actually rendered
+
+        // Gizmo state for wireframe sync
+        bool cropbox_gizmo_active_ = false;
+        bool ellipsoid_gizmo_active_ = false;
+        glm::vec3 pending_cropbox_min_{0.0f};
+        glm::vec3 pending_cropbox_max_{0.0f};
+        glm::mat4 pending_cropbox_transform_{1.0f};
+        glm::vec3 pending_ellipsoid_radii_{1.0f};
+        glm::mat4 pending_ellipsoid_transform_{1.0f};
     };
 
 } // namespace lfs::vis

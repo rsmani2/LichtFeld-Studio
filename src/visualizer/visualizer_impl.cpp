@@ -406,6 +406,11 @@ namespace lfs::vis {
             .has_focus = gui_manager_ && gui_manager_->isViewportFocused(),
             .scene_manager = scene_manager_.get()};
 
+        if (gui_manager_) {
+            rendering_manager_->setCropboxGizmoActive(gui_manager_->isCropboxGizmoActive());
+            rendering_manager_->setEllipsoidGizmoActive(gui_manager_->isEllipsoidGizmoActive());
+        }
+
         rendering_manager_->renderFrame(context, scene_manager_.get());
 
         gui_manager_->render();
