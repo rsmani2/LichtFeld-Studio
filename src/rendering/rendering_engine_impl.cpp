@@ -227,6 +227,7 @@ namespace lfs::rendering {
             pipeline_req.crop_box_max = &crop_box_max_tensor;
             pipeline_req.crop_inverse = request.crop_inverse;
             pipeline_req.crop_desaturate = request.crop_desaturate;
+            pipeline_req.crop_parent_node_index = request.crop_parent_node_index;
         }
 
         // Convert ellipsoid if present
@@ -249,6 +250,7 @@ namespace lfs::rendering {
             pipeline_req.ellipsoid_radii = &ellipsoid_radii_tensor;
             pipeline_req.ellipsoid_inverse = request.ellipsoid_inverse;
             pipeline_req.ellipsoid_desaturate = request.ellipsoid_desaturate;
+            pipeline_req.ellipsoid_parent_node_index = request.ellipsoid_parent_node_index;
         }
 
         // Convert depth filter if present (Selection tool - separate from crop box)

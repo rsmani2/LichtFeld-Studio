@@ -62,17 +62,19 @@ namespace lfs::rendering {
             bool brush_saturation_mode = false;
             float brush_saturation_amount = 0.0f;
             bool selection_mode_rings = false; // Ring mode hover detection
-            // Crop box filtering
+            // Crop box filtering (scoped to parent node if >= 0)
             const Tensor* crop_box_transform = nullptr;
             const Tensor* crop_box_min = nullptr;
             const Tensor* crop_box_max = nullptr;
             bool crop_inverse = false;
             bool crop_desaturate = false;
-            // Ellipsoid filtering
+            int crop_parent_node_index = -1;
+            // Ellipsoid filtering (scoped to parent node if >= 0)
             const Tensor* ellipsoid_transform = nullptr;
             const Tensor* ellipsoid_radii = nullptr;
             bool ellipsoid_inverse = false;
             bool ellipsoid_desaturate = false;
+            int ellipsoid_parent_node_index = -1;
             // Depth filter (Selection tool - separate from crop box, always desaturates outside)
             const Tensor* depth_filter_transform = nullptr;
             const Tensor* depth_filter_min = nullptr;

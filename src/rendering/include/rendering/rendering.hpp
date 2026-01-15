@@ -99,10 +99,12 @@ namespace lfs::rendering {
         bool selection_mode_rings = false;
         bool crop_inverse = false;
         bool crop_desaturate = false;
+        int crop_parent_node_index = -1;
         // Ellipsoid crop (data comes from scene graph EllipsoidData)
         std::optional<Ellipsoid> ellipsoid;
         bool ellipsoid_inverse = false;
         bool ellipsoid_desaturate = false;
+        int ellipsoid_parent_node_index = -1;
         // Depth filter for selection tool (separate from crop box, always desaturates outside)
         std::optional<BoundingBox> depth_filter;
         // Per-node selection mask: true = selected. Empty = no selection effects.

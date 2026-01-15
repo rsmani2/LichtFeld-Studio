@@ -75,10 +75,12 @@ namespace lfs::rendering::kernels::forward {
         const float3* crop_box_max,
         const bool crop_inverse,
         const bool crop_desaturate,
+        const int crop_parent_node_index,
         const float* ellipsoid_transform,
         const float3* ellipsoid_radii,
         const bool ellipsoid_inverse,
         const bool ellipsoid_desaturate,
+        const int ellipsoid_parent_node_index,
         const float* depth_filter_transform,
         const float3* depth_filter_min,
         const float3* depth_filter_max,
@@ -147,37 +149,44 @@ namespace lfs::rendering::kernels::forward {
             }
         }
 
-        // Crop box test (on transformed position)
+        // Crop box test (on transformed position, scoped to parent splat)
         bool outside_crop = false;
+        const int gaussian_node_idx = (transform_indices != nullptr) ? transform_indices[global_idx] : -1;
         if (active && crop_box_transform != nullptr) {
-            const float3 bmin = *crop_box_min;
-            const float3 bmax = *crop_box_max;
-            const float* const c = crop_box_transform;
-            const float lx = c[0] * mean3d.x + c[1] * mean3d.y + c[2] * mean3d.z + c[3];
-            const float ly = c[4] * mean3d.x + c[5] * mean3d.y + c[6] * mean3d.z + c[7];
-            const float lz = c[8] * mean3d.x + c[9] * mean3d.y + c[10] * mean3d.z + c[11];
-            const bool inside = lx >= bmin.x && lx <= bmax.x &&
-                                ly >= bmin.y && ly <= bmax.y &&
-                                lz >= bmin.z && lz <= bmax.z;
-            outside_crop = inside == crop_inverse;
-            if (outside_crop && !crop_desaturate)
-                active = false;
+            const bool applies = (crop_parent_node_index < 0) || (gaussian_node_idx == crop_parent_node_index);
+            if (applies) {
+                const float3 bmin = *crop_box_min;
+                const float3 bmax = *crop_box_max;
+                const float* const c = crop_box_transform;
+                const float lx = c[0] * mean3d.x + c[1] * mean3d.y + c[2] * mean3d.z + c[3];
+                const float ly = c[4] * mean3d.x + c[5] * mean3d.y + c[6] * mean3d.z + c[7];
+                const float lz = c[8] * mean3d.x + c[9] * mean3d.y + c[10] * mean3d.z + c[11];
+                const bool inside = lx >= bmin.x && lx <= bmax.x &&
+                                    ly >= bmin.y && ly <= bmax.y &&
+                                    lz >= bmin.z && lz <= bmax.z;
+                outside_crop = inside == crop_inverse;
+                if (outside_crop && !crop_desaturate)
+                    active = false;
+            }
         }
 
-        // Ellipsoid test (on transformed position)
+        // Ellipsoid test (on transformed position, scoped to parent splat)
         if (active && ellipsoid_transform != nullptr) {
-            const float* const e = ellipsoid_transform;
-            const float lx = e[0] * mean3d.x + e[1] * mean3d.y + e[2] * mean3d.z + e[3];
-            const float ly = e[4] * mean3d.x + e[5] * mean3d.y + e[6] * mean3d.z + e[7];
-            const float lz = e[8] * mean3d.x + e[9] * mean3d.y + e[10] * mean3d.z + e[11];
-            const float3 r = *ellipsoid_radii;
-            const float norm = (lx * lx) / (r.x * r.x) + (ly * ly) / (r.y * r.y) + (lz * lz) / (r.z * r.z);
-            const bool inside = norm <= 1.0f;
-            const bool outside_ellipsoid = (inside == ellipsoid_inverse);
-            if (outside_ellipsoid && !ellipsoid_desaturate)
-                active = false;
-            else if (outside_ellipsoid)
-                outside_crop = true;
+            const bool applies = (ellipsoid_parent_node_index < 0) || (gaussian_node_idx == ellipsoid_parent_node_index);
+            if (applies) {
+                const float* const e = ellipsoid_transform;
+                const float lx = e[0] * mean3d.x + e[1] * mean3d.y + e[2] * mean3d.z + e[3];
+                const float ly = e[4] * mean3d.x + e[5] * mean3d.y + e[6] * mean3d.z + e[7];
+                const float lz = e[8] * mean3d.x + e[9] * mean3d.y + e[10] * mean3d.z + e[11];
+                const float3 r = *ellipsoid_radii;
+                const float norm = (lx * lx) / (r.x * r.x) + (ly * ly) / (r.y * r.y) + (lz * lz) / (r.z * r.z);
+                const bool inside = norm <= 1.0f;
+                const bool outside_ellipsoid = (inside == ellipsoid_inverse);
+                if (outside_ellipsoid && !ellipsoid_desaturate)
+                    active = false;
+                else if (outside_ellipsoid)
+                    outside_crop = true;
+            }
         }
 
         // Depth filter (desaturate only, no culling)

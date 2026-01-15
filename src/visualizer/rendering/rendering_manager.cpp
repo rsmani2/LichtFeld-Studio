@@ -731,12 +731,14 @@ namespace lfs::vis {
                     .transform = glm::inverse(cb.world_transform)};
                 request.crop_inverse = cb.data->inverse;
                 request.crop_desaturate = settings_.show_crop_box && !settings_.use_crop_box && settings_.desaturate_cropping;
+                request.crop_parent_node_index = scene_manager->getScene().getVisibleNodeIndex(cb.parent_splat_id);
             }
         }
 
         // Ellipsoid from scene graph
         if (settings_.use_ellipsoid || settings_.show_ellipsoid) {
-            const auto visible_ellipsoids = scene_manager->getScene().getVisibleEllipsoids();
+            const auto& scene = scene_manager->getScene();
+            const auto visible_ellipsoids = scene.getVisibleEllipsoids();
             const NodeId selected_ellipsoid_id = scene_manager->getSelectedNodeEllipsoidId();
             for (const auto& el : visible_ellipsoids) {
                 if (!el.data)
@@ -748,6 +750,7 @@ namespace lfs::vis {
                     .transform = glm::inverse(el.world_transform)};
                 request.ellipsoid_inverse = el.data->inverse;
                 request.ellipsoid_desaturate = settings_.show_ellipsoid && !settings_.use_ellipsoid && settings_.desaturate_cropping;
+                request.ellipsoid_parent_node_index = scene.getVisibleNodeIndex(el.parent_splat_id);
                 break;
             }
         }

@@ -614,12 +614,24 @@ namespace lfs::vis {
     int Scene::getVisibleNodeIndex(const std::string& name) const {
         int index = 0;
         for (const auto& node : nodes_) {
-            if (!node->visible || !node->model) {
+            if (!node->visible || !node->model)
                 continue;
-            }
-            if (node->name == name) {
+            if (node->name == name)
                 return index;
-            }
+            ++index;
+        }
+        return -1;
+    }
+
+    int Scene::getVisibleNodeIndex(const NodeId node_id) const {
+        if (node_id == NULL_NODE)
+            return -1;
+        int index = 0;
+        for (const auto& node : nodes_) {
+            if (!node->visible || !node->model)
+                continue;
+            if (node->id == node_id)
+                return index;
             ++index;
         }
         return -1;

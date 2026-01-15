@@ -247,6 +247,7 @@ namespace lfs::vis {
 
         // Get node index in combined model (-1 if not found or not visible)
         [[nodiscard]] int getVisibleNodeIndex(const std::string& name) const;
+        [[nodiscard]] int getVisibleNodeIndex(NodeId node_id) const;
 
         // Get mask of selected visible SPLAT nodes for desaturation
         // When a group is selected, all descendant SPLAT nodes are marked as selected
