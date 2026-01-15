@@ -2606,6 +2606,20 @@ namespace lfs::vis::gui {
             node_gizmo_operation_, gizmo_mode,
             glm::value_ptr(gizmo_matrix), glm::value_ptr(delta_matrix), nullptr);
 
+        if (node_gizmo_operation_ == ImGuizmo::ROTATE) {
+            const glm::vec4 clip_pos = projection * view * glm::vec4(gizmo_position, 1.0f);
+            if (clip_pos.w > 0.0f) {
+                const glm::vec2 ndc(clip_pos.x / clip_pos.w, clip_pos.y / clip_pos.w);
+                const ImVec2 screen_pos(viewport_pos_.x + (ndc.x * 0.5f + 0.5f) * viewport_size_.x,
+                                        viewport_pos_.y + (-ndc.y * 0.5f + 0.5f) * viewport_size_.y);
+                constexpr float PIVOT_RADIUS = 4.0f;
+                constexpr ImU32 PIVOT_COLOR = IM_COL32(255, 255, 255, 200);
+                constexpr ImU32 PIVOT_OUTLINE = IM_COL32(0, 0, 0, 200);
+                overlay_drawlist->AddCircleFilled(screen_pos, PIVOT_RADIUS + 1.0f, PIVOT_OUTLINE);
+                overlay_drawlist->AddCircleFilled(screen_pos, PIVOT_RADIUS, PIVOT_COLOR);
+            }
+        }
+
         // Capture state for undo when drag starts
         if (is_using && !node_gizmo_active_) {
             node_gizmo_active_ = true;
