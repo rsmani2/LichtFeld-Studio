@@ -45,7 +45,9 @@ jobs:
         run: |
           apt-get clean
           rm -rf /var/lib/apt/lists/*
-          rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
+          rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache /usr/local/lib/android /opt/az
+          rm -rf /usr/local/cuda/nsight* /usr/local/cuda/compute-sanitizer
+          df -h
 
       - name: Install build dependencies
         run: |
@@ -96,6 +98,11 @@ jobs:
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
             -DBUILD_PYTHON_BINDINGS=ON
+
+      - name: Clean vcpkg buildtrees
+        run: |
+          rm -rf build/vcpkg_installed/vcpkg/blds
+          df -h
 
       - name: Build
         run: cmake --build build -j 2
