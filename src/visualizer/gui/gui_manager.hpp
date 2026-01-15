@@ -10,6 +10,7 @@
 #include "command/commands/transform_command.hpp"
 #include "core/events.hpp"
 #include "core/parameters.hpp"
+#include "gui/gizmo_transform.hpp"
 #include "gui/panels/gizmo_toolbar.hpp"
 #include "gui/panels/menu_bar.hpp"
 #include "gui/panels/transform_panel.hpp"
@@ -179,6 +180,9 @@ namespace lfs::vis {
             // Gizmo toolbar state
             panels::GizmoToolbarState gizmo_toolbar_state_;
             panels::TransformPanelState transform_panel_state_;
+
+            // Unified gizmo context for cropbox/ellipsoid
+            GizmoTransformContext gizmo_context_;
 
             // Cropbox undo/redo state
             bool cropbox_gizmo_active_ = false;
