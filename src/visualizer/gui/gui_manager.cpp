@@ -67,8 +67,8 @@ namespace lfs::vis::gui {
     using ToolType = lfs::vis::ToolType;
     using ExportFormat = lfs::core::ExportFormat;
 
-    // Gizmo axis/plane visibility threshold
     constexpr float GIZMO_AXIS_LIMIT = 0.0001f;
+    constexpr float MIN_GIZMO_SCALE = 0.001f;
 
     namespace {
         inline glm::mat3 extractRotation(const glm::mat4& m) {
@@ -2202,15 +2202,14 @@ namespace lfs::vis::gui {
                 } else if (gizmo_op == ImGuizmo::SCALE) {
                     float mat_trans[3], mat_rot[3], mat_scale[3];
                     ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(gizmo_matrix), mat_trans, mat_rot, mat_scale);
-                    glm::vec3 new_size(mat_scale[0], mat_scale[1], mat_scale[2]);
-                    new_size = glm::max(new_size, glm::vec3(0.001f));
+                    const glm::vec3 new_size = glm::max(
+                        glm::vec3(mat_scale[0], mat_scale[1], mat_scale[2]) / world_scale,
+                        glm::vec3(MIN_GIZMO_SCALE));
                     const glm::vec3 new_half = new_size * 0.5f;
                     new_min = -new_half;
                     new_max = new_half;
-                    const glm::vec3 new_center = (new_min + new_max) * 0.5f;
                     const glm::vec3 world_center(mat_trans[0], mat_trans[1], mat_trans[2]);
-                    const glm::vec3 transform_trans = world_center - rotation * new_center;
-                    new_world_transform = glm::translate(glm::mat4(1.0f), transform_trans) * glm::mat4(rotation);
+                    new_world_transform = glm::translate(glm::mat4(1.0f), world_center) * glm::mat4(rotation);
                 } else {
                     const glm::vec3 new_gizmo_center(gizmo_matrix[3]);
                     const glm::vec3 transform_trans = new_gizmo_center - rotation * local_center;
@@ -2222,7 +2221,10 @@ namespace lfs::vis::gui {
 
                 if (mutable_node->parent_id != NULL_NODE) {
                     const glm::mat4 parent_world = scene_manager->getScene().getWorldTransform(mutable_node->parent_id);
-                    mutable_node->local_transform = glm::inverse(parent_world) * new_world_transform;
+                    const glm::vec3 parent_trans(parent_world[3]);
+                    const glm::mat3 parent_rot = extractRotation(parent_world);
+                    const glm::mat4 parent_TR = glm::translate(glm::mat4(1.0f), parent_trans) * glm::mat4(parent_rot);
+                    mutable_node->local_transform = glm::inverse(parent_TR) * new_world_transform;
                 } else {
                     mutable_node->local_transform = new_world_transform;
                 }
@@ -2454,11 +2456,12 @@ namespace lfs::vis::gui {
                 } else if (gizmo_op == ImGuizmo::SCALE) {
                     float mat_trans[3], mat_rot[3], mat_scale[3];
                     ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(gizmo_matrix), mat_trans, mat_rot, mat_scale);
-                    glm::vec3 new_radii(mat_scale[0], mat_scale[1], mat_scale[2]);
-                    new_radii = glm::max(new_radii, glm::vec3(0.001f));
+                    const glm::vec3 new_radii = glm::max(
+                        glm::vec3(mat_scale[0], mat_scale[1], mat_scale[2]) / world_scale,
+                        glm::vec3(MIN_GIZMO_SCALE));
                     mutable_node->ellipsoid->radii = new_radii;
-                    new_world_transform = glm::translate(glm::mat4(1.0f), glm::vec3(mat_trans[0], mat_trans[1], mat_trans[2])) *
-                                          glm::mat4(rotation);
+                    const glm::vec3 new_pos(mat_trans[0], mat_trans[1], mat_trans[2]);
+                    new_world_transform = glm::translate(glm::mat4(1.0f), new_pos) * glm::mat4(rotation);
                 } else {
                     const glm::vec3 new_pos(gizmo_matrix[3]);
                     new_world_transform = glm::translate(glm::mat4(1.0f), new_pos) * glm::mat4(rotation);
@@ -2466,7 +2469,10 @@ namespace lfs::vis::gui {
 
                 if (mutable_node->parent_id != NULL_NODE) {
                     const glm::mat4 parent_world = scene_manager->getScene().getWorldTransform(mutable_node->parent_id);
-                    mutable_node->local_transform = glm::inverse(parent_world) * new_world_transform;
+                    const glm::vec3 parent_trans(parent_world[3]);
+                    const glm::mat3 parent_rot = extractRotation(parent_world);
+                    const glm::mat4 parent_TR = glm::translate(glm::mat4(1.0f), parent_trans) * glm::mat4(parent_rot);
+                    mutable_node->local_transform = glm::inverse(parent_TR) * new_world_transform;
                 } else {
                     mutable_node->local_transform = new_world_transform;
                 }
@@ -2519,6 +2525,10 @@ namespace lfs::vis::gui {
 
         auto* scene_manager = ctx.viewer->getSceneManager();
         if (!scene_manager || !scene_manager->hasSelectedNode())
+            return;
+
+        const auto selected_type = scene_manager->getSelectedNodeType();
+        if (selected_type == NodeType::CROPBOX || selected_type == NodeType::ELLIPSOID)
             return;
 
         // Check visibility of at least one selected node

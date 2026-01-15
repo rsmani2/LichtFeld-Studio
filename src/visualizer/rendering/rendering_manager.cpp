@@ -1040,7 +1040,7 @@ namespace lfs::vis {
 
                     const bool cache_valid = cached_filtered_point_cloud_ &&
                                              cached_source_point_cloud_ == scene_state.point_cloud &&
-                                             cached_cropbox_transform_ == cb.local_transform &&
+                                             cached_cropbox_transform_ == cb.world_transform &&
                                              cached_cropbox_min_ == cb.data->min &&
                                              cached_cropbox_max_ == cb.data->max &&
                                              cached_cropbox_inverse_ == cb.data->inverse;
@@ -1049,7 +1049,7 @@ namespace lfs::vis {
                         const auto& means = scene_state.point_cloud->means;
                         const auto& colors = scene_state.point_cloud->colors;
                         const size_t num_points = scene_state.point_cloud->size();
-                        const glm::mat4 m = glm::inverse(cb.local_transform);
+                        const glm::mat4 m = glm::inverse(cb.world_transform);
                         const auto device = means.device();
 
                         // GLM column-major -> row-major for tensor matmul
@@ -1082,7 +1082,7 @@ namespace lfs::vis {
                         }
 
                         cached_source_point_cloud_ = scene_state.point_cloud;
-                        cached_cropbox_transform_ = cb.local_transform;
+                        cached_cropbox_transform_ = cb.world_transform;
                         cached_cropbox_min_ = cb.data->min;
                         cached_cropbox_max_ = cb.data->max;
                         cached_cropbox_inverse_ = cb.data->inverse;
