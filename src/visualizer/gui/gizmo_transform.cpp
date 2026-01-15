@@ -61,10 +61,6 @@ namespace lfs::vis::gui {
             panels::PivotMode mode,
             GizmoTargetType type) {
 
-            if (mode == panels::PivotMode::Origin) {
-                return glm::vec3(0.0f);
-            }
-
             const auto* node = scene.getNodeById(target_id);
             if (!node)
                 return glm::vec3(0.0f);
@@ -77,9 +73,6 @@ namespace lfs::vis::gui {
                 break;
 
             case GizmoTargetType::Ellipsoid:
-                // Ellipsoid center is always at origin in local space
-                return glm::vec3(0.0f);
-
             case GizmoTargetType::Node:
                 return glm::vec3(0.0f);
             }
@@ -138,7 +131,8 @@ namespace lfs::vis::gui {
             state.scale = extractScale(state.local_transform);
 
             const glm::mat4 world_transform = scene.getWorldTransform(node->id);
-            state.world_position = extractTranslation(world_transform);
+            const glm::vec3 bounds_center = (node->cropbox->min + node->cropbox->max) * 0.5f;
+            state.world_position = glm::vec3(world_transform * glm::vec4(bounds_center, 1.0f));
 
             if (node->parent_id != NULL_NODE) {
                 const glm::mat4 parent_world = scene.getWorldTransform(node->parent_id);
@@ -220,9 +214,8 @@ namespace lfs::vis::gui {
                 new_transform[1] = glm::vec4(target.rotation[1] * target.scale.y, 0.0f);
                 new_transform[2] = glm::vec4(target.rotation[2] * target.scale.z, 0.0f);
 
-                // For cropbox, account for local pivot offset
                 if (ctx.type == GizmoTargetType::CropBox) {
-                    const glm::vec3 pivot_offset = target.rotation * ctx.pivot_local;
+                    const glm::vec3 pivot_offset = target.rotation * (ctx.pivot_local * target.scale);
                     new_transform[3] = glm::vec4(new_local_pos - pivot_offset, 1.0f);
                 } else {
                     new_transform[3] = glm::vec4(new_local_pos, 1.0f);
@@ -264,9 +257,8 @@ namespace lfs::vis::gui {
                 new_transform[1] = glm::vec4(new_rot[1] * target.scale.y, 0.0f);
                 new_transform[2] = glm::vec4(new_rot[2] * target.scale.z, 0.0f);
 
-                // For cropbox, account for local pivot offset with NEW rotation
                 if (ctx.type == GizmoTargetType::CropBox) {
-                    const glm::vec3 pivot_offset = new_rot * ctx.pivot_local;
+                    const glm::vec3 pivot_offset = new_rot * (ctx.pivot_local * target.scale);
                     new_transform[3] = glm::vec4(new_local_pos - pivot_offset, 1.0f);
                 } else {
                     new_transform[3] = glm::vec4(new_local_pos, 1.0f);
@@ -298,14 +290,13 @@ namespace lfs::vis::gui {
                 const glm::vec3 new_local_pos = glm::vec3(
                     target.parent_world_inverse * glm::vec4(new_world_pos, 1.0f));
 
-                // Bounds scaling handled by applyBoundsScale
                 glm::mat4 new_transform(1.0f);
                 new_transform[0] = glm::vec4(target.rotation[0] * target.scale.x, 0.0f);
                 new_transform[1] = glm::vec4(target.rotation[1] * target.scale.y, 0.0f);
                 new_transform[2] = glm::vec4(target.rotation[2] * target.scale.z, 0.0f);
 
                 if (ctx.type == GizmoTargetType::CropBox) {
-                    const glm::vec3 pivot_offset = target.rotation * ctx.pivot_local;
+                    const glm::vec3 pivot_offset = target.rotation * (ctx.pivot_local * target.scale);
                     new_transform[3] = glm::vec4(new_local_pos - pivot_offset, 1.0f);
                 } else {
                     new_transform[3] = glm::vec4(new_local_pos, 1.0f);
