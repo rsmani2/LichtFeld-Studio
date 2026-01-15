@@ -237,9 +237,8 @@ namespace lfs::vis {
     void Scene::setNodeTransform(const std::string& name, const glm::mat4& transform) {
         const auto it = std::find_if(nodes_.begin(), nodes_.end(),
                                      [&name](const std::unique_ptr<Node>& node) { return node->name == name; });
-
         if (it != nodes_.end()) {
-            (*it)->local_transform = transform; // Observable auto-invalidates cache and marks transform dirty
+            (*it)->local_transform = transform;
         }
     }
 

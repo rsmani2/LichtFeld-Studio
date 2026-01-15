@@ -58,6 +58,7 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_opengl3.h>
 #include <imgui_internal.h>
+#include <unordered_set>
 #include <ImGuizmo.h>
 
 namespace lfs::vis::gui {
@@ -68,6 +69,18 @@ namespace lfs::vis::gui {
 
     // Gizmo axis/plane visibility threshold
     constexpr float GIZMO_AXIS_LIMIT = 0.0001f;
+
+    namespace {
+        inline glm::mat3 extractRotation(const glm::mat4& m) {
+            return glm::mat3(glm::normalize(glm::vec3(m[0])), glm::normalize(glm::vec3(m[1])),
+                             glm::normalize(glm::vec3(m[2])));
+        }
+
+        inline glm::vec3 extractScale(const glm::mat4& m) {
+            return glm::vec3(glm::length(glm::vec3(m[0])), glm::length(glm::vec3(m[1])),
+                             glm::length(glm::vec3(m[2])));
+        }
+    } // namespace
 
     // Returns display name for dataset type
     [[nodiscard]] const char* getDatasetTypeName(const std::filesystem::path& path) {
@@ -2544,10 +2557,12 @@ namespace lfs::vis::gui {
                                           ? glm::vec3(0.0f)
                                           : scene_manager->getSelectionCenter();
 
-        const glm::vec3 gizmo_position = is_multi_selection
-                                             ? scene_manager->getSelectionWorldCenter()
-                                             : glm::vec3(scene_manager->getSelectedNodeWorldTransform() *
-                                                         glm::vec4(local_pivot, 1.0f));
+        const glm::vec3 gizmo_position = (node_gizmo_active_ && is_multi_selection)
+                                             ? gizmo_pivot_
+                                             : (is_multi_selection
+                                                    ? scene_manager->getSelectionWorldCenter()
+                                                    : glm::vec3(scene_manager->getSelectedNodeWorldTransform() *
+                                                                glm::vec4(local_pivot, 1.0f)));
 
         glm::mat4 gizmo_matrix(1.0f);
         gizmo_matrix[3] = glm::vec4(gizmo_position, 1.0f);
@@ -2596,41 +2611,131 @@ namespace lfs::vis::gui {
             node_gizmo_active_ = true;
             gizmo_pivot_ = gizmo_position;
             gizmo_cumulative_rotation_ = glm::mat3(1.0f);
-            node_gizmo_node_names_ = selected_names;
-            node_transforms_before_drag_.clear();
-            node_transforms_before_drag_.reserve(selected_names.size());
+
+            // Filter out nodes whose ancestors are also selected
+            std::unordered_set<NodeId> selected_ids;
             for (const auto& name : selected_names) {
-                node_transforms_before_drag_.push_back(scene_manager->getNodeTransform(name));
+                if (const auto* node = scene.getNode(name)) {
+                    selected_ids.insert(node->id);
+                }
+            }
+
+            node_gizmo_node_names_.clear();
+            for (const auto& name : selected_names) {
+                const auto* node = scene.getNode(name);
+                if (!node)
+                    continue;
+
+                bool ancestor_selected = false;
+                for (NodeId check_id = node->parent_id; check_id != NULL_NODE;) {
+                    if (selected_ids.count(check_id)) {
+                        ancestor_selected = true;
+                        break;
+                    }
+                    const auto* parent = scene.getNodeById(check_id);
+                    check_id = parent ? parent->parent_id : NULL_NODE;
+                }
+
+                if (!ancestor_selected) {
+                    node_gizmo_node_names_.push_back(name);
+                }
+            }
+
+            node_transforms_before_drag_.clear();
+            node_original_world_positions_.clear();
+            node_parent_world_inverses_.clear();
+            node_original_rotations_.clear();
+            node_original_scales_.clear();
+
+            for (const auto& name : node_gizmo_node_names_) {
+                const auto* node = scene.getNode(name);
+                if (!node)
+                    continue;
+
+                const glm::mat4 world_t = scene.getWorldTransform(node->id);
+                const glm::mat4 local_t = node->local_transform.get();
+                node_transforms_before_drag_.push_back(local_t);
+                node_original_rotations_.push_back(extractRotation(local_t));
+                node_original_scales_.push_back(extractScale(local_t));
+
+                glm::mat4 parent_world(1.0f);
+                if (node->parent_id != NULL_NODE) {
+                    parent_world = scene.getWorldTransform(node->parent_id);
+                }
+
+                node_original_world_positions_.emplace_back(world_t[3]);
+                node_parent_world_inverses_.push_back(glm::inverse(parent_world));
             }
         }
 
-        if (gizmo_changed) {
+        if (gizmo_changed && is_using) {
             if (is_multi_selection) {
-                // Accumulate delta rotation
-                const glm::mat3 delta_rot(delta_matrix);
-                gizmo_cumulative_rotation_ = delta_rot * gizmo_cumulative_rotation_;
+                if (node_gizmo_operation_ == ImGuizmo::TRANSLATE) {
+                    const glm::vec3 new_gizmo_pos(gizmo_matrix[3]);
+                    const glm::vec3 delta = new_gizmo_pos - gizmo_pivot_;
 
-                // Compute total translation from gizmo movement
-                const glm::vec3 new_gizmo_pos(gizmo_matrix[3]);
-                const glm::vec3 total_translation = new_gizmo_pos - gizmo_pivot_;
+                    for (size_t i = 0; i < node_gizmo_node_names_.size(); ++i) {
+                        const glm::mat4& original_local = node_transforms_before_drag_[i];
+                        const glm::vec3& original_world_pos = node_original_world_positions_[i];
+                        const glm::mat4& parent_inv = node_parent_world_inverses_[i];
 
-                for (size_t i = 0; i < node_gizmo_node_names_.size(); ++i) {
-                    const glm::mat4& original = node_transforms_before_drag_[i];
-                    const glm::vec3 original_pos(original[3]);
-                    const glm::mat3 original_rot(original);
+                        const glm::vec3 new_world_pos = original_world_pos + delta;
+                        const glm::vec3 new_local_pos = glm::vec3(parent_inv * glm::vec4(new_world_pos, 1.0f));
 
-                    // Rotate position around pivot using cumulative rotation
-                    const glm::vec3 offset = original_pos - gizmo_pivot_;
-                    const glm::vec3 rotated_offset = gizmo_cumulative_rotation_ * offset;
-                    const glm::vec3 new_pos = gizmo_pivot_ + rotated_offset + total_translation;
+                        glm::mat4 new_transform = original_local;
+                        new_transform[3] = glm::vec4(new_local_pos, 1.0f);
+                        scene_manager->setNodeTransform(node_gizmo_node_names_[i], new_transform);
+                    }
+                } else if (node_gizmo_operation_ == ImGuizmo::ROTATE) {
+                    const glm::mat3 delta_rot = extractRotation(delta_matrix);
+                    gizmo_cumulative_rotation_ = delta_rot * gizmo_cumulative_rotation_;
 
-                    // Combine rotations
-                    const glm::mat3 new_rot = gizmo_cumulative_rotation_ * original_rot;
+                    for (size_t i = 0; i < node_gizmo_node_names_.size(); ++i) {
+                        const glm::vec3& original_world_pos = node_original_world_positions_[i];
+                        const glm::mat4& parent_inv = node_parent_world_inverses_[i];
+                        const glm::mat3& original_rot = node_original_rotations_[i];
+                        const glm::vec3& original_scale = node_original_scales_[i];
 
-                    glm::mat4 new_transform(new_rot);
-                    new_transform[3] = glm::vec4(new_pos, 1.0f);
+                        const glm::vec3 offset = original_world_pos - gizmo_pivot_;
+                        const glm::vec3 rotated_offset = gizmo_cumulative_rotation_ * offset;
+                        const glm::vec3 new_world_pos = gizmo_pivot_ + rotated_offset;
+                        const glm::vec3 new_local_pos = glm::vec3(parent_inv * glm::vec4(new_world_pos, 1.0f));
 
-                    scene_manager->setNodeTransform(node_gizmo_node_names_[i], new_transform);
+                        const glm::mat3 parent_rot = extractRotation(glm::inverse(parent_inv));
+                        const glm::mat3 parent_rot_inv = glm::transpose(parent_rot);
+                        const glm::mat3 local_delta_rot = parent_rot_inv * gizmo_cumulative_rotation_ * parent_rot;
+                        const glm::mat3 new_rot = local_delta_rot * original_rot;
+
+                        glm::mat4 new_transform(1.0f);
+                        new_transform[0] = glm::vec4(new_rot[0] * original_scale.x, 0.0f);
+                        new_transform[1] = glm::vec4(new_rot[1] * original_scale.y, 0.0f);
+                        new_transform[2] = glm::vec4(new_rot[2] * original_scale.z, 0.0f);
+                        new_transform[3] = glm::vec4(new_local_pos, 1.0f);
+                        scene_manager->setNodeTransform(node_gizmo_node_names_[i], new_transform);
+                    }
+                } else if (node_gizmo_operation_ == ImGuizmo::SCALE) {
+                    float gt[3], gr[3], gs[3];
+                    ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(gizmo_matrix), gt, gr, gs);
+                    const glm::vec3 scale(gs[0], gs[1], gs[2]);
+
+                    for (size_t i = 0; i < node_gizmo_node_names_.size(); ++i) {
+                        const glm::vec3& original_world_pos = node_original_world_positions_[i];
+                        const glm::mat4& parent_inv = node_parent_world_inverses_[i];
+                        const glm::mat3& original_rot = node_original_rotations_[i];
+                        const glm::vec3& original_scale = node_original_scales_[i];
+
+                        const glm::vec3 offset = original_world_pos - gizmo_pivot_;
+                        const glm::vec3 new_world_pos = gizmo_pivot_ + offset * scale;
+                        const glm::vec3 new_local_pos = glm::vec3(parent_inv * glm::vec4(new_world_pos, 1.0f));
+                        const glm::vec3 new_scale = original_scale * scale;
+
+                        glm::mat4 new_transform(1.0f);
+                        new_transform[0] = glm::vec4(original_rot[0] * new_scale.x, 0.0f);
+                        new_transform[1] = glm::vec4(original_rot[1] * new_scale.y, 0.0f);
+                        new_transform[2] = glm::vec4(original_rot[2] * new_scale.z, 0.0f);
+                        new_transform[3] = glm::vec4(new_local_pos, 1.0f);
+                        scene_manager->setNodeTransform(node_gizmo_node_names_[i], new_transform);
+                    }
                 }
             } else {
                 // Single selection

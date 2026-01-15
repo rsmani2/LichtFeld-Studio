@@ -194,6 +194,10 @@ namespace lfs::vis {
             bool node_gizmo_active_ = false;
             std::vector<std::string> node_gizmo_node_names_;
             std::vector<glm::mat4> node_transforms_before_drag_;
+            std::vector<glm::vec3> node_original_world_positions_;
+            std::vector<glm::mat4> node_parent_world_inverses_;
+            std::vector<glm::mat3> node_original_rotations_;
+            std::vector<glm::vec3> node_original_scales_;
             glm::vec3 gizmo_pivot_{0.0f};
             glm::mat3 gizmo_cumulative_rotation_{1.0f};
 
