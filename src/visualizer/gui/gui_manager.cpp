@@ -2194,7 +2194,7 @@ namespace lfs::vis::gui {
                 glm::mat4 new_world_transform;
 
                 if (gizmo_op == ImGuizmo::ROTATE) {
-                    const glm::mat3 delta_rot(delta_matrix);
+                    const glm::mat3 delta_rot = extractRotation(delta_matrix);
                     const glm::mat3 new_rotation = delta_rot * rotation;
                     const glm::vec3 world_center = translation + rotation * local_center;
                     const glm::vec3 transform_trans = world_center - new_rotation * local_center;
@@ -2448,7 +2448,7 @@ namespace lfs::vis::gui {
                 glm::mat4 new_world_transform;
 
                 if (gizmo_op == ImGuizmo::ROTATE) {
-                    const glm::mat3 delta_rot(delta_matrix);
+                    const glm::mat3 delta_rot = extractRotation(delta_matrix);
                     const glm::mat3 new_rotation = delta_rot * rotation;
                     new_world_transform = glm::translate(glm::mat4(1.0f), translation) * glm::mat4(new_rotation);
                 } else if (gizmo_op == ImGuizmo::SCALE) {
