@@ -7,6 +7,7 @@
 #include "gui/panels/gizmo_toolbar.hpp"
 #include "gui/ui_context.hpp"
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <string>
 
 namespace lfs::vis::gui::panels {
@@ -16,13 +17,13 @@ namespace lfs::vis::gui::panels {
         std::string editing_node_name;
         glm::mat4 transform_before_edit{1.0f};
 
-        // Cached decomposed values at edit start
         glm::vec3 initial_translation{0.0f};
         glm::vec3 initial_scale{1.0f};
 
-        // For incremental world-space rotation
-        glm::vec3 world_euler{0.0f};
-        glm::vec3 prev_world_euler{0.0f};
+        // Euler display state - avoids gimbal lock from constant decomposition
+        glm::vec3 euler_display{0.0f};
+        std::string euler_display_node;
+        glm::quat euler_display_rotation{1.0f, 0.0f, 0.0f, 0.0f};
     };
 
     void DrawTransformControls(const UIContext& ctx, ToolType current_tool,

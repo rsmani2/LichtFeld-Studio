@@ -37,12 +37,19 @@ namespace lfs::vis::gui::panels {
             glm::vec3 scale;
         };
 
+        constexpr float QUAT_EQUIV_EPSILON = 1e-4f;
+
         DecomposedTransform decompose(const glm::mat4& m) {
             DecomposedTransform d;
             glm::vec3 skew;
             glm::vec4 perspective;
             glm::decompose(m, d.scale, d.rotation, d.translation, skew, perspective);
             return d;
+        }
+
+        bool sameRotation(const glm::quat& a, const glm::quat& b) {
+            const float dot = glm::dot(a, b);
+            return std::abs(std::abs(dot) - 1.0f) < QUAT_EQUIV_EPSILON;
         }
     } // namespace
 
@@ -105,9 +112,15 @@ namespace lfs::vis::gui::panels {
         const glm::mat4 current_transform = scene_manager->getSelectedNodeTransform();
         auto [translation, rotation, scale] = decompose(current_transform);
 
-        // For world space rotation: use tracked cumulative values
-        glm::vec3 euler = use_world_space ? state.world_euler
-                                          : glm::degrees(glm::eulerAngles(rotation));
+        // Only decompose euler on selection change or external modification to avoid gimbal lock
+        const bool selection_changed = (node_name != state.euler_display_node);
+        const bool external_change = !sameRotation(rotation, state.euler_display_rotation);
+        if (selection_changed || external_change) {
+            state.euler_display = glm::degrees(glm::eulerAngles(rotation));
+            state.euler_display_node = node_name;
+            state.euler_display_rotation = rotation;
+        }
+        glm::vec3 euler = state.euler_display;
 
         const bool ctrl_pressed = ImGui::GetIO().KeyCtrl;
         const float translate_step = ctrl_pressed ? TRANSLATE_STEP_CTRL : TRANSLATE_STEP;
@@ -145,6 +158,7 @@ namespace lfs::vis::gui::panels {
 
         if (current_tool == ToolType::Rotate) {
             ImGui::Text("%s", LOC(Transform::ROTATION_DEGREES));
+
             ImGui::Text("X:");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(text_width);
@@ -205,12 +219,6 @@ namespace lfs::vis::gui::panels {
             scale = glm::max(scale, glm::vec3(MIN_SCALE));
         }
 
-        // Reset world euler tracking when node changes
-        if (state.editing_node_name != node_name) {
-            state.world_euler = glm::vec3(0.0f);
-            state.prev_world_euler = glm::vec3(0.0f);
-        }
-
         // Capture initial state before first change
         if ((any_active || changed) && !state.editing_active) {
             state.editing_active = true;
@@ -218,7 +226,10 @@ namespace lfs::vis::gui::panels {
             state.transform_before_edit = current_transform;
             state.initial_translation = translation;
             state.initial_scale = scale;
-            state.prev_world_euler = state.world_euler;
+        }
+
+        if (current_tool == ToolType::Rotate && changed) {
+            state.euler_display = euler;
         }
 
         if (changed) {
@@ -229,17 +240,10 @@ namespace lfs::vis::gui::panels {
                     new_transform = state.transform_before_edit;
                     new_transform[3] = glm::vec4(translation, 1.0f);
                 } else if (current_tool == ToolType::Rotate) {
-                    const glm::vec3 euler_delta = glm::radians(euler - state.prev_world_euler);
-                    const glm::quat rot_x = glm::angleAxis(euler_delta.x, glm::vec3(1, 0, 0));
-                    const glm::quat rot_y = glm::angleAxis(euler_delta.y, glm::vec3(0, 1, 0));
-                    const glm::quat rot_z = glm::angleAxis(euler_delta.z, glm::vec3(0, 0, 1));
-                    const glm::quat delta_rot = rot_x * rot_y * rot_z;
-                    const glm::quat new_rot = delta_rot * rotation;
+                    rotation = glm::quat(glm::radians(euler));
                     new_transform = glm::translate(glm::mat4(1.0f), translation) *
-                                    glm::mat4_cast(new_rot) *
+                                    glm::mat4_cast(rotation) *
                                     glm::scale(glm::mat4(1.0f), scale);
-                    state.prev_world_euler = euler;
-                    state.world_euler = euler;
                 } else {
                     const glm::mat3 initial_rs(state.transform_before_edit);
                     const glm::vec3 scale_ratio = scale / state.initial_scale;
@@ -253,6 +257,10 @@ namespace lfs::vis::gui::panels {
             }
 
             scene_manager->setSelectedNodeTransform(new_transform);
+
+            if (current_tool == ToolType::Rotate) {
+                state.euler_display_rotation = rotation;
+            }
         }
 
         // Commit undo command when editing ends
@@ -273,8 +281,8 @@ namespace lfs::vis::gui::panels {
                 node_name, current_transform, glm::mat4(1.0f));
             services().commands().execute(std::move(cmd));
             scene_manager->setSelectedNodeTransform(glm::mat4(1.0f));
-            state.world_euler = glm::vec3(0.0f);
-            state.prev_world_euler = glm::vec3(0.0f);
+            state.euler_display = glm::vec3(0.0f);
+            state.euler_display_rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
         }
     }
 
