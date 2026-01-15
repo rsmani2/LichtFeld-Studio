@@ -44,6 +44,7 @@ namespace lfs::vis {
         bool show_ellipsoid = false;
         bool use_ellipsoid = false;
         bool desaturate_unselected = false; // Desaturate unselected PLYs when one is selected
+        bool desaturate_cropping = true;    // Desaturate outside crop box/ellipsoid instead of hiding
 
         // Background
         glm::vec3 background_color = glm::vec3(0.0f, 0.0f, 0.0f);

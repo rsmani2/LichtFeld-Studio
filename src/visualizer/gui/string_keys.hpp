@@ -433,6 +433,7 @@ namespace lichtfeld::Strings {
         inline constexpr const char* CAMERA_FRUSTUMS = "main_panel.camera_frustums";
         inline constexpr const char* POINT_CLOUD_MODE = "main_panel.point_cloud_mode";
         inline constexpr const char* DESATURATE_UNSELECTED = "main_panel.desaturate_unselected";
+        inline constexpr const char* DESATURATE_CROPPING = "main_panel.desaturate_cropping";
         inline constexpr const char* FOV = "main_panel.fov";
         inline constexpr const char* SH_DEGREE = "main_panel.sh_degree";
         inline constexpr const char* EQUIRECTANGULAR = "main_panel.equirectangular";
@@ -568,6 +569,7 @@ namespace lichtfeld::Strings {
         inline constexpr const char* RENDER_SCALE = "tooltip.render_scale";
         inline constexpr const char* POINT_CLOUD_FORCED = "tooltip.point_cloud_forced";
         inline constexpr const char* DESATURATE_UNSELECTED = "tooltip.desaturate_unselected";
+        inline constexpr const char* DESATURATE_CROPPING = "tooltip.desaturate_cropping";
         inline constexpr const char* LOCKED = "tooltip.locked";
         inline constexpr const char* UNLOCKED = "tooltip.unlocked";
         inline constexpr const char* POINT_SIZE = "tooltip.point_size";

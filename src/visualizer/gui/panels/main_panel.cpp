@@ -317,13 +317,20 @@ namespace lfs::vis::gui::panels {
             ImGui::Unindent();
         }
 
-        // Selection Behavior
+        // Desaturation Options
         ImGui::Separator();
         if (ImGui::Checkbox(LOC(MainPanel::DESATURATE_UNSELECTED), &settings.desaturate_unselected)) {
             settings_changed = true;
         }
         if (ImGui::IsItemHovered()) {
             widgets::SetThemedTooltip("%s", LOC(Tooltip::DESATURATE_UNSELECTED));
+        }
+
+        if (ImGui::Checkbox(LOC(MainPanel::DESATURATE_CROPPING), &settings.desaturate_cropping)) {
+            settings_changed = true;
+        }
+        if (ImGui::IsItemHovered()) {
+            widgets::SetThemedTooltip("%s", LOC(Tooltip::DESATURATE_CROPPING));
         }
 
         // Apply settings changes if any

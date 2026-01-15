@@ -730,7 +730,7 @@ namespace lfs::vis {
                     .max = cb.data->max,
                     .transform = glm::inverse(cb.world_transform)};
                 request.crop_inverse = cb.data->inverse;
-                request.crop_desaturate = settings_.show_crop_box && !settings_.use_crop_box;
+                request.crop_desaturate = settings_.show_crop_box && !settings_.use_crop_box && settings_.desaturate_cropping;
             }
         }
 
@@ -747,7 +747,7 @@ namespace lfs::vis {
                     .radii = el.data->radii,
                     .transform = glm::inverse(el.world_transform)};
                 request.ellipsoid_inverse = el.data->inverse;
-                request.ellipsoid_desaturate = settings_.show_ellipsoid && !settings_.use_ellipsoid;
+                request.ellipsoid_desaturate = settings_.show_ellipsoid && !settings_.use_ellipsoid && settings_.desaturate_cropping;
                 break;
             }
         }
