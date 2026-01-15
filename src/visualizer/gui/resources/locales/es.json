@@ -411,6 +411,8 @@
     "ring_selection": "Selección anillo (Ctrl+5)",
     "local_space": "Espacio Local",
     "world_space": "Espacio Mundial",
+    "origin_pivot": "Origen",
+    "bounds_center_pivot": "Centro de límites",
     "resize_bounds": "Redimensionar Límites",
     "mirror_x": "Reflejar X",
     "mirror_y": "Reflejar Y",

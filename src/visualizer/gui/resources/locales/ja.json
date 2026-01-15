@@ -411,6 +411,8 @@
     "ring_selection": "リング選択 (Ctrl+5)",
     "local_space": "ローカル空間",
     "world_space": "ワールド空間",
+    "origin_pivot": "原点",
+    "bounds_center_pivot": "境界中心",
     "resize_bounds": "境界をリサイズ",
     "mirror_x": "X軸ミラー",
     "mirror_y": "Y軸ミラー",

@@ -411,6 +411,8 @@
     "ring_selection": "Ringauswahl (Strg+5)",
     "local_space": "Lokaler Raum",
     "world_space": "Weltraum",
+    "origin_pivot": "Ursprung",
+    "bounds_center_pivot": "Begrenzungszentrum",
     "resize_bounds": "Grenzen ändern",
     "mirror_x": "X spiegeln",
     "mirror_y": "Y spiegeln",

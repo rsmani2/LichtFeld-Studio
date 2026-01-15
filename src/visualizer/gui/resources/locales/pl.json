@@ -411,6 +411,8 @@
     "ring_selection": "Zaznaczenie pierścieniowe (Ctrl+5)",
     "local_space": "Przestrzeń Lokalna",
     "world_space": "Przestrzeń Światowa",
+    "origin_pivot": "Początek",
+    "bounds_center_pivot": "Środek granic",
     "resize_bounds": "Zmień Rozmiar Granic",
     "mirror_x": "Odbicie X",
     "mirror_y": "Odbicie Y",

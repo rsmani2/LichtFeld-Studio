@@ -175,6 +175,8 @@ namespace lfs::vis::gui::panels {
         state.mirror_x_texture = LoadIconTexture("mirror-x.png");
         state.mirror_y_texture = LoadIconTexture("mirror-y.png");
         state.mirror_z_texture = LoadIconTexture("mirror-z.png");
+        state.origin_pivot_texture = LoadIconTexture("circle-dot.png");
+        state.bounds_center_pivot_texture = LoadIconTexture("box.png");
         state.initialized = true;
     }
 
@@ -236,6 +238,10 @@ namespace lfs::vis::gui::panels {
             glDeleteTextures(1, &state.mirror_y_texture);
         if (state.mirror_z_texture)
             glDeleteTextures(1, &state.mirror_z_texture);
+        if (state.origin_pivot_texture)
+            glDeleteTextures(1, &state.origin_pivot_texture);
+        if (state.bounds_center_pivot_texture)
+            glDeleteTextures(1, &state.bounds_center_pivot_texture);
 
         state.selection_texture = 0;
         state.rectangle_texture = 0;
@@ -256,6 +262,8 @@ namespace lfs::vis::gui::panels {
         state.mirror_x_texture = 0;
         state.mirror_y_texture = 0;
         state.mirror_z_texture = 0;
+        state.origin_pivot_texture = 0;
+        state.bounds_center_pivot_texture = 0;
         state.initialized = false;
     }
 
@@ -389,12 +397,12 @@ namespace lfs::vis::gui::panels {
             }
         }
 
-        // Transform space toolbar (Local/World toggle)
+        // Transform toolbar
         const bool is_transform_tool = (active_tool == ToolType::Translate ||
                                         active_tool == ToolType::Rotate ||
                                         active_tool == ToolType::Scale);
         if (is_transform_tool) {
-            constexpr int NUM_BUTTONS = 2;
+            constexpr int NUM_BUTTONS = 4;
             const ImVec2 sub_size = ComputeToolbarSize(NUM_BUTTONS);
             const float sub_x = viewport_pos.x + (viewport_size.x - sub_size.x) * 0.5f;
             const float sub_y = viewport_pos.y + toolbar_size.y + SUBTOOLBAR_OFFSET_Y;
@@ -420,9 +428,24 @@ namespace lfs::vis::gui::panels {
                         widgets::SetThemedTooltip("%s", tooltip);
                 };
 
+                const auto PivotButton = [&](const char* id, unsigned int tex,
+                                             PivotMode mode, const char* fallback,
+                                             const char* tooltip) {
+                    const bool selected = (state.pivot_mode == mode);
+                    if (widgets::IconButton(id, tex, btn_size, selected, fallback)) {
+                        state.pivot_mode = mode;
+                    }
+                    if (ImGui::IsItemHovered())
+                        widgets::SetThemedTooltip("%s", tooltip);
+                };
+
                 SpaceButton("##local", state.local_texture, TransformSpace::Local, "L", LOC(Toolbar::LOCAL_SPACE));
                 ImGui::SameLine();
                 SpaceButton("##world", state.world_texture, TransformSpace::World, "W", LOC(Toolbar::WORLD_SPACE));
+                ImGui::SameLine();
+                PivotButton("##origin", state.origin_pivot_texture, PivotMode::Origin, "O", LOC(Toolbar::ORIGIN_PIVOT));
+                ImGui::SameLine();
+                PivotButton("##bounds", state.bounds_center_pivot_texture, PivotMode::BoundsCenter, "B", LOC(Toolbar::BOUNDS_CENTER_PIVOT));
             }
             ImGui::End();
         }

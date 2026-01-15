@@ -2524,10 +2524,14 @@ namespace lfs::vis::gui {
         const bool use_world_space =
             (gizmo_toolbar_state_.transform_space == panels::TransformSpace::World) || is_multi_selection;
 
+        const glm::vec3 local_pivot = (gizmo_toolbar_state_.pivot_mode == panels::PivotMode::Origin)
+                                          ? glm::vec3(0.0f)
+                                          : scene_manager->getSelectionCenter();
+
         const glm::vec3 gizmo_position = is_multi_selection
                                              ? scene_manager->getSelectionWorldCenter()
                                              : glm::vec3(scene_manager->getSelectedNodeWorldTransform() *
-                                                         glm::vec4(scene_manager->getSelectionCenter(), 1.0f));
+                                                         glm::vec4(local_pivot, 1.0f));
 
         glm::mat4 gizmo_matrix(1.0f);
         gizmo_matrix[3] = glm::vec4(gizmo_position, 1.0f);
@@ -2614,7 +2618,6 @@ namespace lfs::vis::gui {
                 }
             } else {
                 // Single selection
-                const glm::vec3 center = scene_manager->getSelectionCenter();
                 const glm::mat4 node_transform = scene_manager->getSelectedNodeTransform();
                 const glm::vec3 new_gizmo_pos_world = glm::vec3(gizmo_matrix[3]);
 
@@ -2632,11 +2635,11 @@ namespace lfs::vis::gui {
                     const glm::mat3 delta_rs(delta_matrix);
                     const glm::mat3 new_rs = delta_rs * old_rs;
                     new_transform = glm::mat4(new_rs);
-                    new_transform[3] = glm::vec4(new_gizmo_pos - new_rs * center, 1.0f);
+                    new_transform[3] = glm::vec4(new_gizmo_pos - new_rs * local_pivot, 1.0f);
                 } else {
                     const glm::mat3 new_rs(gizmo_matrix);
                     new_transform = gizmo_matrix;
-                    new_transform[3] = glm::vec4(new_gizmo_pos - new_rs * center, 1.0f);
+                    new_transform[3] = glm::vec4(new_gizmo_pos - new_rs * local_pivot, 1.0f);
                 }
                 scene_manager->setSelectedNodeTransform(new_transform);
             }

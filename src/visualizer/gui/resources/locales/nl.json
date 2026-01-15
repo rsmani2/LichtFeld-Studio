@@ -411,6 +411,8 @@
     "ring_selection": "Ring selectie (Ctrl+5)",
     "local_space": "Lokale Ruimte",
     "world_space": "Wereld Ruimte",
+    "origin_pivot": "Oorsprong",
+    "bounds_center_pivot": "Grenzen Midden",
     "resize_bounds": "Grenzen Aanpassen",
     "mirror_x": "Spiegel X",
     "mirror_y": "Spiegel Y",

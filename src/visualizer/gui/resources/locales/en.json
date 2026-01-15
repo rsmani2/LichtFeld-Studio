@@ -412,6 +412,8 @@
     "ring_selection": "Ring selection (Ctrl+5)",
     "local_space": "Local Space",
     "world_space": "World Space",
+    "origin_pivot": "Origin",
+    "bounds_center_pivot": "Bounds Center",
     "resize_bounds": "Resize Bounds",
     "mirror_x": "Mirror X",
     "mirror_y": "Mirror Y",

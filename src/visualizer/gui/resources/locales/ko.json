@@ -411,6 +411,8 @@
     "ring_selection": "링 선택 (Ctrl+5)",
     "local_space": "로컬 공간",
     "world_space": "월드 공간",
+    "origin_pivot": "원점",
+    "bounds_center_pivot": "경계 중심",
     "resize_bounds": "경계 크기 조절",
     "mirror_x": "X축 미러",
     "mirror_y": "Y축 미러",

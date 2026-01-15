@@ -411,6 +411,8 @@
     "ring_selection": "环形选择（Ctrl+5）",
     "local_space": "局部空间",
     "world_space": "世界空间",
+    "origin_pivot": "原点",
+    "bounds_center_pivot": "边界中心",
     "resize_bounds": "调整边界大小",
     "mirror_x": "X轴镜像",
     "mirror_y": "Y轴镜像",
