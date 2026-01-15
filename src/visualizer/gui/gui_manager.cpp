@@ -2611,6 +2611,7 @@ namespace lfs::vis::gui {
             node_gizmo_active_ = true;
             gizmo_pivot_ = gizmo_position;
             gizmo_cumulative_rotation_ = glm::mat3(1.0f);
+            gizmo_cumulative_scale_ = glm::vec3(1.0f);
 
             // Filter out nodes whose ancestors are also selected
             std::unordered_set<NodeId> selected_ids;
@@ -2714,9 +2715,11 @@ namespace lfs::vis::gui {
                         scene_manager->setNodeTransform(node_gizmo_node_names_[i], new_transform);
                     }
                 } else if (node_gizmo_operation_ == ImGuizmo::SCALE) {
-                    float gt[3], gr[3], gs[3];
-                    ImGuizmo::DecomposeMatrixToComponents(glm::value_ptr(gizmo_matrix), gt, gr, gs);
-                    const glm::vec3 scale(gs[0], gs[1], gs[2]);
+                    gizmo_cumulative_scale_ *= extractScale(delta_matrix);
+
+                    const glm::mat3 world_scale(gizmo_cumulative_scale_.x, 0.0f, 0.0f,
+                                                0.0f, gizmo_cumulative_scale_.y, 0.0f,
+                                                0.0f, 0.0f, gizmo_cumulative_scale_.z);
 
                     for (size_t i = 0; i < node_gizmo_node_names_.size(); ++i) {
                         const glm::vec3& original_world_pos = node_original_world_positions_[i];
@@ -2725,15 +2728,22 @@ namespace lfs::vis::gui {
                         const glm::vec3& original_scale = node_original_scales_[i];
 
                         const glm::vec3 offset = original_world_pos - gizmo_pivot_;
-                        const glm::vec3 new_world_pos = gizmo_pivot_ + offset * scale;
+                        const glm::vec3 new_world_pos = gizmo_pivot_ + offset * gizmo_cumulative_scale_;
                         const glm::vec3 new_local_pos = glm::vec3(parent_inv * glm::vec4(new_world_pos, 1.0f));
-                        const glm::vec3 new_scale = original_scale * scale;
 
-                        glm::mat4 new_transform(1.0f);
-                        new_transform[0] = glm::vec4(original_rot[0] * new_scale.x, 0.0f);
-                        new_transform[1] = glm::vec4(original_rot[1] * new_scale.y, 0.0f);
-                        new_transform[2] = glm::vec4(original_rot[2] * new_scale.z, 0.0f);
-                        new_transform[3] = glm::vec4(new_local_pos, 1.0f);
+                        const glm::mat3 parent_rot_inv = extractRotation(parent_inv);
+                        const glm::mat3 parent_rot = glm::transpose(parent_rot_inv);
+                        const glm::mat3 local_scale = parent_rot_inv * world_scale * parent_rot;
+
+                        const glm::mat3 original_rs(original_rot[0] * original_scale.x,
+                                                    original_rot[1] * original_scale.y,
+                                                    original_rot[2] * original_scale.z);
+                        const glm::mat3 new_rs = local_scale * original_rs;
+
+                        const glm::mat4 new_transform(glm::vec4(new_rs[0], 0.0f),
+                                                      glm::vec4(new_rs[1], 0.0f),
+                                                      glm::vec4(new_rs[2], 0.0f),
+                                                      glm::vec4(new_local_pos, 1.0f));
                         scene_manager->setNodeTransform(node_gizmo_node_names_[i], new_transform);
                     }
                 }
@@ -2754,7 +2764,10 @@ namespace lfs::vis::gui {
                 if (use_world_space) {
                     const glm::mat3 old_rs(node_transform);
                     const glm::mat3 delta_rs(delta_matrix);
-                    const glm::mat3 new_rs = delta_rs * old_rs;
+                    const glm::mat3 parent_rot_inv = extractRotation(parent_world_inv);
+                    const glm::mat3 parent_rot = glm::transpose(parent_rot_inv);
+                    const glm::mat3 local_delta = parent_rot_inv * delta_rs * parent_rot;
+                    const glm::mat3 new_rs = local_delta * old_rs;
                     new_transform = glm::mat4(new_rs);
                     new_transform[3] = glm::vec4(new_gizmo_pos - new_rs * local_pivot, 1.0f);
                 } else {

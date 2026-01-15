@@ -200,6 +200,7 @@ namespace lfs::vis {
             std::vector<glm::vec3> node_original_scales_;
             glm::vec3 gizmo_pivot_{0.0f};
             glm::mat3 gizmo_cumulative_rotation_{1.0f};
+            glm::vec3 gizmo_cumulative_scale_{1.0f};
 
             // Previous tool/selection mode for detecting changes
             panels::ToolType previous_tool_ = panels::ToolType::None;
