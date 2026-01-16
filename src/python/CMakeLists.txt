@@ -171,6 +171,7 @@ import os, sys
 dll_dirs = [
     r'$<TARGET_FILE_DIR:lfs_panel_registry>',
     r'${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin',
+    r'${CMAKE_BINARY_DIR}/external/nvImageCodec/src',
 ]
 if 'CUDA_PATH' in os.environ:
     dll_dirs.append(os.path.join(os.environ['CUDA_PATH'], 'bin'))
