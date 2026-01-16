@@ -160,25 +160,40 @@ if(BUILD_PYTHON_STUBS)
         endif()
 
         if(BUILD_PYTHON_STUBS)
-            # Build PATH string for DLL loading - use generator expressions for config-specific dirs
-            # Include: vcpkg bins, build output dir (where lfs_panel_registry.dll is), CUDA
-            set(STUBGEN_STATIC_PATHS "${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin")
-            if(DEFINED ENV{CUDA_PATH})
-                set(STUBGEN_STATIC_PATHS "${STUBGEN_STATIC_PATHS}\\;$ENV{CUDA_PATH}/bin")
-            elseif(CUDAToolkit_BIN_DIR)
-                set(STUBGEN_STATIC_PATHS "${STUBGEN_STATIC_PATHS}\\;${CUDAToolkit_BIN_DIR}")
-            endif()
+            # Python 3.8+ on Windows requires os.add_dll_directory() for DLL loading
+            # Create a wrapper script that sets up DLL paths before running stubgen
+            # Use file(GENERATE) to evaluate generator expressions at generation time
+            set(STUBGEN_WRAPPER "${CMAKE_CURRENT_BINARY_DIR}/run_stubgen_$<CONFIG>.py")
+            file(GENERATE OUTPUT "${STUBGEN_WRAPPER}" CONTENT "
+import os, sys
+
+# Add DLL directories (Python 3.8+ requirement on Windows)
+dll_dirs = [
+    r'$<TARGET_FILE_DIR:lfs_panel_registry>',
+    r'${CMAKE_BINARY_DIR}/vcpkg_installed/x64-windows/bin',
+]
+if 'CUDA_PATH' in os.environ:
+    dll_dirs.append(os.path.join(os.environ['CUDA_PATH'], 'bin'))
+
+for d in dll_dirs:
+    if os.path.isdir(d):
+        os.add_dll_directory(d)
+
+# Add module path
+sys.path.insert(0, r'$<TARGET_FILE_DIR:lfs_py>')
+
+# Run stubgen
+import runpy
+sys.argv = ['stubgen', '-m', 'lichtfeld',
+            '-M', r'${CMAKE_CURRENT_BINARY_DIR}/typings/lichtfeld/py.typed',
+            '-O', r'${CMAKE_CURRENT_BINARY_DIR}/typings',
+            '-r']
+runpy.run_path(r'${NB_STUBGEN}', run_name='__main__')
+")
 
             add_custom_command(
                 OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/typings/lichtfeld/py.typed
-                COMMAND ${CMAKE_COMMAND} -E env
-                        "PATH=$<TARGET_FILE_DIR:lfs_panel_registry>\\;${STUBGEN_STATIC_PATHS}\\;$ENV{PATH}"
-                        "PYTHONPATH=$<TARGET_FILE_DIR:lfs_py>"
-                        "${Python_EXECUTABLE}" "${NB_STUBGEN}"
-                        -m lichtfeld
-                        -M ${CMAKE_CURRENT_BINARY_DIR}/typings/lichtfeld/py.typed
-                        -O ${CMAKE_CURRENT_BINARY_DIR}/typings
-                        -r
+                COMMAND "${Python_EXECUTABLE}" "${STUBGEN_WRAPPER}"
                 WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
                 DEPENDS lfs_py lfs_panel_registry "${NB_STUBGEN}"
                 COMMENT "Generating Python stubs for lichtfeld (Windows)"
