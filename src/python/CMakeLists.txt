@@ -283,11 +283,18 @@ install_uv()
 # =============================================================================
 set(PYTHON_INSTALL_DIR "${CMAKE_INSTALL_LIBDIR}/python")
 
-# Install lichtfeld Python module (.so/.pyd)
-install(TARGETS lfs_py
-    LIBRARY DESTINATION "${PYTHON_INSTALL_DIR}"
-    RUNTIME DESTINATION "${PYTHON_INSTALL_DIR}"  # Windows DLLs
-)
+# Install lichtfeld Python module (.so/.pyd) to bin for portable builds
+if(BUILD_PORTABLE)
+    install(TARGETS lfs_py
+        LIBRARY DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"  # Windows DLLs
+    )
+else()
+    install(TARGETS lfs_py
+        LIBRARY DESTINATION "${PYTHON_INSTALL_DIR}"
+        RUNTIME DESTINATION "${PYTHON_INSTALL_DIR}"  # Windows DLLs
+    )
+endif()
 
 # Install lfs_python_runtime shared library (required by lichtfeld module and exe)
 install(TARGETS lfs_python_runtime
@@ -295,18 +302,32 @@ install(TARGETS lfs_python_runtime
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"  # Windows DLLs
 )
 
-# Install lfs_plugins Python package
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lfs_plugins"
-    DESTINATION "${PYTHON_INSTALL_DIR}"
-    FILES_MATCHING PATTERN "*.py"
-)
+# Install lfs_plugins Python package to bin for portable builds
+if(BUILD_PORTABLE)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lfs_plugins"
+        DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        FILES_MATCHING PATTERN "*.py"
+    )
+else()
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/lfs_plugins"
+        DESTINATION "${PYTHON_INSTALL_DIR}"
+        FILES_MATCHING PATTERN "*.py"
+    )
+endif()
 
 # Install type stubs for IDE support (if built)
 if(BUILD_PYTHON_STUBS)
-    install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/typings/"
-        DESTINATION "${PYTHON_INSTALL_DIR}"
-        OPTIONAL  # May not exist if stub generation failed
-    )
+    if(BUILD_PORTABLE)
+        install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/typings/"
+            DESTINATION "${CMAKE_INSTALL_BINDIR}"
+            OPTIONAL  # May not exist if stub generation failed
+        )
+    else()
+        install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/typings/"
+            DESTINATION "${PYTHON_INSTALL_DIR}"
+            OPTIONAL  # May not exist if stub generation failed
+        )
+    endif()
 endif()
 
 # =============================================================================
@@ -320,10 +341,10 @@ if(BUILD_PORTABLE AND BUILD_PYTHON_BINDINGS)
 
     if(WIN32)
         # Windows: Python layout is tools/python3/{python.exe, Lib/, DLLs/, python312.dll}
-        # We install to lib/python3.12/ to match Linux layout for simpler getPythonHome()
+        # Install to root Lib/ and DLLs/ to match getPythonHome() expectations
         set(VCPKG_PYTHON_STDLIB "${VCPKG_PYTHON_TOOLS_DIR}/Lib")
         set(VCPKG_PYTHON_DLLS "${VCPKG_PYTHON_TOOLS_DIR}/DLLs")
-        set(PYTHON_INSTALL_STDLIB "${CMAKE_INSTALL_LIBDIR}/python3.12")
+        set(PYTHON_INSTALL_STDLIB "Lib")
 
         # Install Python executable to bin/
         install(PROGRAMS "${Python_EXECUTABLE}"
@@ -370,7 +391,7 @@ if(BUILD_PORTABLE AND BUILD_PYTHON_BINDINGS)
         # Install DLLs directory (compiled extensions like _socket.pyd, etc.)
         if(EXISTS "${VCPKG_PYTHON_DLLS}")
             install(DIRECTORY "${VCPKG_PYTHON_DLLS}/"
-                DESTINATION "${PYTHON_INSTALL_STDLIB}/lib-dynload"
+                DESTINATION "DLLs"
                 COMPONENT runtime
                 PATTERN "__pycache__" EXCLUDE
             )
