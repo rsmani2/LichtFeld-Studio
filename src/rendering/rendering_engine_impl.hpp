@@ -7,6 +7,7 @@
 #include "axes_renderer.hpp"
 #include "bbox_renderer.hpp"
 #include "camera_frustum_renderer.hpp"
+#include "ellipsoid_renderer.hpp"
 #include "grid_renderer.hpp"
 #include "pivot_renderer.hpp"
 #include "rendering/rendering.hpp"
@@ -50,6 +51,12 @@ namespace lfs::rendering {
 
         Result<void> renderBoundingBox(
             const BoundingBox& box,
+            const ViewportData& viewport,
+            const glm::vec3& color,
+            float line_width) override;
+
+        Result<void> renderEllipsoid(
+            const Ellipsoid& ellipsoid,
             const ViewportData& viewport,
             const glm::vec3& color,
             float line_width) override;
@@ -139,6 +146,7 @@ namespace lfs::rendering {
         // Overlay renderers
         RenderInfiniteGrid grid_renderer_;
         RenderBoundingBox bbox_renderer_;
+        EllipsoidRenderer ellipsoid_renderer_;
         RenderCoordinateAxes axes_renderer_;
         ViewportGizmo viewport_gizmo_;
         CameraFrustumRenderer camera_frustum_renderer_;

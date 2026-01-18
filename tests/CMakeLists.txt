@@ -216,6 +216,7 @@ set(TEST_FILES
     test_extended_unary_ops_vs_torch.cpp
     test_property_system.cpp
     test_scene_validity.cpp
+    test_background_image.cpp
 )
 
 # Build test sources list

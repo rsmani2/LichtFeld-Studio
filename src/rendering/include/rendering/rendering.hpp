@@ -60,6 +60,11 @@ namespace lfs::rendering {
         glm::mat4 transform{1.0f};
     };
 
+    struct Ellipsoid {
+        glm::vec3 radii{1.0f, 1.0f, 1.0f};
+        glm::mat4 transform{1.0f};
+    };
+
     struct RenderRequest {
         ViewportData viewport;
         float scaling_modifier = 1.0f;
@@ -94,6 +99,12 @@ namespace lfs::rendering {
         bool selection_mode_rings = false;
         bool crop_inverse = false;
         bool crop_desaturate = false;
+        int crop_parent_node_index = -1;
+        // Ellipsoid crop (data comes from scene graph EllipsoidData)
+        std::optional<Ellipsoid> ellipsoid;
+        bool ellipsoid_inverse = false;
+        bool ellipsoid_desaturate = false;
+        int ellipsoid_parent_node_index = -1;
         // Depth filter for selection tool (separate from crop box, always desaturates outside)
         std::optional<BoundingBox> depth_filter;
         // Per-node selection mask: true = selected. Empty = no selection effects.
@@ -171,6 +182,9 @@ namespace lfs::rendering {
         // Texcoord scale for over-allocated textures
         glm::vec2 left_texcoord_scale{1.0f, 1.0f};
         glm::vec2 right_texcoord_scale{1.0f, 1.0f};
+
+        std::optional<bool> flip_left_y;
+        std::optional<bool> flip_right_y;
     };
 
     enum class GridPlane {
@@ -321,6 +335,12 @@ namespace lfs::rendering {
             const BoundingBox& box,
             const ViewportData& viewport,
             const glm::vec3& color = glm::vec3(1.0f, 1.0f, 0.0f),
+            float line_width = 2.0f) = 0;
+
+        virtual Result<void> renderEllipsoid(
+            const Ellipsoid& ellipsoid,
+            const ViewportData& viewport,
+            const glm::vec3& color = glm::vec3(0.3f, 0.8f, 1.0f),
             float line_width = 2.0f) = 0;
 
         virtual Result<void> renderCoordinateAxes(

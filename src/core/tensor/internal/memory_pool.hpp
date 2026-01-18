@@ -345,6 +345,7 @@ namespace lfs::core {
                 err = cudaMalloc(&ptr, bytes);
                 if (err != cudaSuccess) {
                     LOG_ERROR(std::string("[MEM] cudaMalloc retry failed: ") + cudaGetErrorString(err));
+                    cudaGetLastError(); // Clear sticky error state for clean recovery
                     return nullptr;
                 }
             }

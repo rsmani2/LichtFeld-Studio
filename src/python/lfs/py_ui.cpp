@@ -1179,7 +1179,6 @@ namespace lfs::python {
                     {"mirror", ToolType::Mirror},
                     {"brush", ToolType::Brush},
                     {"align", ToolType::Align},
-                    {"cropbox", ToolType::CropBox},
                 };
 
                 std::string lower_name = tool_name;

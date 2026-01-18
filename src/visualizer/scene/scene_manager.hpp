@@ -144,7 +144,15 @@ namespace lfs::vis {
         NodeId getSelectedNodeCropBoxId() const;
         CropBoxData* getSelectedNodeCropBox();
         const CropBoxData* getSelectedNodeCropBox() const;
-        void syncCropBoxToRenderSettings(); // Sync selected node's cropbox to render settings
+        void syncCropBoxToRenderSettings();
+
+        // Ellipsoid operations for selected node
+        void ensureEllipsoidForSelectedNode();
+        void selectEllipsoidForCurrentNode();
+        NodeId getSelectedNodeEllipsoidId() const;
+        EllipsoidData* getSelectedNodeEllipsoid();
+        const EllipsoidData* getSelectedNodeEllipsoid() const;
+        void syncEllipsoidToRenderSettings();
 
         void loadDataset(const std::filesystem::path& path,
                          const lfs::core::param::TrainingParameters& params);
@@ -201,13 +209,20 @@ namespace lfs::vis {
     private:
         void setupEventHandlers();
         void emitSceneChanged();
+        void syncCropToolRenderSettings(const SceneNode* node);
         void handleCropActivePly(const lfs::geometry::BoundingBox& crop_box, bool inverse);
+        void handleCropByEllipsoid(const glm::mat4& world_transform, const glm::vec3& radii, bool inverse);
         void handleRenamePly(const lfs::core::events::cmd::RenamePLY& event);
         void handleReparentNode(const std::string& node_name, const std::string& new_parent_name);
         void handleAddGroup(const std::string& name, const std::string& parent_name);
         void handleDuplicateNode(const std::string& name);
         void handleMergeGroup(const std::string& name);
+        void handleAddCropBox(const std::string& node_name);
+        void handleAddCropEllipsoid(const std::string& node_name);
+        void handleResetCropBox();
+        void handleResetEllipsoid();
         void updateCropBoxToFitScene(bool use_percentile);
+        void updateEllipsoidToFitScene(bool use_percentile);
 
         Scene scene_;
         mutable std::mutex state_mutex_;

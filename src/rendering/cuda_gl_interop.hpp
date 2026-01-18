@@ -105,7 +105,7 @@ namespace lfs::rendering {
         Result<void> resize(int new_width, int new_height);
         Result<void> updateFromTensor(const Tensor& image);
         Result<void> updateDepthFromTensor(const Tensor& depth); // Single-channel float
-        Result<void> readToTensor(Tensor& output);
+        Result<void> readToTensor(Tensor& output, int target_width = 0, int target_height = 0);
         GLuint getTextureID() const { return texture_id_; }
         int getWidth() const { return width_; }
         int getHeight() const { return height_; }

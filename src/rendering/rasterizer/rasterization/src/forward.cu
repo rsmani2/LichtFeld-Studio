@@ -331,6 +331,12 @@ void lfs::rendering::forward(
     const float3* crop_box_max,
     bool crop_inverse,
     bool crop_desaturate,
+    int crop_parent_node_index,
+    const float* ellipsoid_transform,
+    const float3* ellipsoid_radii,
+    bool ellipsoid_inverse,
+    bool ellipsoid_desaturate,
+    int ellipsoid_parent_node_index,
     const float* depth_filter_transform,
     const float3* depth_filter_min,
     const float3* depth_filter_max,
@@ -440,6 +446,12 @@ void lfs::rendering::forward(
         crop_box_max,
         crop_inverse,
         crop_desaturate,
+        crop_parent_node_index,
+        ellipsoid_transform,
+        ellipsoid_radii,
+        ellipsoid_inverse,
+        ellipsoid_desaturate,
+        ellipsoid_parent_node_index,
         depth_filter_transform,
         depth_filter_min,
         depth_filter_max,
@@ -464,9 +476,9 @@ void lfs::rendering::forward(
                    sizeof(float2) * n_primitives, cudaMemcpyDeviceToDevice);
 
         // In desaturate mode, invalidate screen positions for outside gaussians
-        // Check both crop box desaturate and depth filter
+        // Check crop box desaturate, ellipsoid desaturate, and depth filter
         const bool has_depth_filter = (depth_filter_transform != nullptr);
-        if (crop_desaturate || has_depth_filter) {
+        if (crop_desaturate || ellipsoid_desaturate || has_depth_filter) {
             constexpr int BLOCK = 256;
             const int grid_size = (n_primitives + BLOCK - 1) / BLOCK;
             invalidate_outside_crop_kernel<<<grid_size, BLOCK>>>(

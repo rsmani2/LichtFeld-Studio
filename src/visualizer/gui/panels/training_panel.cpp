@@ -241,27 +241,6 @@ namespace lfs::vis::gui::panels {
                     widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::FS_CACHE));
                 }
 
-                if (opt_params.enable_eval) {
-                    ImGui::TableNextRow();
-                    ImGui::TableNextColumn();
-                    ImGui::Text("%s", LOC(Training::Dataset::TEST_EVERY));
-                    ImGui::TableNextColumn();
-                    if (can_edit) {
-                        ImGui::PushItemWidth(-1);
-                        if (ImGui::InputInt("##test_every", &dataset_params.test_every, 100, 500)) {
-                            if (dataset_params.test_every > 0 && dataset_params.test_every <= 10000) {
-                                dataset_params_changed = true;
-                            }
-                        }
-                        ImGui::PopItemWidth();
-                    } else {
-                        ImGui::Text("%d", dataset_params.test_every);
-                    }
-                    if (ImGui::IsItemHovered()) {
-                        widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::TEST_EVERY));
-                    }
-                }
-
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", LOC(Training::Dataset::OUTPUT));
@@ -390,18 +369,16 @@ namespace lfs::vis::gui::panels {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", LOC(Training::Refinement::REFINE_EVERY));
                 ImGui::TableNextColumn();
+                ImGui::PushItemWidth(-1);
+                int refine_every = static_cast<int>(opt_params.refine_every);
                 if (can_edit) {
-                    ImGui::PushItemWidth(-1);
-                    int refine_every = static_cast<int>(opt_params.refine_every);
-                    if (ImGui::InputInt("##refine_every", &refine_every, 10, 100)) {
-                        if (refine_every > 0) {
-                            opt_params.refine_every = static_cast<size_t>(refine_every);
-                        }
+                    if (widgets::InputIntFormatted("##refine_every", &refine_every, 10, 100) && refine_every > 0) {
+                        opt_params.refine_every = static_cast<size_t>(refine_every);
                     }
-                    ImGui::PopItemWidth();
                 } else {
-                    ImGui::Text("%zu", opt_params.refine_every);
+                    ImGui::Text("%s", widgets::formatNumber(refine_every).c_str());
                 }
+                ImGui::PopItemWidth();
                 if (ImGui::IsItemHovered()) {
                     widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::REFINE_EVERY));
                 }
@@ -411,18 +388,16 @@ namespace lfs::vis::gui::panels {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", LOC(Training::Refinement::START_REFINE));
                 ImGui::TableNextColumn();
+                ImGui::PushItemWidth(-1);
+                int start_refine = static_cast<int>(opt_params.start_refine);
                 if (can_edit) {
-                    ImGui::PushItemWidth(-1);
-                    int start_refine = static_cast<int>(opt_params.start_refine);
-                    if (ImGui::InputInt("##start_refine", &start_refine, 100, 500)) {
-                        if (start_refine >= 0) {
-                            opt_params.start_refine = static_cast<size_t>(start_refine);
-                        }
+                    if (widgets::InputIntFormatted("##start_refine", &start_refine, 100, 500) && start_refine >= 0) {
+                        opt_params.start_refine = static_cast<size_t>(start_refine);
                     }
-                    ImGui::PopItemWidth();
                 } else {
-                    ImGui::Text("%zu", opt_params.start_refine);
+                    ImGui::Text("%s", widgets::formatNumber(start_refine).c_str());
                 }
+                ImGui::PopItemWidth();
                 if (ImGui::IsItemHovered()) {
                     widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::START_REFINE));
                 }
@@ -432,18 +407,16 @@ namespace lfs::vis::gui::panels {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", LOC(Training::Refinement::STOP_REFINE));
                 ImGui::TableNextColumn();
+                ImGui::PushItemWidth(-1);
+                int stop_refine = static_cast<int>(opt_params.stop_refine);
                 if (can_edit) {
-                    ImGui::PushItemWidth(-1);
-                    int stop_refine = static_cast<int>(opt_params.stop_refine);
-                    if (ImGui::InputInt("##stop_refine", &stop_refine, 1000, 5000)) {
-                        if (stop_refine >= 0) {
-                            opt_params.stop_refine = static_cast<size_t>(stop_refine);
-                        }
+                    if (widgets::InputIntFormatted("##stop_refine", &stop_refine, 1000, 5000) && stop_refine >= 0) {
+                        opt_params.stop_refine = static_cast<size_t>(stop_refine);
                     }
-                    ImGui::PopItemWidth();
                 } else {
-                    ImGui::Text("%zu", opt_params.stop_refine);
+                    ImGui::Text("%s", widgets::formatNumber(stop_refine).c_str());
                 }
+                ImGui::PopItemWidth();
                 if (ImGui::IsItemHovered()) {
                     widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::STOP_REFINE));
                 }
@@ -469,20 +442,18 @@ namespace lfs::vis::gui::panels {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", LOC(Training::Refinement::RESET_EVERY));
                 ImGui::TableNextColumn();
+                ImGui::PushItemWidth(-1);
+                int reset_every = static_cast<int>(opt_params.reset_every);
                 if (can_edit) {
-                    ImGui::PushItemWidth(-1);
-                    int reset_every = static_cast<int>(opt_params.reset_every);
-                    if (ImGui::InputInt("##reset_every", &reset_every, 100, 1000)) {
-                        if (reset_every >= 0) {
-                            opt_params.reset_every = static_cast<size_t>(reset_every);
-                        }
+                    if (widgets::InputIntFormatted("##reset_every", &reset_every, 100, 1000) && reset_every >= 0) {
+                        opt_params.reset_every = static_cast<size_t>(reset_every);
                     }
-                    ImGui::PopItemWidth();
-                } else if (opt_params.reset_every > 0) {
-                    ImGui::Text("%zu", opt_params.reset_every);
+                } else if (reset_every > 0) {
+                    ImGui::Text("%s", widgets::formatNumber(reset_every).c_str());
                 } else {
                     ImGui::Text("%s", LOC(TrainingParams::DISABLED));
                 }
+                ImGui::PopItemWidth();
                 if (ImGui::IsItemHovered()) {
                     widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::RESET_EVERY));
                 }
@@ -492,18 +463,16 @@ namespace lfs::vis::gui::panels {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", LOC(Training::Refinement::SH_UPGRADE_EVERY));
                 ImGui::TableNextColumn();
+                ImGui::PushItemWidth(-1);
+                int sh_deg_interval = static_cast<int>(opt_params.sh_degree_interval);
                 if (can_edit) {
-                    ImGui::PushItemWidth(-1);
-                    int sh_deg_interval = static_cast<int>(opt_params.sh_degree_interval);
-                    if (ImGui::InputInt("##sh_degree_interval", &sh_deg_interval, 100, 500)) {
-                        if (sh_deg_interval > 0) {
-                            opt_params.sh_degree_interval = static_cast<size_t>(sh_deg_interval);
-                        }
+                    if (widgets::InputIntFormatted("##sh_degree_interval", &sh_deg_interval, 100, 500) && sh_deg_interval > 0) {
+                        opt_params.sh_degree_interval = static_cast<size_t>(sh_deg_interval);
                     }
-                    ImGui::PopItemWidth();
                 } else {
-                    ImGui::Text("%zu", opt_params.sh_degree_interval);
+                    ImGui::Text("%s", widgets::formatNumber(sh_deg_interval).c_str());
                 }
+                ImGui::PopItemWidth();
                 if (ImGui::IsItemHovered()) {
                     widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::SH_UPGRADE_EVERY));
                 }
@@ -706,82 +675,6 @@ namespace lfs::vis::gui::panels {
             ImGui::TreePop();
         }
 
-        // Evaluation Settings
-        if (opt_params.enable_eval && ImGui::TreeNode(LOC(Training::Section::EVALUATION))) {
-            if (ImGui::BeginTable("EvalTable", 2, ImGuiTableFlags_SizingStretchProp)) {
-                ImGui::TableSetupColumn("Property", ImGuiTableColumnFlags_WidthFixed, 140.0f);
-                ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch);
-
-                ImGui::TableNextRow();
-                ImGui::TableNextColumn();
-                ImGui::Text("%s", LOC(Training::Eval::SAVE_IMAGES));
-                ImGui::TableNextColumn();
-                if (can_edit) {
-                    ImGui::Checkbox("##enable_save_eval_images", &opt_params.enable_save_eval_images);
-                } else {
-                    ImGui::Text("%s", opt_params.enable_save_eval_images ? LOC(Training::Status::YES) : LOC(Training::Status::NO));
-                }
-
-                ImGui::EndTable();
-            }
-
-            // Eval Steps
-            {
-                ImGui::Separator();
-                ImGui::Text("%s", LOC(Training::Eval::EVALUATION_STEPS));
-                if (can_edit) {
-                    static int new_eval_step = 7000;
-                    ImGui::InputInt(LOC(TrainingParams::NEW_EVAL_STEP), &new_eval_step, 1000, 5000);
-                    ImGui::SameLine();
-                    if (ImGui::Button(LOC(Training::Button::ADD))) {
-                        if (new_eval_step > 0 && std::find(opt_params.eval_steps.begin(),
-                                                           opt_params.eval_steps.end(),
-                                                           new_eval_step) == opt_params.eval_steps.end()) {
-                            opt_params.eval_steps.push_back(new_eval_step);
-                            std::sort(opt_params.eval_steps.begin(), opt_params.eval_steps.end());
-                        }
-                    }
-
-                    for (size_t i = 0; i < opt_params.eval_steps.size(); ++i) {
-                        ImGui::PushID(static_cast<int>(i + 1000));
-
-                        int step = static_cast<int>(opt_params.eval_steps[i]);
-                        ImGui::SetNextItemWidth(100 * getDpiScale());
-                        if (ImGui::InputInt("##eval_step", &step, 0, 0)) {
-                            if (step > 0) {
-                                opt_params.eval_steps[i] = static_cast<size_t>(step);
-                                std::sort(opt_params.eval_steps.begin(), opt_params.eval_steps.end());
-                            }
-                        }
-
-                        ImGui::SameLine();
-                        if (ImGui::Button(LOC(Training::Button::REMOVE))) {
-                            opt_params.eval_steps.erase(opt_params.eval_steps.begin() + i);
-                        }
-
-                        ImGui::PopID();
-                    }
-
-                    if (opt_params.eval_steps.empty()) {
-                        ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No eval steps configured");
-                    }
-                } else {
-                    if (!opt_params.eval_steps.empty()) {
-                        std::string steps_str;
-                        for (size_t i = 0; i < opt_params.eval_steps.size(); ++i) {
-                            if (i > 0)
-                                steps_str += ", ";
-                            steps_str += std::to_string(opt_params.eval_steps[i]);
-                        }
-                        ImGui::Text("%s", steps_str.c_str());
-                    } else {
-                        ImGui::TextColored(darken(theme().palette.text_dim, 0.15f), "No eval steps");
-                    }
-                }
-            }
-            ImGui::TreePop();
-        }
-
         // Loss Parameters
         if (ImGui::TreeNode(LOC(Training::Section::LOSSES))) {
             if (ImGui::BeginTable("LossTable", 2, ImGuiTableFlags_SizingStretchProp)) {
@@ -907,15 +800,15 @@ namespace lfs::vis::gui::panels {
                     ImGui::TableNextColumn();
                     ImGui::Text("%s", LOC(TrainingParams::NUM_POINTS));
                     ImGui::TableNextColumn();
+                    ImGui::PushItemWidth(-1);
                     if (can_edit) {
-                        ImGui::PushItemWidth(-1);
-                        if (ImGui::InputInt("##init_num_pts", &opt_params.init_num_pts, 10000, 50000)) {
+                        if (widgets::InputIntFormatted("##init_num_pts", &opt_params.init_num_pts, 10000, 50000)) {
                             opt_params.init_num_pts = std::max(1, opt_params.init_num_pts);
                         }
-                        ImGui::PopItemWidth();
                     } else {
-                        ImGui::Text("%d", opt_params.init_num_pts);
+                        ImGui::Text("%s", widgets::formatNumber(opt_params.init_num_pts).c_str());
                     }
+                    ImGui::PopItemWidth();
                     if (ImGui::IsItemHovered()) {
                         widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::NUM_POINTS));
                     }
@@ -1025,16 +918,16 @@ namespace lfs::vis::gui::panels {
                 ImGui::TableNextColumn();
                 ImGui::Text("%s", LOC(TrainingParams::PAUSE_AFTER_RESET));
                 ImGui::TableNextColumn();
+                ImGui::PushItemWidth(-1);
+                int pause_refine = static_cast<int>(opt_params.pause_refine_after_reset);
                 if (can_edit) {
-                    ImGui::PushItemWidth(-1);
-                    int pause_refine = static_cast<int>(opt_params.pause_refine_after_reset);
-                    if (ImGui::InputInt("##pause_refine_after_reset", &pause_refine, 10, 100) && pause_refine >= 0) {
+                    if (widgets::InputIntFormatted("##pause_refine_after_reset", &pause_refine, 10, 100) && pause_refine >= 0) {
                         opt_params.pause_refine_after_reset = static_cast<size_t>(pause_refine);
                     }
-                    ImGui::PopItemWidth();
                 } else {
-                    ImGui::Text("%zu", opt_params.pause_refine_after_reset);
+                    ImGui::Text("%s", widgets::formatNumber(pause_refine).c_str());
                 }
+                ImGui::PopItemWidth();
 
                 ImGui::TableNextRow();
                 ImGui::TableNextColumn();
@@ -1063,13 +956,12 @@ namespace lfs::vis::gui::panels {
                 ImGui::TableNextColumn();
                 if (can_edit) {
                     ImGui::PushItemWidth(-1);
-                    const int prev = opt_params.sparsify_steps;
-                    if (ImGui::InputInt("##sparsify_steps", &opt_params.sparsify_steps, 1000, 5000)) {
+                    if (widgets::InputIntFormatted("##sparsify_steps", &opt_params.sparsify_steps, 1000, 5000)) {
                         opt_params.sparsify_steps = std::max(1, opt_params.sparsify_steps);
                     }
                     ImGui::PopItemWidth();
                 } else {
-                    ImGui::Text("%d", opt_params.sparsify_steps);
+                    ImGui::Text("%s", widgets::formatNumber(opt_params.sparsify_steps).c_str());
                 }
 
                 ImGui::TableNextRow();
@@ -1183,18 +1075,16 @@ namespace lfs::vis::gui::panels {
             ImGui::TableNextColumn();
             ImGui::Text("%s", LOC(TrainingParams::ITERATIONS));
             ImGui::TableNextColumn();
+            ImGui::PushItemWidth(-1);
+            int iterations = static_cast<int>(opt_params.iterations);
             if (can_edit) {
-                ImGui::PushItemWidth(-1);
-                int iterations = static_cast<int>(opt_params.iterations);
-                if (ImGui::InputInt("##iterations", &iterations, 1000, 5000)) {
-                    if (iterations > 0 && iterations <= 1000000) {
-                        opt_params.iterations = static_cast<size_t>(iterations);
-                    }
+                if (widgets::InputIntFormatted("##iterations", &iterations, 1000, 5000) && iterations > 0 && iterations <= 1000000) {
+                    opt_params.iterations = static_cast<size_t>(iterations);
                 }
-                ImGui::PopItemWidth();
             } else {
-                ImGui::Text("%zu", opt_params.iterations);
+                ImGui::Text("%s", widgets::formatNumber(iterations).c_str());
             }
+            ImGui::PopItemWidth();
             if (ImGui::IsItemHovered()) {
                 widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::ITERATIONS));
             }
@@ -1204,15 +1094,15 @@ namespace lfs::vis::gui::panels {
             ImGui::TableNextColumn();
             ImGui::Text("%s", LOC(TrainingParams::MAX_GAUSSIANS));
             ImGui::TableNextColumn();
+            ImGui::PushItemWidth(-1);
             if (can_edit) {
-                ImGui::PushItemWidth(-1);
-                if (ImGui::InputInt("##max_cap", &opt_params.max_cap, 10000, 100000)) {
+                if (widgets::InputIntFormatted("##max_cap", &opt_params.max_cap, 10000, 100000)) {
                     opt_params.max_cap = std::max(1, opt_params.max_cap);
                 }
-                ImGui::PopItemWidth();
             } else {
-                ImGui::Text("%d", opt_params.max_cap);
+                ImGui::Text("%s", widgets::formatNumber(opt_params.max_cap).c_str());
             }
+            ImGui::PopItemWidth();
             if (ImGui::IsItemHovered()) {
                 widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::MAX_GAUSSIANS));
             }
@@ -1425,32 +1315,102 @@ namespace lfs::vis::gui::panels {
                 widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::MIP_FILTER));
             }
 
-            // BG Modulation
+            // Background Mode
             ImGui::TableNextRow();
             ImGui::TableNextColumn();
-            ImGui::Text("%s", LOC(TrainingParams::BG_MODULATION));
+            ImGui::Text("%s", LOC(MainPanel::BACKGROUND));
             ImGui::TableNextColumn();
-            if (can_edit) {
-                ImGui::Checkbox("##bg_modulation", &opt_params.bg_modulation);
-            } else {
-                ImGui::Text("%s", opt_params.bg_modulation ? "Enabled" : "Disabled");
+            {
+                const char* bg_mode_items[] = {
+                    LOC(TrainingParams::BG_MODE_COLOR),
+                    LOC(TrainingParams::BG_MODE_MODULATION),
+                    LOC(TrainingParams::BG_MODE_IMAGE),
+                    LOC(TrainingParams::BG_MODE_RANDOM)};
+                int bg_mode_idx = 0;
+                switch (opt_params.bg_mode) {
+                case lfs::core::param::BackgroundMode::Modulation:
+                    bg_mode_idx = 1;
+                    break;
+                case lfs::core::param::BackgroundMode::Image:
+                    bg_mode_idx = 2;
+                    break;
+                case lfs::core::param::BackgroundMode::Random:
+                    bg_mode_idx = 3;
+                    break;
+                default:
+                    bg_mode_idx = 0;
+                    break;
+                }
+                ImGui::BeginDisabled(!can_edit);
+                if (ImGui::Combo("##bg_mode", &bg_mode_idx, bg_mode_items, IM_ARRAYSIZE(bg_mode_items))) {
+                    switch (bg_mode_idx) {
+                    case 1:
+                        opt_params.bg_mode = lfs::core::param::BackgroundMode::Modulation;
+                        opt_params.bg_modulation = true;
+                        break;
+                    case 2:
+                        opt_params.bg_mode = lfs::core::param::BackgroundMode::Image;
+                        opt_params.bg_modulation = false;
+                        break;
+                    case 3:
+                        opt_params.bg_mode = lfs::core::param::BackgroundMode::Random;
+                        opt_params.bg_modulation = false;
+                        break;
+                    default:
+                        opt_params.bg_mode = lfs::core::param::BackgroundMode::SolidColor;
+                        opt_params.bg_modulation = false;
+                        break;
+                    }
+                }
+                ImGui::EndDisabled();
+            }
+
+            // Background Color - only for SolidColor/Modulation modes
+            if (opt_params.bg_mode == lfs::core::param::BackgroundMode::SolidColor ||
+                opt_params.bg_mode == lfs::core::param::BackgroundMode::Modulation) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", LOC(TrainingParams::BG_COLOR));
+                ImGui::TableNextColumn();
+                ImGui::BeginDisabled(!can_edit);
+                float bg_color[3] = {opt_params.bg_color[0], opt_params.bg_color[1], opt_params.bg_color[2]};
+                if (ImGui::ColorEdit3("##bg_color", bg_color, ImGuiColorEditFlags_NoInputs)) {
+                    opt_params.bg_color = {bg_color[0], bg_color[1], bg_color[2]};
+                }
+                ImGui::EndDisabled();
+            }
+
+            // Background Image path - only for Image mode
+            if (opt_params.bg_mode == lfs::core::param::BackgroundMode::Image) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("%s", LOC(TrainingParams::BG_IMAGE));
+                ImGui::TableNextColumn();
+                const std::string display_name = opt_params.bg_image_path.empty()
+                                                     ? "(none)"
+                                                     : lfs::core::path_to_utf8(opt_params.bg_image_path.filename());
+                ImGui::Text("%s", display_name.c_str());
+                if (!opt_params.bg_image_path.empty() && ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip("%s", lfs::core::path_to_utf8(opt_params.bg_image_path).c_str());
+                }
+                ImGui::SameLine();
+                ImGui::BeginDisabled(!can_edit);
+                if (ImGui::Button(LOC(TrainingParams::BG_IMAGE_BROWSE))) {
+                    const auto selected = OpenImageFileDialog();
+                    if (!selected.empty()) {
+                        opt_params.bg_image_path = selected;
+                    }
+                }
+                if (!opt_params.bg_image_path.empty()) {
+                    ImGui::SameLine();
+                    if (ImGui::Button(LOC(TrainingParams::BG_IMAGE_CLEAR))) {
+                        opt_params.bg_image_path.clear();
+                    }
+                }
+                ImGui::EndDisabled();
             }
             if (ImGui::IsItemHovered()) {
                 widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::BG_MODULATION));
-            }
-
-            // Evaluation
-            ImGui::TableNextRow();
-            ImGui::TableNextColumn();
-            ImGui::Text("%s", LOC(TrainingParams::EVALUATION));
-            ImGui::TableNextColumn();
-            if (can_edit) {
-                ImGui::Checkbox("##enable_eval", &opt_params.enable_eval);
-            } else {
-                ImGui::Text("%s", opt_params.enable_eval ? "Enabled" : "Disabled");
-            }
-            if (ImGui::IsItemHovered()) {
-                widgets::SetThemedTooltip("%s", LOC(Training::Tooltip::EVALUATION));
             }
         }
         ImGui::EndTable();
@@ -1529,10 +1489,10 @@ namespace lfs::vis::gui::panels {
         float iters_per_sec = g_iter_rate_tracker.getIterationsPerSecond();
         iters_per_sec = iters_per_sec > 0.0f ? iters_per_sec : 0.0f;
 
-        ImGui::Text("Iteration: %d (%.1f iters/sec)", current_iteration, iters_per_sec);
+        ImGui::Text("Iteration: %s (%.1f iters/sec)", widgets::formatNumber(current_iteration).c_str(), iters_per_sec);
 
         int num_splats = trainer_manager->getNumSplats();
-        ImGui::Text(LOC(Progress::NUM_SPLATS), num_splats);
+        ImGui::Text(LOC(Progress::NUM_SPLATS), widgets::formatNumber(num_splats).c_str());
 
         python::invoke_python_hooks("training", "status", false);
     }

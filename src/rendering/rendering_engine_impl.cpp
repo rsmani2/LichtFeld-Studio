@@ -56,6 +56,13 @@ namespace lfs::rendering {
         }
         LOG_DEBUG("Bounding box renderer initialized");
 
+        if (auto result = ellipsoid_renderer_.init(); !result) {
+            LOG_ERROR("Failed to initialize ellipsoid renderer: {}", result.error());
+            shutdown();
+            return std::unexpected(result.error());
+        }
+        LOG_DEBUG("Ellipsoid renderer initialized");
+
         if (auto result = axes_renderer_.init(); !result) {
             LOG_ERROR("Failed to initialize axes renderer: {}", result.error());
             shutdown();
@@ -220,6 +227,30 @@ namespace lfs::rendering {
             pipeline_req.crop_box_max = &crop_box_max_tensor;
             pipeline_req.crop_inverse = request.crop_inverse;
             pipeline_req.crop_desaturate = request.crop_desaturate;
+            pipeline_req.crop_parent_node_index = request.crop_parent_node_index;
+        }
+
+        // Convert ellipsoid if present
+        Tensor ellipsoid_transform_tensor, ellipsoid_radii_tensor;
+        if (request.ellipsoid.has_value()) {
+            // Transform is world-to-ellipsoid-local
+            const glm::mat4& w2e = request.ellipsoid->transform;
+            std::vector<float> transform_data(16);
+            for (int row = 0; row < 4; ++row) {
+                for (int col = 0; col < 4; ++col) {
+                    transform_data[row * 4 + col] = w2e[col][row]; // Transpose to row-major
+                }
+            }
+            ellipsoid_transform_tensor = Tensor::from_vector(transform_data, {4, 4}, lfs::core::Device::CPU).cuda();
+
+            std::vector<float> radii_data = {request.ellipsoid->radii.x, request.ellipsoid->radii.y, request.ellipsoid->radii.z};
+            ellipsoid_radii_tensor = Tensor::from_vector(radii_data, {3}, lfs::core::Device::CPU).cuda();
+
+            pipeline_req.ellipsoid_transform = &ellipsoid_transform_tensor;
+            pipeline_req.ellipsoid_radii = &ellipsoid_radii_tensor;
+            pipeline_req.ellipsoid_inverse = request.ellipsoid_inverse;
+            pipeline_req.ellipsoid_desaturate = request.ellipsoid_desaturate;
+            pipeline_req.ellipsoid_parent_node_index = request.ellipsoid_parent_node_index;
         }
 
         // Convert depth filter if present (Selection tool - separate from crop box)
@@ -449,6 +480,28 @@ namespace lfs::rendering {
         auto proj = createProjectionMatrix(viewport);
 
         return bbox_renderer_.render(view, proj);
+    }
+
+    Result<void> RenderingEngineImpl::renderEllipsoid(
+        const Ellipsoid& ellipsoid,
+        const ViewportData& viewport,
+        const glm::vec3& color,
+        float line_width) {
+
+        if (!isInitialized() || !ellipsoid_renderer_.isInitialized()) {
+            LOG_ERROR("Ellipsoid renderer not initialized");
+            return std::unexpected("Ellipsoid renderer not initialized");
+        }
+
+        ellipsoid_renderer_.setRadii(ellipsoid.radii);
+        ellipsoid_renderer_.setTransform(ellipsoid.transform);
+        ellipsoid_renderer_.setColor(color);
+        ellipsoid_renderer_.setLineWidth(line_width);
+
+        auto view = createViewMatrix(viewport);
+        auto proj = createProjectionMatrix(viewport);
+
+        return ellipsoid_renderer_.render(view, proj);
     }
 
     Result<void> RenderingEngineImpl::renderCoordinateAxes(

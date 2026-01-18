@@ -7,6 +7,7 @@
 #include "core/converter.hpp"
 #include "core/event_bridge/command_center_bridge.hpp"
 #include "core/logger.hpp"
+#include "git_version.h"
 #include "mcp/mcp_server.hpp"
 #include "mcp/mcp_training_context.hpp"
 #include "training/control/command_api.hpp"
@@ -54,6 +55,7 @@ int main(int argc, char* argv[]) {
             return runMcpServer(mode);
         } else if constexpr (std::is_same_v<T, lfs::core::args::TrainingMode>) {
             LOG_INFO("LichtFeld Studio");
+            LOG_INFO("version {} | tag {}", GIT_TAGGED_VERSION, GIT_COMMIT_HASH_SHORT);
             lfs::app::Application app;
             return app.run(std::move(mode.params));
         }

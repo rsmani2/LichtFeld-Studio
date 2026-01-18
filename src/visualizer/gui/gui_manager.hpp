@@ -6,9 +6,11 @@
 
 #include "command/commands/composite_command.hpp"
 #include "command/commands/cropbox_command.hpp"
+#include "command/commands/ellipsoid_command.hpp"
 #include "command/commands/transform_command.hpp"
 #include "core/events.hpp"
 #include "core/parameters.hpp"
+#include "gui/gizmo_transform.hpp"
 #include "gui/panels/gizmo_toolbar.hpp"
 #include "gui/panels/menu_bar.hpp"
 #include "gui/panels/sequencer_settings_panel.hpp"
@@ -86,18 +88,16 @@ namespace lfs::vis {
             }
             bool isPositionInViewportGizmo(double x, double y) const;
 
-            // Crop box gizmo state access
-            void setCropGizmoOperation(ImGuizmo::OPERATION op) { crop_gizmo_operation_ = op; }
-            void setCropGizmoMode(ImGuizmo::MODE mode) { crop_gizmo_mode_ = mode; }
-            ImGuizmo::OPERATION getCropGizmoOperation() const { return crop_gizmo_operation_; }
-            ImGuizmo::MODE getCropGizmoMode() const { return crop_gizmo_mode_; }
-
             // Selection sub-mode shortcuts (Ctrl+1..5)
             void setSelectionSubMode(panels::SelectionSubMode mode);
             panels::SelectionSubMode getSelectionSubMode() const { return gizmo_toolbar_state_.selection_mode; }
             panels::ToolType getCurrentToolMode() const; // Delegates to EditorContext
             const panels::GizmoToolbarState& getGizmoToolbarState() const { return gizmo_toolbar_state_; }
             panels::TransformPanelState& getTransformPanelState() { return transform_panel_state_; }
+
+            // Gizmo manipulation state (for wireframe sync)
+            bool isCropboxGizmoActive() const { return cropbox_gizmo_active_; }
+            bool isEllipsoidGizmoActive() const { return ellipsoid_gizmo_active_; }
 
             bool isForceExit() const { return force_exit_; }
 
@@ -180,10 +180,6 @@ namespace lfs::vis {
 
             static constexpr float STATUS_BAR_HEIGHT = 22.0f;
 
-            // Crop box gizmo state (shared between panel and rendering)
-            ImGuizmo::OPERATION crop_gizmo_operation_ = ImGuizmo::TRANSLATE;
-            ImGuizmo::MODE crop_gizmo_mode_ = ImGuizmo::WORLD;
-
             // Method declarations
             void renderStatusBar(const UIContext& ctx);
             void renderSequencerPanel(const UIContext& ctx);
@@ -193,6 +189,8 @@ namespace lfs::vis {
             void showSpeedOverlay(float current_speed, float max_speed);
             void showZoomSpeedOverlay(float zoom_speed, float max_zoom_speed);
             void renderCropBoxGizmo(const UIContext& ctx);
+            void renderEllipsoidGizmo(const UIContext& ctx);
+            void renderCropGizmoMiniToolbar(const UIContext& ctx);
             void renderNodeTransformGizmo(const UIContext& ctx);
 
             std::unique_ptr<MenuBar> menu_bar_;
@@ -234,17 +232,30 @@ namespace lfs::vis {
             panels::GizmoToolbarState gizmo_toolbar_state_;
             panels::TransformPanelState transform_panel_state_;
 
+            // Unified gizmo context for cropbox/ellipsoid
+            GizmoTransformContext gizmo_context_;
+
             // Cropbox undo/redo state
             bool cropbox_gizmo_active_ = false;
             std::string cropbox_node_name_;
             std::optional<command::CropBoxState> cropbox_state_before_drag_;
 
+            // Ellipsoid undo/redo state
+            bool ellipsoid_gizmo_active_ = false;
+            std::string ellipsoid_node_name_;
+            std::optional<command::EllipsoidState> ellipsoid_state_before_drag_;
+
             // Node transform undo/redo state (supports multi-selection)
             bool node_gizmo_active_ = false;
             std::vector<std::string> node_gizmo_node_names_;
             std::vector<glm::mat4> node_transforms_before_drag_;
+            std::vector<glm::vec3> node_original_world_positions_;
+            std::vector<glm::mat4> node_parent_world_inverses_;
+            std::vector<glm::mat3> node_original_rotations_;
+            std::vector<glm::vec3> node_original_scales_;
             glm::vec3 gizmo_pivot_{0.0f};
             glm::mat3 gizmo_cumulative_rotation_{1.0f};
+            glm::vec3 gizmo_cumulative_scale_{1.0f};
 
             // Previous tool/selection mode for detecting changes
             panels::ToolType previous_tool_ = panels::ToolType::None;

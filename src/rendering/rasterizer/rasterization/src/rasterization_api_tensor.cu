@@ -162,6 +162,12 @@ namespace lfs::rendering {
         const Tensor* crop_box_max,
         bool crop_inverse,
         bool crop_desaturate,
+        int crop_parent_node_index,
+        const Tensor* ellipsoid_transform,
+        const Tensor* ellipsoid_radii,
+        bool ellipsoid_inverse,
+        bool ellipsoid_desaturate,
+        int ellipsoid_parent_node_index,
         const Tensor* depth_filter_transform,
         const Tensor* depth_filter_min,
         const Tensor* depth_filter_max,
@@ -263,6 +269,18 @@ namespace lfs::rendering {
             crop_box_max_ptr = reinterpret_cast<const float3*>(crop_box_max_contig.ptr<float>());
         }
 
+        // Prepare ellipsoid parameters
+        const float* ellipsoid_transform_ptr = nullptr;
+        const float3* ellipsoid_radii_ptr = nullptr;
+        Tensor ellipsoid_transform_contig, ellipsoid_radii_contig;
+        if (ellipsoid_transform != nullptr && ellipsoid_transform->is_valid() &&
+            ellipsoid_radii != nullptr && ellipsoid_radii->is_valid()) {
+            ellipsoid_transform_contig = ellipsoid_transform->is_contiguous() ? *ellipsoid_transform : ellipsoid_transform->contiguous();
+            ellipsoid_radii_contig = ellipsoid_radii->is_contiguous() ? *ellipsoid_radii : ellipsoid_radii->contiguous();
+            ellipsoid_transform_ptr = ellipsoid_transform_contig.ptr<float>();
+            ellipsoid_radii_ptr = reinterpret_cast<const float3*>(ellipsoid_radii_contig.ptr<float>());
+        }
+
         // Prepare depth filter parameters (Selection tool - separate from crop box)
         const float* depth_filter_transform_ptr = nullptr;
         const float3* depth_filter_min_ptr = nullptr;
@@ -361,6 +379,12 @@ namespace lfs::rendering {
             crop_box_max_ptr,
             crop_inverse,
             crop_desaturate,
+            crop_parent_node_index,
+            ellipsoid_transform_ptr,
+            ellipsoid_radii_ptr,
+            ellipsoid_inverse,
+            ellipsoid_desaturate,
+            ellipsoid_parent_node_index,
             depth_filter_transform_ptr,
             depth_filter_min_ptr,
             depth_filter_max_ptr,
@@ -745,6 +769,106 @@ namespace lfs::rendering {
             reinterpret_cast<const bool*>(valid_nodes_gpu.ptr<uint8_t>()),
             n,
             num_nodes);
+    }
+
+    __global__ void filter_selection_by_crop_kernel(
+        bool* __restrict__ selection,
+        const float3* __restrict__ means,
+        const float* __restrict__ crop_transform,
+        const float3* crop_min,
+        const float3* crop_max,
+        const bool crop_inverse,
+        const float* __restrict__ ellipsoid_transform,
+        const float3* ellipsoid_radii,
+        const bool ellipsoid_inverse,
+        const int n) {
+
+        const int idx = blockIdx.x * blockDim.x + threadIdx.x;
+        if (idx >= n || !selection[idx])
+            return;
+
+        const float3 pos = means[idx];
+
+        if (crop_transform && crop_min && crop_max) {
+            const float* const c = crop_transform;
+            const float lx = c[0] * pos.x + c[1] * pos.y + c[2] * pos.z + c[3];
+            const float ly = c[4] * pos.x + c[5] * pos.y + c[6] * pos.z + c[7];
+            const float lz = c[8] * pos.x + c[9] * pos.y + c[10] * pos.z + c[11];
+
+            const float3 bmin = *crop_min;
+            const float3 bmax = *crop_max;
+            const bool inside = lx >= bmin.x && lx <= bmax.x &&
+                                ly >= bmin.y && ly <= bmax.y &&
+                                lz >= bmin.z && lz <= bmax.z;
+
+            if (inside == crop_inverse) {
+                selection[idx] = false;
+                return;
+            }
+        }
+
+        if (ellipsoid_transform && ellipsoid_radii) {
+            const float* const e = ellipsoid_transform;
+            const float lx = e[0] * pos.x + e[1] * pos.y + e[2] * pos.z + e[3];
+            const float ly = e[4] * pos.x + e[5] * pos.y + e[6] * pos.z + e[7];
+            const float lz = e[8] * pos.x + e[9] * pos.y + e[10] * pos.z + e[11];
+
+            const float3 r = *ellipsoid_radii;
+            const float norm = (lx * lx) / (r.x * r.x) + (ly * ly) / (r.y * r.y) + (lz * lz) / (r.z * r.z);
+
+            if ((norm <= 1.0f) == ellipsoid_inverse) {
+                selection[idx] = false;
+            }
+        }
+    }
+
+    void filter_selection_by_crop(
+        Tensor& selection,
+        const Tensor& means,
+        const Tensor* crop_box_transform,
+        const Tensor* crop_box_min,
+        const Tensor* crop_box_max,
+        const bool crop_inverse,
+        const Tensor* ellipsoid_transform,
+        const Tensor* ellipsoid_radii,
+        const bool ellipsoid_inverse) {
+
+        if (!selection.is_valid() || !means.is_valid())
+            return;
+
+        const int n = static_cast<int>(selection.size(0));
+        if (means.size(0) != static_cast<size_t>(n))
+            return;
+
+        const float* crop_t_ptr = nullptr;
+        const float3* crop_min_ptr = nullptr;
+        const float3* crop_max_ptr = nullptr;
+        if (crop_box_transform && crop_box_transform->is_valid() &&
+            crop_box_min && crop_box_min->is_valid() &&
+            crop_box_max && crop_box_max->is_valid()) {
+            crop_t_ptr = crop_box_transform->ptr<float>();
+            crop_min_ptr = reinterpret_cast<const float3*>(crop_box_min->ptr<float>());
+            crop_max_ptr = reinterpret_cast<const float3*>(crop_box_max->ptr<float>());
+        }
+
+        const float* ellip_t_ptr = nullptr;
+        const float3* ellip_radii_ptr = nullptr;
+        if (ellipsoid_transform && ellipsoid_transform->is_valid() &&
+            ellipsoid_radii && ellipsoid_radii->is_valid()) {
+            ellip_t_ptr = ellipsoid_transform->ptr<float>();
+            ellip_radii_ptr = reinterpret_cast<const float3*>(ellipsoid_radii->ptr<float>());
+        }
+
+        if (!crop_t_ptr && !ellip_t_ptr)
+            return;
+
+        const int grid_size = (n + KERNEL_BLOCK_SIZE - 1) / KERNEL_BLOCK_SIZE;
+        filter_selection_by_crop_kernel<<<grid_size, KERNEL_BLOCK_SIZE>>>(
+            selection.ptr<bool>(),
+            reinterpret_cast<const float3*>(means.ptr<float>()),
+            crop_t_ptr, crop_min_ptr, crop_max_ptr, crop_inverse,
+            ellip_t_ptr, ellip_radii_ptr, ellipsoid_inverse,
+            n);
     }
 
     std::tuple<Tensor, Tensor, Tensor>

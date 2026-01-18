@@ -158,7 +158,9 @@ namespace lfs::rendering {
                                                            request.selection_mode_rings,
                                                            request.show_center_markers,
                                                            request.crop_box_transform, request.crop_box_min, request.crop_box_max,
-                                                           request.crop_inverse, request.crop_desaturate,
+                                                           request.crop_inverse, request.crop_desaturate, request.crop_parent_node_index,
+                                                           request.ellipsoid_transform, request.ellipsoid_radii,
+                                                           request.ellipsoid_inverse, request.ellipsoid_desaturate, request.ellipsoid_parent_node_index,
                                                            request.depth_filter_transform, request.depth_filter_min, request.depth_filter_max,
                                                            request.deleted_mask,
                                                            request.hovered_depth_id,
@@ -220,7 +222,9 @@ namespace lfs::rendering {
                                                    request.selection_mode_rings,
                                                    request.show_center_markers,
                                                    request.crop_box_transform, request.crop_box_min, request.crop_box_max,
-                                                   request.crop_inverse, request.crop_desaturate,
+                                                   request.crop_inverse, request.crop_desaturate, request.crop_parent_node_index,
+                                                   request.ellipsoid_transform, request.ellipsoid_radii,
+                                                   request.ellipsoid_inverse, request.ellipsoid_desaturate, request.ellipsoid_parent_node_index,
                                                    request.depth_filter_transform, request.depth_filter_min, request.depth_filter_max,
                                                    request.deleted_mask,
                                                    request.hovered_depth_id,
@@ -374,7 +378,7 @@ namespace lfs::rendering {
 
             if (use_fbo_interop_ && fbo_interop_texture_) {
                 Tensor image_hwc;
-                if (auto read_result = fbo_interop_texture_->readToTensor(image_hwc); read_result) {
+                if (auto read_result = fbo_interop_texture_->readToTensor(image_hwc, width, height); read_result) {
                     result.image = image_hwc.permute({2, 0, 1}).contiguous();
                     result.valid = true;
                     result.external_depth_texture = persistent_depth_texture_;
@@ -568,7 +572,7 @@ namespace lfs::rendering {
 
             if (use_fbo_interop_ && fbo_interop_texture_) {
                 Tensor image_hwc;
-                if (auto read_result = fbo_interop_texture_->readToTensor(image_hwc); read_result) {
+                if (auto read_result = fbo_interop_texture_->readToTensor(image_hwc, width, height); read_result) {
                     result.image = image_hwc.permute({2, 0, 1}).contiguous();
                     result.valid = true;
                     result.external_depth_texture = persistent_depth_texture_;
