@@ -32,6 +32,7 @@ target_link_libraries(lfs_python_runtime
 target_compile_definitions(lfs_python_runtime
     PRIVATE
         LFS_PYTHON_RUNTIME_EXPORTS
+        LFS_BUILD_PYTHON_BINDINGS
 )
 
 set_target_properties(lfs_python_runtime PROPERTIES
