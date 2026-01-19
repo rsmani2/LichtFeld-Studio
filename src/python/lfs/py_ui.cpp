@@ -16,7 +16,6 @@
 #include "visualizer/theme/theme.hpp"
 
 #include <algorithm>
-#include <cstdio>
 #include <cstring>
 #include <unordered_map>
 #include <imgui.h>
@@ -46,28 +45,16 @@ namespace lfs::python {
             }
 
             void* shared_ctx = get_imgui_context();
-            void* current_ctx = ImGui::GetCurrentContext();
-
-            std::fprintf(stderr, "[py_ui] ensure_imgui_context: shared=%p, current=%p\n",
-                         shared_ctx, current_ctx);
-            std::fflush(stderr);
-
             if (!shared_ctx) {
-                std::fprintf(stderr, "[py_ui] ERROR: No shared ImGui context! set_imgui_context() not called?\n");
-                std::fflush(stderr);
                 return;
             }
 
+            void* current_ctx = ImGui::GetCurrentContext();
             if (current_ctx != shared_ctx) {
-                std::fprintf(stderr, "[py_ui] Setting ImGui context from %p to %p\n",
-                             current_ctx, shared_ctx);
-                std::fflush(stderr);
                 ImGui::SetCurrentContext(static_cast<ImGuiContext*>(shared_ctx));
             }
 
             g_imgui_context_initialized = true;
-            std::fprintf(stderr, "[py_ui] ImGui context initialized for pyd module\n");
-            std::fflush(stderr);
         }
     } // namespace
 
@@ -756,89 +743,45 @@ namespace lfs::python {
     }
 
     void PyPanelRegistry::draw_single_panel(const std::string& label) {
-        std::fprintf(stderr, "[py_ui] PyPanelRegistry::draw_single_panel ENTERED, label='%s', this=%p\n",
-                     label.c_str(), static_cast<void*>(this));
-        std::fflush(stderr);
-
         PyPanelInfo panel_copy;
         bool found = false;
         {
-            std::fprintf(stderr, "[py_ui] draw_single_panel: acquiring mutex\n");
-            std::fflush(stderr);
             std::lock_guard lock(mutex_);
-            std::fprintf(stderr, "[py_ui] draw_single_panel: mutex acquired, panels_.size()=%zu\n", panels_.size());
-            std::fflush(stderr);
-
-            for (size_t i = 0; i < panels_.size(); ++i) {
-                const auto& panel = panels_[i];
-                std::fprintf(stderr, "[py_ui] draw_single_panel: checking panel[%zu] label='%s' enabled=%d\n",
-                             i, panel.label.c_str(), panel.enabled);
-                std::fflush(stderr);
+            for (const auto& panel : panels_) {
                 if (panel.label == label && panel.enabled) {
-                    std::fprintf(stderr, "[py_ui] draw_single_panel: FOUND match, copying panel\n");
-                    std::fflush(stderr);
                     panel_copy = panel;
-                    std::fprintf(stderr, "[py_ui] draw_single_panel: panel copied OK\n");
-                    std::fflush(stderr);
                     found = true;
                     break;
                 }
             }
         }
-        std::fprintf(stderr, "[py_ui] draw_single_panel: mutex released, found=%d\n", found);
-        std::fflush(stderr);
 
         if (!found) {
-            std::fprintf(stderr, "[py_ui] draw_single_panel: panel not found, returning\n");
-            std::fflush(stderr);
             return;
         }
 
-        std::fprintf(stderr, "[py_ui] draw_single_panel: checking panel_instance.is_valid()\n");
-        std::fflush(stderr);
         if (!panel_copy.panel_instance.is_valid()) {
-            std::fprintf(stderr, "[py_ui] draw_single_panel: ERROR panel_instance is INVALID\n");
-            std::fflush(stderr);
             LOG_ERROR("Panel '{}' has invalid instance", label);
             return;
         }
-        std::fprintf(stderr, "[py_ui] draw_single_panel: panel_instance is valid\n");
-        std::fflush(stderr);
 
-        std::fprintf(stderr, "[py_ui] draw_single_panel: checking hasattr 'draw'\n");
-        std::fflush(stderr);
         if (!nb::hasattr(panel_copy.panel_instance, "draw")) {
-            std::fprintf(stderr, "[py_ui] draw_single_panel: ERROR no 'draw' method\n");
-            std::fflush(stderr);
             LOG_ERROR("Panel '{}' has no draw method", label);
             return;
         }
-        std::fprintf(stderr, "[py_ui] draw_single_panel: 'draw' method exists\n");
-        std::fflush(stderr);
 
-        // Ensure ImGui context is set (Windows DLL boundary fix)
         ensure_imgui_context();
 
-        std::fprintf(stderr, "[py_ui] draw_single_panel: creating PyUILayout\n");
-        std::fflush(stderr);
         try {
             PyUILayout layout;
-            std::fprintf(stderr, "[py_ui] draw_single_panel: PyUILayout created, calling draw()\n");
-            std::fflush(stderr);
             panel_copy.panel_instance.attr("draw")(layout);
-            std::fprintf(stderr, "[py_ui] draw_single_panel: draw() returned OK\n");
-            std::fflush(stderr);
         } catch (const nb::python_error&) {
-            std::fprintf(stderr, "[py_ui] draw_single_panel: PYTHON ERROR caught\n");
-            std::fflush(stderr);
-            // Don't call e.what() - crashes on Windows. Use Python C API instead.
             PyObject *type, *value, *tb;
             PyErr_Fetch(&type, &value, &tb);
             if (value) {
                 PyObject* str = PyObject_Str(value);
                 if (str) {
                     const char* msg = PyUnicode_AsUTF8(str);
-                    std::fprintf(stderr, "[py_ui] Python error: %s\n", msg ? msg : "(null)");
                     LOG_ERROR("Python panel '{}' error: {}", label, msg ? msg : "(unknown)");
                     Py_DECREF(str);
                 }
@@ -847,15 +790,8 @@ namespace lfs::python {
             Py_XDECREF(value);
             Py_XDECREF(tb);
         } catch (const std::exception& e) {
-            std::fprintf(stderr, "[py_ui] draw_single_panel: STD ERROR: %s\n", e.what());
-            std::fflush(stderr);
             LOG_ERROR("Python panel '{}' error: {}", label, e.what());
-        } catch (...) {
-            std::fprintf(stderr, "[py_ui] draw_single_panel: UNKNOWN ERROR\n");
-            std::fflush(stderr);
         }
-        std::fprintf(stderr, "[py_ui] draw_single_panel: EXITING\n");
-        std::fflush(stderr);
     }
 
     std::vector<std::string> PyPanelRegistry::get_panel_names(PanelSpace space) const {
@@ -1350,45 +1286,15 @@ namespace lfs::python {
             nb::arg("tool"), "Switch to a toolbar tool (none, selection, translate, rotate, scale, mirror, brush, align, cropbox)");
 
         // Panel system callbacks
-        std::fprintf(stderr, "\n[py_ui] ========================================\n");
-        std::fprintf(stderr, "[py_ui] REGISTERING PANEL CALLBACKS FROM PYD\n");
-        std::fprintf(stderr, "[py_ui] ========================================\n");
-        std::fprintf(stderr, "[py_ui] This code is in lichtfeld.pyd at address range around %p\n",
-                     reinterpret_cast<void*>(&PyPanelRegistry::instance));
-        std::fflush(stderr);
-
         set_panel_draw_callback([](PanelSpace space) {
-            std::fprintf(stderr, "[py_ui] draw_callback: space=%d\n", static_cast<int>(space));
-            std::fflush(stderr);
             PyPanelRegistry::instance().draw_panels(space);
         });
 
-        // This is the critical callback - add maximum logging
         set_panel_draw_single_callback([](const char* label) {
-            std::fprintf(stderr, "\n[py_ui] >>>>>>> DRAW_SINGLE_CALLBACK ENTERED <<<<<<<\n");
-            std::fprintf(stderr, "[py_ui] label pointer: %p\n", static_cast<const void*>(label));
-            std::fflush(stderr);
-
             if (!label) {
-                std::fprintf(stderr, "[py_ui] ERROR: label is NULL!\n");
-                std::fflush(stderr);
                 return;
             }
-
-            std::fprintf(stderr, "[py_ui] label value: '%s'\n", label);
-            std::fprintf(stderr, "[py_ui] Getting PyPanelRegistry::instance()...\n");
-            std::fflush(stderr);
-
-            auto& registry = PyPanelRegistry::instance();
-            std::fprintf(stderr, "[py_ui] Registry instance: %p\n", static_cast<void*>(&registry));
-            std::fprintf(stderr, "[py_ui] Calling registry.draw_single_panel('%s')...\n", label);
-            std::fflush(stderr);
-
-            registry.draw_single_panel(label);
-
-            std::fprintf(stderr, "[py_ui] draw_single_panel returned OK\n");
-            std::fprintf(stderr, "[py_ui] >>>>>>> DRAW_SINGLE_CALLBACK EXITING <<<<<<<\n\n");
-            std::fflush(stderr);
+            PyPanelRegistry::instance().draw_single_panel(label);
         });
 
         set_panel_has_callback([](PanelSpace space) {
@@ -1402,8 +1308,6 @@ namespace lfs::python {
         });
 
         set_python_cleanup_callback([]() {
-            std::fprintf(stderr, "[py_ui] cleanup_callback: unregistering all\n");
-            std::fflush(stderr);
             PyPanelRegistry::instance().unregister_all();
             PyUIHookRegistry::instance().clear_all();
         });
@@ -1414,13 +1318,6 @@ namespace lfs::python {
                 registry.invoke(panel, section, prepend ? PyHookPosition::Prepend : PyHookPosition::Append);
             }
         });
-
-        std::fprintf(stderr, "[py_ui] All callbacks registered successfully\n");
-        std::fprintf(stderr, "[py_ui] ========================================\n\n");
-        std::fflush(stderr);
-
-        // Dump state from pyd side to verify globals are shared with exe
-        debug_dump_callbacks("py_ui.cpp (pyd module)");
     }
 
 } // namespace lfs::python
