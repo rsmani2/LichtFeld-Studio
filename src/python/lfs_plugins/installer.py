@@ -5,12 +5,17 @@
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional, Callable, Tuple
 from urllib.parse import urlparse
 
 from .plugin import PluginInstance
 from .errors import PluginDependencyError, PluginError
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib
 
 
 class PluginInstaller:
@@ -226,10 +231,9 @@ def clone_from_url(
         plugin_name = repo[10:-7]  # Remove "LichtFeld-" and "-Plugin"
     else:
         plugin_name = repo
-    target_dir = plugins_dir / plugin_name
 
-    if target_dir.exists():
-        raise PluginError(f"Plugin directory already exists: {target_dir}")
+    plugins_dir.mkdir(parents=True, exist_ok=True)
+    temp_dir = Path(tempfile.mkdtemp(prefix=f".{repo}-", dir=plugins_dir))
 
     if on_progress:
         on_progress(f"Cloning {owner}/{repo}...")
@@ -243,20 +247,35 @@ def clone_from_url(
     cmd = [git, "clone", "--depth", "1"]
     if branch:
         cmd.extend(["--branch", branch])
-    cmd.extend([clone_url, str(target_dir)])
+    cmd.extend([clone_url, str(temp_dir)])
 
     result = subprocess.run(cmd, capture_output=True, text=True)
 
     if result.returncode != 0:
+        shutil.rmtree(temp_dir, ignore_errors=True)
         raise PluginError(f"Failed to clone repository: {result.stderr}")
 
     # Verify it's a valid plugin
-    if not (target_dir / "plugin.toml").exists():
-        shutil.rmtree(target_dir)
+    manifest_path = temp_dir / "plugin.toml"
+    if not manifest_path.exists():
+        shutil.rmtree(temp_dir, ignore_errors=True)
         raise PluginError(f"Repository is not a valid plugin (missing plugin.toml)")
 
+    with open(manifest_path, "rb") as f:
+        data = tomllib.load(f)
+    manifest_name = str(data.get("plugin", {}).get("name", "")).strip()
+    final_name = manifest_name or plugin_name
+    target_dir = plugins_dir / final_name
+
+    if target_dir.exists():
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise PluginError(f"Plugin directory already exists: {target_dir}")
+
+    if temp_dir != target_dir:
+        temp_dir.replace(target_dir)
+
     if on_progress:
-        on_progress(f"Cloned {plugin_name}")
+        on_progress(f"Cloned {final_name}")
 
     return target_dir
 
