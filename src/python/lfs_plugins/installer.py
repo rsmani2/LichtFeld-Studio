@@ -68,8 +68,10 @@ class PluginInstaller:
         self, on_progress: Optional[Callable[[str], None]] = None
     ) -> bool:
         """Install all dependencies declared in plugin.toml."""
-        deps = self.plugin.info.dependencies
-        if not deps:
+        deps = list(self.plugin.info.dependencies)
+        plugin_path = self.plugin.info.path
+        use_sync = (plugin_path / "uv.lock").exists()
+        if not deps and not use_sync:
             return True
 
         uv = self._find_uv()
@@ -78,30 +80,54 @@ class PluginInstaller:
 
         venv_python = self._get_venv_python()
 
-        for i, pkg in enumerate(deps):
-            if on_progress:
-                on_progress(f"[{i+1}/{len(deps)}] Installing {pkg}...")
+        if use_sync:
+            cmd = [
+                str(uv),
+                "sync",
+                "--project",
+                str(plugin_path),
+                "--python",
+                str(venv_python),
+            ]
+            action = "Syncing dependencies with uv..."
+            error_label = "uv sync"
+        else:
+            cmd = [
+                str(uv),
+                "pip",
+                "install",
+                "--project",
+                str(plugin_path),
+                "--python",
+                str(venv_python),
+                *deps,
+            ]
+            action = f"Installing {len(deps)} dependencies with uv..."
+            error_label = "uv pip install"
 
-            proc = subprocess.Popen(
-                [str(uv), "pip", "install", pkg, "--python", str(venv_python)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                bufsize=1,
-            )
+        if on_progress:
+            on_progress(action)
 
-            output_lines = []
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        output_lines = []
+        if proc.stdout is not None:
             for line in iter(proc.stdout.readline, ""):
                 line = line.rstrip()
                 if line and on_progress:
                     on_progress(line)
                 output_lines.append(line)
 
-            proc.wait()
-            if proc.returncode != 0:
-                raise PluginDependencyError(
-                    f"Failed to install {pkg}:\n" + "\n".join(output_lines[-10:])
-                )
+        proc.wait()
+        if proc.returncode != 0:
+            tail = "\n".join(output_lines[-10:])
+            raise PluginDependencyError(f"{error_label} failed:\n{tail}")
 
         return True
 
