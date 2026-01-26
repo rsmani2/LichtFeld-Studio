@@ -16,6 +16,8 @@
 #include "rendering/rendering.hpp"
 #include "rendering/rendering_pipeline.hpp"
 #include "scene/scene_manager.hpp"
+#include "training/components/ppisp.hpp"
+#include "training/components/ppisp_controller.hpp"
 #include "training/trainer.hpp"
 #include "training/training_manager.hpp"
 #include <cuda_runtime.h>
@@ -28,6 +30,52 @@ namespace lfs::vis {
 
     namespace {
         constexpr int GPU_ALIGNMENT = 16; // 16-pixel alignment for GPU texture efficiency
+
+        // Apply standalone appearance model (for viewing without training context)
+        lfs::core::Tensor applyStandaloneAppearance(
+            const lfs::core::Tensor& rgb,
+            Scene& scene,
+            int camera_uid) {
+
+            auto* ppisp = scene.getAppearancePPISP();
+            auto* controller = scene.getAppearanceController();
+            if (!ppisp) {
+                return rgb;
+            }
+
+            // Ensure input is [C,H,W] format
+            auto input = rgb;
+            bool was_hwc = false;
+            if (input.ndim() == 3 && input.shape()[2] == 3) {
+                input = input.permute({2, 0, 1}).contiguous();
+                was_hwc = true;
+            }
+
+            lfs::core::Tensor result;
+
+            // Check if this is a known training camera
+            bool is_training_camera = (camera_uid >= 0 && camera_uid < ppisp->num_frames());
+
+            if (is_training_camera) {
+                // Use per-frame learned parameters (same as trainer)
+                result = ppisp->apply(input, camera_uid, camera_uid);
+            } else if (controller) {
+                // Novel view: use controller prediction
+                auto input_batch = input.unsqueeze(0);
+                auto params = controller->predict(input_batch, 1.0f);
+                result = ppisp->apply_with_controller_params(input, params, 0);
+            } else {
+                // No controller - return uncorrected (same as trainer)
+                return rgb;
+            }
+
+            // Convert back to [H,W,C] if input was that format
+            if (was_hwc && result.is_valid()) {
+                result = result.permute({1, 2, 0}).contiguous();
+            }
+
+            return result;
+        }
     } // namespace
 
     using namespace lfs::core::events;
@@ -791,7 +839,33 @@ namespace lfs::vis {
             }
         }
 
-        const auto render_result = engine_->renderGaussians(*model, request);
+        auto render_result = engine_->renderGaussians(*model, request);
+
+        // Apply PPISP correction if enabled in settings (off by default for fast viewport)
+        if (render_result && render_result->image && settings_.apply_appearance_correction) {
+            bool applied = false;
+
+            // Try trainer's PPISP first (has per-frame params and knows training cameras)
+            if (const auto* tm = scene_manager ? scene_manager->getTrainerManager() : nullptr) {
+                if (const auto* trainer = tm->getTrainer(); trainer && trainer->hasPPISP()) {
+                    auto corrected = trainer->applyPPISPForViewport(*render_result->image, current_camera_id_);
+                    render_result->image = std::make_shared<lfs::core::Tensor>(std::move(corrected));
+                    applied = true;
+                }
+            }
+
+            // Fall back to scene's standalone appearance model
+            if (!applied && scene_manager) {
+                auto& scene = scene_manager->getScene();
+                if (scene.hasAppearanceModel()) {
+                    auto corrected = applyStandaloneAppearance(
+                        *render_result->image, scene, current_camera_id_);
+                    if (corrected.is_valid()) {
+                        render_result->image = std::make_shared<lfs::core::Tensor>(std::move(corrected));
+                    }
+                }
+            }
+        }
 
         render_lock.reset();
 

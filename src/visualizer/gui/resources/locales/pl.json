@@ -378,6 +378,7 @@
     "equirectangular": "Równokątne",
     "gut_mode": "GUT (3DGUT)",
     "mip_filter": "Filtr Mip",
+    "appearance_correction": "Korekcja PPISP",
     "render_scale": "Render Scale",
     "selection_colors": "Kolory Zaznaczenia",
     "committed": "Zatwierdzony",
@@ -491,6 +492,7 @@
   "tooltip": {
     "gut_mode": "Dla kamer rybie oko/zniekształconych/równokątnych",
     "mip_filter": "Zmniejsz aliasing dla sub-pikselowych Gaussowskich",
+    "appearance_correction": "Zastosuj nauczoną korekcję ekspozycji/koloru",
     "render_scale": "Rozdzielczość widoku (niższa = mniej VRAM)",
     "point_cloud_forced": "Wymuszone przed rozpoczęciem treningu",
     "desaturate_unselected": "Przyciemnij niezaznaczone PLY",

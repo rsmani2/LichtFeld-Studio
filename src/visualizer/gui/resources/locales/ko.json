@@ -378,6 +378,7 @@
     "equirectangular": "정거원통도법",
     "gut_mode": "GUT (3DGUT)",
     "mip_filter": "밉 필터",
+    "appearance_correction": "PPISP 보정",
     "render_scale": "Render Scale",
     "selection_colors": "선택 색상",
     "committed": "커밋됨",
@@ -491,6 +492,7 @@
   "tooltip": {
     "gut_mode": "어안/왜곡/정거원통 카메라용",
     "mip_filter": "서브픽셀 가우시안 앨리어싱 감소",
+    "appearance_correction": "학습된 노출/색상 보정 적용",
     "render_scale": "뷰어 해상도 (낮을수록=VRAM 감소)",
     "point_cloud_forced": "학습 시작 전 강제",
     "desaturate_unselected": "선택되지 않은 PLY 어둡게",

@@ -378,6 +378,7 @@
     "equirectangular": "正距円筒図法",
     "gut_mode": "GUT (3DGUT)",
     "mip_filter": "ミップフィルター",
+    "appearance_correction": "PPISP補正",
     "render_scale": "Render Scale",
     "selection_colors": "選択色",
     "committed": "確定済み",
@@ -491,6 +492,7 @@
   "tooltip": {
     "gut_mode": "魚眼/歪み/エクイレクタンギュラーカメラ用",
     "mip_filter": "サブピクセルガウシアンのエイリアシング軽減",
+    "appearance_correction": "学習済み露出/色補正を適用",
     "render_scale": "ビューア解像度（低い=VRAM削減）",
     "point_cloud_forced": "トレーニング開始前に強制",
     "desaturate_unselected": "未選択PLYを暗くする",

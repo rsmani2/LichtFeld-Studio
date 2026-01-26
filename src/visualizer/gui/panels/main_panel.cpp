@@ -407,6 +407,14 @@ namespace lfs::vis::gui::panels {
             widgets::SetThemedTooltip("%s", LOC(Tooltip::MIP_FILTER));
         }
 
+        if (ImGui::Checkbox(LOC(MainPanel::APPEARANCE_CORRECTION), &settings.apply_appearance_correction)) {
+            settings_changed = true;
+            render_manager->updateSettings(settings);
+        }
+        if (ImGui::IsItemHovered()) {
+            widgets::SetThemedTooltip("%s", LOC(Tooltip::APPEARANCE_CORRECTION));
+        }
+
         // Render Scale (VRAM optimization)
         ImGui::Separator();
         if (widgets::SliderWithReset(LOC(MainPanel::RENDER_SCALE), &settings.render_scale, 0.25f, 1.0f, 1.0f,

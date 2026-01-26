@@ -47,6 +47,9 @@ namespace lfs::vis {
         bool desaturate_unselected = false; // Desaturate unselected PLYs when one is selected
         bool desaturate_cropping = true;    // Desaturate outside crop box/ellipsoid instead of hiding
 
+        // Appearance correction (PPISP) - off by default for fast viewport
+        bool apply_appearance_correction = false;
+
         // Background
         glm::vec3 background_color = glm::vec3(0.0f, 0.0f, 0.0f);
 

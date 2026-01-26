@@ -18,7 +18,9 @@
 // Forward declarations for training data
 namespace lfs::training {
     class CameraDataset;
-}
+    class PPISP;
+    class PPISPController;
+} // namespace lfs::training
 namespace lfs::core {
     struct PointCloud;
     class Camera;
@@ -302,6 +304,19 @@ namespace lfs::vis {
 
         [[nodiscard]] bool hasTrainingData() const { return train_cameras_ != nullptr; }
 
+        // ========== Appearance Model (PPISP) ==========
+        // For standalone viewing of trained models with appearance correction
+
+        void setAppearanceModel(std::unique_ptr<lfs::training::PPISP> ppisp,
+                                std::unique_ptr<lfs::training::PPISPController> controller = nullptr);
+        void clearAppearanceModel();
+
+        [[nodiscard]] lfs::training::PPISP* getAppearancePPISP() { return appearance_ppisp_.get(); }
+        [[nodiscard]] const lfs::training::PPISP* getAppearancePPISP() const { return appearance_ppisp_.get(); }
+        [[nodiscard]] lfs::training::PPISPController* getAppearanceController() { return appearance_controller_.get(); }
+        [[nodiscard]] const lfs::training::PPISPController* getAppearanceController() const { return appearance_controller_.get(); }
+        [[nodiscard]] bool hasAppearanceModel() const { return appearance_ppisp_ != nullptr; }
+
         // Camera access helpers (delegates to CameraDataset)
         [[nodiscard]] std::shared_ptr<const lfs::core::Camera> getCameraByUid(int uid) const;
         [[nodiscard]] std::vector<std::shared_ptr<const lfs::core::Camera>> getAllCameras() const;
@@ -390,6 +405,10 @@ namespace lfs::vis {
         std::shared_ptr<lfs::core::PointCloud> initial_point_cloud_;
         lfs::core::Tensor scene_center_;  // Scene center (mean of camera positions)
         std::string training_model_node_; // Name of the node being trained
+
+        // Standalone appearance model (for viewing without training)
+        std::unique_ptr<lfs::training::PPISP> appearance_ppisp_;
+        std::unique_ptr<lfs::training::PPISPController> appearance_controller_;
     };
 
 } // namespace lfs::vis

@@ -378,6 +378,7 @@
     "equirectangular": "等距柱状投影",
     "gut_mode": "GUT（3DGUT）",
     "mip_filter": "Mip滤波器",
+    "appearance_correction": "PPISP校正",
     "render_scale": "Render Scale",
     "selection_colors": "选择颜色",
     "committed": "已提交",
@@ -491,6 +492,7 @@
   "tooltip": {
     "gut_mode": "用于鱼眼/畸变/等距柱状相机",
     "mip_filter": "减少亚像素高斯的锯齿",
+    "appearance_correction": "应用学习的曝光/色彩校正",
     "render_scale": "查看器分辨率（越低=越少VRAM）",
     "point_cloud_forced": "训练开始前强制启用",
     "desaturate_unselected": "使未选择的PLY变暗",

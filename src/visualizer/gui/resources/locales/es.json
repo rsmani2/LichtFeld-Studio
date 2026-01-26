@@ -378,6 +378,7 @@
     "equirectangular": "Equirectangular",
     "gut_mode": "GUT (3DGUT)",
     "mip_filter": "Filtro Mip",
+    "appearance_correction": "Corrección PPISP",
     "render_scale": "Render Scale",
     "selection_colors": "Colores de Selección",
     "committed": "Confirmado",
@@ -491,6 +492,7 @@
   "tooltip": {
     "gut_mode": "Para cámaras fisheye/distorsionadas/equirect",
     "mip_filter": "Reducir aliasing para Gaussianos sub-píxel",
+    "appearance_correction": "Aplicar corrección de exposición/color aprendida",
     "render_scale": "Resolución visor (menor = menos VRAM)",
     "point_cloud_forced": "Forzado antes del entrenamiento",
     "desaturate_unselected": "Oscurecer PLYs no seleccionados",

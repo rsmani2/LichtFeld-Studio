@@ -378,6 +378,7 @@
     "equirectangular": "Equirettangolare",
     "gut_mode": "GUT (3DGUT)",
     "mip_filter": "Filtro Mip",
+    "appearance_correction": "Correzione PPISP",
     "render_scale": "Render Scale",
     "selection_colors": "Colori di Selezione",
     "committed": "Confermato",
@@ -491,6 +492,7 @@
   "tooltip": {
     "gut_mode": "Per fotocamere fisheye/distorte/equirettangolari",
     "mip_filter": "Riduci aliasing per Gaussiani sub-pixel",
+    "appearance_correction": "Applica correzione esposizione/colore appresa",
     "render_scale": "Risoluzione viewer (inferiore = meno VRAM)",
     "point_cloud_forced": "Forzato prima dell'addestramento",
     "desaturate_unselected": "Scurisci PLY non selezionati",

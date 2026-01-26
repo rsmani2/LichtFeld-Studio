@@ -6,6 +6,8 @@
 
 #include "checkpoint.hpp"
 #include "components/bilateral_grid.hpp"
+#include "components/ppisp.hpp"
+#include "components/ppisp_controller.hpp"
 #include "components/sparsity_optimizer.hpp"
 #include "core/camera.hpp"
 #include "core/parameters.hpp"
@@ -93,6 +95,18 @@ namespace lfs::training {
 
         const lfs::core::param::TrainingParameters& getParams() const { return params_; }
         void setParams(const lfs::core::param::TrainingParameters& params);
+
+        /// Apply PPISP correction to a rendered image for viewport display
+        /// @param rgb rendered image [C,H,W] or [H,W,C]
+        /// @param camera_uid camera UID (-1 for novel view using controller)
+        /// @return corrected image, or input if PPISP not enabled
+        lfs::core::Tensor applyPPISPForViewport(const lfs::core::Tensor& rgb, int camera_uid) const;
+
+        /// Check if PPISP is enabled and initialized
+        bool hasPPISP() const { return ppisp_ != nullptr && params_.optimization.use_ppisp; }
+
+        /// Check if PPISP controller is enabled and ready for novel views
+        bool hasPPISPController() const { return ppisp_controller_ != nullptr && params_.optimization.ppisp_use_controller; }
 
         std::expected<void, std::string> save_checkpoint(int iteration);
         std::expected<int, std::string> load_checkpoint(const std::filesystem::path& checkpoint_path);
@@ -188,6 +202,8 @@ namespace lfs::training {
         void cleanup();
 
         std::expected<void, std::string> initialize_bilateral_grid();
+        std::expected<void, std::string> initialize_ppisp();
+        std::expected<void, std::string> initialize_ppisp_controller();
 
         // Handle control requests
         void handle_control_requests(int iter, std::stop_token stop_token = {});
@@ -216,6 +232,12 @@ namespace lfs::training {
 
         // Bilateral grid for appearance modeling (optional)
         std::unique_ptr<BilateralGrid> bilateral_grid_;
+
+        // PPISP for physically-plausible ISP appearance modeling (optional)
+        std::unique_ptr<PPISP> ppisp_;
+
+        // PPISP controller for novel view synthesis (Phase 2 distillation)
+        std::unique_ptr<PPISPController> ppisp_controller_;
 
         std::unique_ptr<ISparsityOptimizer> sparsity_optimizer_;
 

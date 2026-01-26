@@ -378,6 +378,7 @@
     "equirectangular": "Equirectangulair",
     "gut_mode": "GUT (3DGUT)",
     "mip_filter": "Mip Filter",
+    "appearance_correction": "PPISP-correctie",
     "render_scale": "Render Scale",
     "selection_colors": "Selectie Kleuren",
     "committed": "Toegewezen",
@@ -491,6 +492,7 @@
   "tooltip": {
     "gut_mode": "Voor fisheye/vervormde/equirectangulaire camera's",
     "mip_filter": "Verminder aliasing voor sub-pixel Gaussians",
+    "appearance_correction": "Geleerde belichting/kleurcorrectie toepassen",
     "render_scale": "Viewer resolutie (lager = minder VRAM)",
     "point_cloud_forced": "Gedwongen voor training start",
     "desaturate_unselected": "Dim niet-geselecteerde PLY's",
