@@ -340,21 +340,26 @@ namespace lfs::vis {
                 static_cast<int>(header.num_frames),
                 1);
 
-            // Create controller if present in file
-            std::unique_ptr<lfs::training::PPISPController> controller;
+            // Create per-camera controllers if present in file
+            std::vector<std::unique_ptr<lfs::training::PPISPController>> controllers;
             if (lfs::training::has_flag(header.flags, lfs::training::PPISPFileFlags::HAS_CONTROLLER)) {
-                controller = std::make_unique<lfs::training::PPISPController>(1);
+                // One controller per camera, matching Python implementation
+                controllers.reserve(header.num_cameras);
+                for (uint32_t i = 0; i < header.num_cameras; ++i) {
+                    controllers.push_back(std::make_unique<lfs::training::PPISPController>(1));
+                }
             }
 
             // Load the actual data
-            auto result = lfs::training::load_ppisp_file(ppisp_path, *ppisp, controller.get());
+            auto result = lfs::training::load_ppisp_file(ppisp_path, *ppisp,
+                                                         controllers.empty() ? nullptr : &controllers);
             if (!result) {
                 LOG_ERROR("Failed to load PPISP file: {}", result.error());
                 return;
             }
 
             // Store in scene for rendering
-            scene_.setAppearanceModel(std::move(ppisp), std::move(controller));
+            scene_.setAppearanceModel(std::move(ppisp), std::move(controllers));
 
         } catch (const std::exception& e) {
             LOG_ERROR("Failed to load PPISP companion: {}", e.what());

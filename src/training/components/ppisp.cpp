@@ -7,6 +7,7 @@
 #include <cassert>
 #include <cmath>
 #include <stdexcept>
+#include <vector>
 
 namespace lfs::training {
 
@@ -58,8 +59,27 @@ namespace lfs::training {
                                             color_params_.ptr<float>(), crf_params_.ptr<float>(), num_cameras,
                                             num_frames, nullptr);
 
-        LOG_DEBUG("PPISP: {} cameras, {} frames, lr={:.2e}, reg_weight={:.4f}", num_cameras, num_frames, config.lr,
-                  config.reg_weight);
+        // ZCA pinv block-diagonal matrix for color mean regularization
+        // 8x8 block-diagonal: [Blue 2x2, Red 2x2, Green 2x2, Neutral 2x2]
+        // From Python: _COLOR_PINV_BLOCK_DIAG
+        // clang-format off
+        color_pinv_block_diag_ = lfs::core::Tensor::from_vector({
+            // Blue block
+            0.0480542f, -0.0043631f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            -0.0043631f, 0.0481283f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            // Red block
+            0.0f, 0.0f, 0.0580570f, -0.0179872f, 0.0f, 0.0f, 0.0f, 0.0f,
+            0.0f, 0.0f, -0.0179872f, 0.0431061f, 0.0f, 0.0f, 0.0f, 0.0f,
+            // Green block
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0433336f, -0.0180537f, 0.0f, 0.0f,
+            0.0f, 0.0f, 0.0f, 0.0f, -0.0180537f, 0.0580500f, 0.0f, 0.0f,
+            // Neutral block
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0128369f, -0.0034654f,
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, -0.0034654f, 0.0128158f,
+        }, {8, 8}, lfs::core::Device::CUDA);
+        // clang-format on
+
+        LOG_DEBUG("PPISP: {} cameras, {} frames, lr={:.2e}", num_cameras, num_frames, config.lr);
     }
 
     lfs::core::Tensor PPISP::apply(const lfs::core::Tensor& rgb, int camera_idx, int frame_idx) {
@@ -109,6 +129,163 @@ namespace lfs::training {
         return output;
     }
 
+    lfs::core::Tensor PPISP::apply_with_controller_params_and_overrides(
+        const lfs::core::Tensor& rgb, const lfs::core::Tensor& controller_params, int camera_idx,
+        float exposure_offset, bool vignette_enabled, float vignette_strength, float wb_temperature, float wb_tint,
+        float gamma_multiplier) {
+        assert(controller_params.shape().rank() == 2 && "Expected [1,9]");
+        assert(controller_params.shape()[0] == 1 && controller_params.shape()[1] == 9);
+        assert(camera_idx >= 0 && camera_idx < num_cameras_ && "camera_idx out of range");
+
+        const auto& shape = rgb.shape();
+        assert(shape.rank() == 3 && shape[0] == 3 && "Expected CHW layout with 3 channels");
+
+        const int h = static_cast<int>(shape[1]);
+        const int w = static_cast<int>(shape[2]);
+
+        auto output = lfs::core::Tensor::empty({3, shape[1], shape[2]}, lfs::core::Device::CUDA);
+
+        // Extract and modify exposure from controller output
+        auto exposure_temp = controller_params.slice(1, 0, 1).reshape({1}).clone();
+        if (exposure_offset != 0.0f) {
+            auto exp_cpu = exposure_temp.cpu();
+            exp_cpu.ptr<float>()[0] += exposure_offset;
+            cudaMemcpy(exposure_temp.ptr<float>(), exp_cpu.ptr<float>(), sizeof(float), cudaMemcpyHostToDevice);
+        }
+
+        // Extract and modify color params from controller output
+        auto color_temp = controller_params.slice(1, 1, 9).reshape({8}).clone();
+        if (wb_temperature != 0.0f || wb_tint != 0.0f) {
+            auto color_cpu = color_temp.cpu();
+            float* color_ptr = color_cpu.ptr<float>();
+            constexpr float WB_SCALE = 0.15f;
+            color_ptr[6] += wb_temperature * WB_SCALE; // n.x
+            color_ptr[7] += wb_tint * WB_SCALE;        // n.y
+            cudaMemcpy(color_temp.ptr<float>(), color_ptr, 8 * sizeof(float), cudaMemcpyHostToDevice);
+        }
+
+        // Modify vignetting params
+        auto vignetting_modified = vignetting_params_.clone();
+        {
+            auto vig_cpu = vignetting_modified.cpu();
+            float* vig_ptr = vig_cpu.ptr<float>();
+            const float mult = vignette_enabled ? vignette_strength : 0.0f;
+            for (int ch = 0; ch < 3; ++ch) {
+                size_t base = static_cast<size_t>(camera_idx) * 15 + static_cast<size_t>(ch) * 5;
+                vig_ptr[base + 2] *= mult;
+                vig_ptr[base + 3] *= mult;
+                vig_ptr[base + 4] *= mult;
+            }
+            size_t copy_offset = static_cast<size_t>(camera_idx) * 15;
+            cudaMemcpy(vignetting_modified.ptr<float>() + copy_offset, vig_ptr + copy_offset,
+                       15 * sizeof(float), cudaMemcpyHostToDevice);
+        }
+
+        // Modify CRF gamma
+        auto crf_modified = crf_params_.clone();
+        if (gamma_multiplier != 1.0f) {
+            auto crf_cpu = crf_modified.cpu();
+            float* crf_ptr = crf_cpu.ptr<float>();
+            for (int ch = 0; ch < 3; ++ch) {
+                size_t base = static_cast<size_t>(camera_idx) * 12 + static_cast<size_t>(ch) * 4;
+                crf_ptr[base + 2] += std::log(gamma_multiplier);
+            }
+            size_t copy_offset = static_cast<size_t>(camera_idx) * 12;
+            cudaMemcpy(crf_modified.ptr<float>() + copy_offset, crf_ptr + copy_offset,
+                       12 * sizeof(float), cudaMemcpyHostToDevice);
+        }
+
+        kernels::launch_ppisp_forward_chw(exposure_temp.ptr<float>(), vignetting_modified.ptr<float>(),
+                                          color_temp.ptr<float>(), crf_modified.ptr<float>(), rgb.ptr<float>(),
+                                          output.ptr<float>(), h, w, num_cameras_, 1, camera_idx, 0, nullptr);
+
+        return output;
+    }
+
+    lfs::core::Tensor PPISP::apply_with_overrides(const lfs::core::Tensor& rgb, int camera_idx, int frame_idx,
+                                                  float exposure_offset, bool vignette_enabled, float vignette_strength,
+                                                  float wb_temperature, float wb_tint, float gamma_multiplier) {
+        assert(camera_idx >= -1 && camera_idx < num_cameras_ && "camera_idx out of range");
+        assert(frame_idx >= -1 && frame_idx < num_frames_ && "frame_idx out of range");
+
+        const auto& shape = rgb.shape();
+        assert(shape.rank() == 3 && shape[0] == 3 && "Expected CHW layout with 3 channels");
+
+        const int h = static_cast<int>(shape[1]);
+        const int w = static_cast<int>(shape[2]);
+
+        auto output = lfs::core::Tensor::empty({3, shape[1], shape[2]}, lfs::core::Device::CUDA);
+
+        // Create modified parameter copies for overrides
+        // Exposure: add offset to learned value
+        auto exposure_modified = exposure_params_.clone();
+        if (frame_idx >= 0 && exposure_offset != 0.0f) {
+            auto exp_cpu = exposure_modified.slice(0, frame_idx, frame_idx + 1).cpu();
+            float* exp_ptr = exp_cpu.ptr<float>();
+            exp_ptr[0] += exposure_offset;
+            cudaMemcpy(exposure_modified.ptr<float>() + frame_idx, exp_ptr, sizeof(float), cudaMemcpyHostToDevice);
+        }
+
+        // Vignetting: multiply alpha coefficients by strength (or zero if disabled)
+        auto vignetting_modified = vignetting_params_.clone();
+        if (camera_idx >= 0) {
+            // Each camera has 3 channels, each with 5 params: cx, cy, alpha0, alpha1, alpha2
+            // Only modify alpha0 (idx 2), alpha1 (idx 3), alpha2 (idx 4) for each channel
+            auto vig_cpu = vignetting_modified.cpu();
+            float* vig_ptr = vig_cpu.ptr<float>();
+            const float mult = vignette_enabled ? vignette_strength : 0.0f;
+            for (int ch = 0; ch < 3; ++ch) {
+                size_t base = static_cast<size_t>(camera_idx) * 15 + static_cast<size_t>(ch) * 5;
+                vig_ptr[base + 2] *= mult; // alpha0
+                vig_ptr[base + 3] *= mult; // alpha1
+                vig_ptr[base + 4] *= mult; // alpha2
+            }
+            size_t copy_offset = static_cast<size_t>(camera_idx) * 15;
+            cudaMemcpy(vignetting_modified.ptr<float>() + copy_offset, vig_ptr + copy_offset,
+                       15 * sizeof(float), cudaMemcpyHostToDevice);
+        }
+
+        // Color: offset neutral point (n) for white balance
+        // Color layout: [num_frames * 8] where each frame has: b.x, b.y, r.x, r.y, g.x, g.y, n.x, n.y
+        auto color_modified = color_params_.clone();
+        if (frame_idx >= 0 && (wb_temperature != 0.0f || wb_tint != 0.0f)) {
+            auto color_cpu = color_modified.cpu();
+            float* color_ptr = color_cpu.ptr<float>();
+            size_t base = static_cast<size_t>(frame_idx) * 8;
+            // n.x (index 6) and n.y (index 7) - temperature shifts blue-yellow, tint shifts magenta-green
+            constexpr float WB_SCALE = 0.15f;
+            color_ptr[base + 6] += wb_temperature * WB_SCALE;
+            color_ptr[base + 7] += wb_tint * WB_SCALE;
+            cudaMemcpy(color_modified.ptr<float>() + base, color_ptr + base, 8 * sizeof(float), cudaMemcpyHostToDevice);
+        }
+
+        // CRF: multiply gamma values
+        // CRF layout: [num_cameras * 3 * 4] where each channel has: toe, shoulder, gamma, center
+        auto crf_modified = crf_params_.clone();
+        if (camera_idx >= 0 && gamma_multiplier != 1.0f) {
+            auto crf_cpu = crf_modified.cpu();
+            float* crf_ptr = crf_cpu.ptr<float>();
+            for (int ch = 0; ch < 3; ++ch) {
+                size_t base = static_cast<size_t>(camera_idx) * 12 + static_cast<size_t>(ch) * 4;
+                // gamma is at index 2 in each channel's params
+                // The raw param goes through bounded_positive_forward: 0.1 + log(1 + exp(raw))
+                // To multiply the output by gamma_multiplier, we need to adjust the raw param
+                // For small adjustments, we can approximate by adding log(multiplier) to raw gamma
+                crf_ptr[base + 2] += std::log(gamma_multiplier);
+            }
+            size_t copy_offset = static_cast<size_t>(camera_idx) * 12;
+            cudaMemcpy(crf_modified.ptr<float>() + copy_offset, crf_ptr + copy_offset,
+                       12 * sizeof(float), cudaMemcpyHostToDevice);
+        }
+
+        kernels::launch_ppisp_forward_chw(exposure_modified.ptr<float>(), vignetting_modified.ptr<float>(),
+                                          color_modified.ptr<float>(), crf_modified.ptr<float>(), rgb.ptr<float>(),
+                                          output.ptr<float>(), h, w, num_cameras_, num_frames_, camera_idx, frame_idx,
+                                          nullptr);
+
+        return output;
+    }
+
     lfs::core::Tensor PPISP::backward(const lfs::core::Tensor& rgb, const lfs::core::Tensor& grad_output,
                                       int camera_idx, int frame_idx) {
         assert(camera_idx >= -1 && camera_idx < num_cameras_ && "camera_idx out of range");
@@ -131,33 +308,317 @@ namespace lfs::training {
         return grad_rgb;
     }
 
+    namespace {
+        // Smooth L1 loss (Huber loss): 0.5*x^2/beta if |x| < beta, else |x| - 0.5*beta
+        inline float smooth_l1(float x, float beta) {
+            const float abs_x = std::abs(x);
+            if (abs_x < beta) {
+                return 0.5f * x * x / beta;
+            }
+            return abs_x - 0.5f * beta;
+        }
+
+        // Gradient of smooth L1: x/beta if |x| < beta, else sign(x)
+        inline float smooth_l1_grad(float x, float beta) {
+            const float abs_x = std::abs(x);
+            if (abs_x < beta) {
+                return x / beta;
+            }
+            return (x > 0.0f) ? 1.0f : -1.0f;
+        }
+    } // namespace
+
     lfs::core::Tensor PPISP::reg_loss_gpu() {
-        auto loss = lfs::core::Tensor::zeros({1}, lfs::core::Device::CUDA);
+        // Compute regularization on CPU (small params, avoid kernel overhead)
+        // Transfer to CPU, compute, return GPU scalar for gradient flow
+        auto exposure_cpu = exposure_params_.cpu();
+        auto vignetting_cpu = vignetting_params_.cpu();
+        auto color_cpu = color_params_.cpu();
+        auto crf_cpu = crf_params_.cpu();
 
-        // Add L2 regularization for all parameters
-        kernels::launch_ppisp_reg_loss(exposure_params_.ptr<float>(), loss.ptr<float>(),
-                                       static_cast<int>(exposure_params_.numel()), nullptr);
-        kernels::launch_ppisp_reg_loss(vignetting_params_.ptr<float>(), loss.ptr<float>(),
-                                       static_cast<int>(vignetting_params_.numel()), nullptr);
-        kernels::launch_ppisp_reg_loss(color_params_.ptr<float>(), loss.ptr<float>(),
-                                       static_cast<int>(color_params_.numel()), nullptr);
-        kernels::launch_ppisp_reg_loss(crf_params_.ptr<float>(), loss.ptr<float>(),
-                                       static_cast<int>(crf_params_.numel()), nullptr);
+        const float* exp_ptr = exposure_cpu.ptr<float>();
+        const float* vig_ptr = vignetting_cpu.ptr<float>();
+        const float* color_ptr = color_cpu.ptr<float>();
+        const float* crf_ptr = crf_cpu.ptr<float>();
 
+        float total_loss = 0.0f;
+
+        // 1. Exposure mean regularization: smooth_l1(mean(exposure), beta=0.1)
+        if (config_.exposure_mean > 0.0f) {
+            float exp_sum = 0.0f;
+            for (int i = 0; i < num_frames_; ++i) {
+                exp_sum += exp_ptr[i];
+            }
+            const float exp_mean = exp_sum / static_cast<float>(num_frames_);
+            total_loss += config_.exposure_mean * smooth_l1(exp_mean, 0.1f);
+        }
+
+        // Vignetting layout: [num_cameras * 3 * 5] = [cam][channel][cx, cy, alpha0, alpha1, alpha2]
+        // 2. Vignetting center loss: mean(cx^2 + cy^2)
+        if (config_.vig_center > 0.0f) {
+            float vig_center_sum = 0.0f;
+            for (int cam = 0; cam < num_cameras_; ++cam) {
+                for (int ch = 0; ch < 3; ++ch) {
+                    size_t base = static_cast<size_t>(cam) * 15 + static_cast<size_t>(ch) * 5;
+                    float cx = vig_ptr[base + 0];
+                    float cy = vig_ptr[base + 1];
+                    vig_center_sum += cx * cx + cy * cy;
+                }
+            }
+            total_loss += config_.vig_center * vig_center_sum / static_cast<float>(num_cameras_ * 3);
+        }
+
+        // 3. Vignetting non-positivity: mean(relu(alphas))
+        if (config_.vig_non_pos > 0.0f) {
+            float vig_non_pos_sum = 0.0f;
+            for (int cam = 0; cam < num_cameras_; ++cam) {
+                for (int ch = 0; ch < 3; ++ch) {
+                    size_t base = static_cast<size_t>(cam) * 15 + static_cast<size_t>(ch) * 5;
+                    for (int a = 0; a < 3; ++a) {
+                        float alpha = vig_ptr[base + 2 + a];
+                        if (alpha > 0.0f) {
+                            vig_non_pos_sum += alpha;
+                        }
+                    }
+                }
+            }
+            total_loss += config_.vig_non_pos * vig_non_pos_sum / static_cast<float>(num_cameras_ * 3 * 3);
+        }
+
+        // 4. Vignetting channel variance: mean(var(vig, dim=channel))
+        if (config_.vig_channel > 0.0f) {
+            float vig_var_sum = 0.0f;
+            for (int cam = 0; cam < num_cameras_; ++cam) {
+                // For each of the 5 param indices, compute variance across 3 channels
+                for (int p = 0; p < 5; ++p) {
+                    float vals[3];
+                    for (int ch = 0; ch < 3; ++ch) {
+                        size_t idx = static_cast<size_t>(cam) * 15 + static_cast<size_t>(ch) * 5 + p;
+                        vals[ch] = vig_ptr[idx];
+                    }
+                    float mean = (vals[0] + vals[1] + vals[2]) / 3.0f;
+                    float var = 0.0f;
+                    for (int ch = 0; ch < 3; ++ch) {
+                        float diff = vals[ch] - mean;
+                        var += diff * diff;
+                    }
+                    var /= 3.0f; // unbiased=False
+                    vig_var_sum += var;
+                }
+            }
+            total_loss += config_.vig_channel * vig_var_sum / static_cast<float>(num_cameras_ * 5);
+        }
+
+        // 5. Color mean regularization: smooth_l1(mean(color @ pinv, dim=0), beta=0.005)
+        if (config_.color_mean > 0.0f) {
+            auto pinv_cpu = color_pinv_block_diag_.cpu();
+            const float* pinv_ptr = pinv_cpu.ptr<float>();
+
+            // Compute color_offsets = color_params @ pinv (matrix multiply [num_frames, 8] @ [8, 8])
+            // Then compute mean across frames for each of 8 outputs
+            float color_mean_offsets[8] = {0.0f};
+            for (int f = 0; f < num_frames_; ++f) {
+                for (int j = 0; j < 8; ++j) {
+                    float dot = 0.0f;
+                    for (int k = 0; k < 8; ++k) {
+                        dot += color_ptr[f * 8 + k] * pinv_ptr[k * 8 + j];
+                    }
+                    color_mean_offsets[j] += dot;
+                }
+            }
+            for (int j = 0; j < 8; ++j) {
+                color_mean_offsets[j] /= static_cast<float>(num_frames_);
+            }
+
+            // smooth_l1 for each mean offset
+            float color_loss = 0.0f;
+            for (int j = 0; j < 8; ++j) {
+                color_loss += smooth_l1(color_mean_offsets[j], 0.005f);
+            }
+            total_loss += config_.color_mean * color_loss / 8.0f;
+        }
+
+        // 6. CRF channel variance: mean(var(crf, dim=channel))
+        // CRF layout: [num_cameras * 3 * 4] = [cam][channel][toe, shoulder, gamma, center]
+        if (config_.crf_channel > 0.0f) {
+            float crf_var_sum = 0.0f;
+            for (int cam = 0; cam < num_cameras_; ++cam) {
+                // For each of the 4 param indices, compute variance across 3 channels
+                for (int p = 0; p < 4; ++p) {
+                    float vals[3];
+                    for (int ch = 0; ch < 3; ++ch) {
+                        size_t idx = static_cast<size_t>(cam) * 12 + static_cast<size_t>(ch) * 4 + p;
+                        vals[ch] = crf_ptr[idx];
+                    }
+                    float mean = (vals[0] + vals[1] + vals[2]) / 3.0f;
+                    float var = 0.0f;
+                    for (int ch = 0; ch < 3; ++ch) {
+                        float diff = vals[ch] - mean;
+                        var += diff * diff;
+                    }
+                    var /= 3.0f; // unbiased=False
+                    crf_var_sum += var;
+                }
+            }
+            total_loss += config_.crf_channel * crf_var_sum / static_cast<float>(num_cameras_ * 4);
+        }
+
+        // Return as GPU scalar
+        auto loss = lfs::core::Tensor::full({1}, total_loss, lfs::core::Device::CUDA);
         return loss;
     }
 
     void PPISP::reg_backward() {
-        const float weight = config_.reg_weight;
+        // Compute regularization gradients on CPU (matching reg_loss_gpu)
+        auto exposure_cpu = exposure_params_.cpu();
+        auto vignetting_cpu = vignetting_params_.cpu();
+        auto color_cpu = color_params_.cpu();
+        auto crf_cpu = crf_params_.cpu();
 
-        kernels::launch_ppisp_reg_backward(exposure_params_.ptr<float>(), exposure_grad_.ptr<float>(), weight,
-                                           static_cast<int>(exposure_params_.numel()), nullptr);
-        kernels::launch_ppisp_reg_backward(vignetting_params_.ptr<float>(), vignetting_grad_.ptr<float>(), weight,
-                                           static_cast<int>(vignetting_params_.numel()), nullptr);
-        kernels::launch_ppisp_reg_backward(color_params_.ptr<float>(), color_grad_.ptr<float>(), weight,
-                                           static_cast<int>(color_params_.numel()), nullptr);
-        kernels::launch_ppisp_reg_backward(crf_params_.ptr<float>(), crf_grad_.ptr<float>(), weight,
-                                           static_cast<int>(crf_params_.numel()), nullptr);
+        const float* exp_ptr = exposure_cpu.ptr<float>();
+        const float* vig_ptr = vignetting_cpu.ptr<float>();
+        const float* color_ptr = color_cpu.ptr<float>();
+        const float* crf_ptr = crf_cpu.ptr<float>();
+
+        // Allocate gradient buffers
+        std::vector<float> exp_grad(num_frames_, 0.0f);
+        std::vector<float> vig_grad(num_cameras_ * 3 * 5, 0.0f);
+        std::vector<float> color_grad(num_frames_ * 8, 0.0f);
+        std::vector<float> crf_grad(num_cameras_ * 3 * 4, 0.0f);
+
+        // 1. Exposure mean gradient
+        if (config_.exposure_mean > 0.0f) {
+            float exp_sum = 0.0f;
+            for (int i = 0; i < num_frames_; ++i) {
+                exp_sum += exp_ptr[i];
+            }
+            const float exp_mean = exp_sum / static_cast<float>(num_frames_);
+            const float grad_mean = smooth_l1_grad(exp_mean, 0.1f);
+            const float grad_per_elem = config_.exposure_mean * grad_mean / static_cast<float>(num_frames_);
+            for (int i = 0; i < num_frames_; ++i) {
+                exp_grad[i] += grad_per_elem;
+            }
+        }
+
+        // 2. Vignetting center gradient: d/d(cx,cy) of (cx^2 + cy^2) = 2*cx, 2*cy
+        if (config_.vig_center > 0.0f) {
+            const float scale = config_.vig_center * 2.0f / static_cast<float>(num_cameras_ * 3);
+            for (int cam = 0; cam < num_cameras_; ++cam) {
+                for (int ch = 0; ch < 3; ++ch) {
+                    size_t base = static_cast<size_t>(cam) * 15 + static_cast<size_t>(ch) * 5;
+                    vig_grad[base + 0] += scale * vig_ptr[base + 0]; // d/d(cx)
+                    vig_grad[base + 1] += scale * vig_ptr[base + 1]; // d/d(cy)
+                }
+            }
+        }
+
+        // 3. Vignetting non-positivity gradient: d/d(alpha) of relu(alpha) = 1 if alpha > 0
+        if (config_.vig_non_pos > 0.0f) {
+            const float scale = config_.vig_non_pos / static_cast<float>(num_cameras_ * 3 * 3);
+            for (int cam = 0; cam < num_cameras_; ++cam) {
+                for (int ch = 0; ch < 3; ++ch) {
+                    size_t base = static_cast<size_t>(cam) * 15 + static_cast<size_t>(ch) * 5;
+                    for (int a = 0; a < 3; ++a) {
+                        if (vig_ptr[base + 2 + a] > 0.0f) {
+                            vig_grad[base + 2 + a] += scale;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 4. Vignetting channel variance gradient
+        if (config_.vig_channel > 0.0f) {
+            const float scale = config_.vig_channel / static_cast<float>(num_cameras_ * 5);
+            for (int cam = 0; cam < num_cameras_; ++cam) {
+                for (int p = 0; p < 5; ++p) {
+                    float vals[3];
+                    size_t idxs[3];
+                    for (int ch = 0; ch < 3; ++ch) {
+                        idxs[ch] = static_cast<size_t>(cam) * 15 + static_cast<size_t>(ch) * 5 + p;
+                        vals[ch] = vig_ptr[idxs[ch]];
+                    }
+                    float mean = (vals[0] + vals[1] + vals[2]) / 3.0f;
+                    // d/d(x_i) of var = 2*(x_i - mean) / n
+                    for (int ch = 0; ch < 3; ++ch) {
+                        vig_grad[idxs[ch]] += scale * 2.0f * (vals[ch] - mean) / 3.0f;
+                    }
+                }
+            }
+        }
+
+        // 5. Color mean gradient
+        if (config_.color_mean > 0.0f) {
+            auto pinv_cpu = color_pinv_block_diag_.cpu();
+            const float* pinv_ptr = pinv_cpu.ptr<float>();
+
+            // First compute mean offsets (same as forward)
+            float color_mean_offsets[8] = {0.0f};
+            for (int f = 0; f < num_frames_; ++f) {
+                for (int j = 0; j < 8; ++j) {
+                    float dot = 0.0f;
+                    for (int k = 0; k < 8; ++k) {
+                        dot += color_ptr[f * 8 + k] * pinv_ptr[k * 8 + j];
+                    }
+                    color_mean_offsets[j] += dot;
+                }
+            }
+            for (int j = 0; j < 8; ++j) {
+                color_mean_offsets[j] /= static_cast<float>(num_frames_);
+            }
+
+            // Gradient of smooth_l1
+            float grad_offsets[8];
+            for (int j = 0; j < 8; ++j) {
+                grad_offsets[j] = config_.color_mean * smooth_l1_grad(color_mean_offsets[j], 0.005f) / 8.0f;
+            }
+
+            // Chain rule: d/d(color) = grad_offsets @ pinv^T / num_frames
+            for (int f = 0; f < num_frames_; ++f) {
+                for (int k = 0; k < 8; ++k) {
+                    float grad = 0.0f;
+                    for (int j = 0; j < 8; ++j) {
+                        grad += grad_offsets[j] * pinv_ptr[k * 8 + j];
+                    }
+                    color_grad[f * 8 + k] += grad / static_cast<float>(num_frames_);
+                }
+            }
+        }
+
+        // 6. CRF channel variance gradient
+        if (config_.crf_channel > 0.0f) {
+            const float scale = config_.crf_channel / static_cast<float>(num_cameras_ * 4);
+            for (int cam = 0; cam < num_cameras_; ++cam) {
+                for (int p = 0; p < 4; ++p) {
+                    float vals[3];
+                    size_t idxs[3];
+                    for (int ch = 0; ch < 3; ++ch) {
+                        idxs[ch] = static_cast<size_t>(cam) * 12 + static_cast<size_t>(ch) * 4 + p;
+                        vals[ch] = crf_ptr[idxs[ch]];
+                    }
+                    float mean = (vals[0] + vals[1] + vals[2]) / 3.0f;
+                    for (int ch = 0; ch < 3; ++ch) {
+                        crf_grad[idxs[ch]] += scale * 2.0f * (vals[ch] - mean) / 3.0f;
+                    }
+                }
+            }
+        }
+
+        // Add gradients to GPU gradient buffers (accumulate)
+        auto exp_grad_tensor = lfs::core::Tensor::from_vector(exp_grad, {static_cast<size_t>(num_frames_)},
+                                                              lfs::core::Device::CUDA);
+        auto vig_grad_tensor = lfs::core::Tensor::from_vector(vig_grad, {vig_grad.size()},
+                                                              lfs::core::Device::CUDA);
+        auto color_grad_tensor = lfs::core::Tensor::from_vector(color_grad, {color_grad.size()},
+                                                                lfs::core::Device::CUDA);
+        auto crf_grad_tensor = lfs::core::Tensor::from_vector(crf_grad, {crf_grad.size()},
+                                                              lfs::core::Device::CUDA);
+
+        // Accumulate into existing gradients
+        exposure_grad_ = exposure_grad_.add(exp_grad_tensor);
+        vignetting_grad_ = vignetting_grad_.add(vig_grad_tensor);
+        color_grad_ = color_grad_.add(color_grad_tensor);
+        crf_grad_ = crf_grad_.add(crf_grad_tensor);
     }
 
     void PPISP::optimizer_step() {

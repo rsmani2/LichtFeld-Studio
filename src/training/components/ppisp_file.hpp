@@ -5,14 +5,16 @@
 
 #include <expected>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <vector>
 
 namespace lfs::training {
 
     class PPISP;
     class PPISPController;
 
-    constexpr uint32_t PPISP_FILE_MAGIC = 0x50505349;   // "PPIS"
+    constexpr uint32_t PPISP_FILE_MAGIC = 0x50505349; // "PPIS"
     constexpr uint32_t PPISP_FILE_VERSION = 1;
 
     struct PPISPFileHeader {
@@ -37,23 +39,23 @@ namespace lfs::training {
         return (flags & static_cast<uint32_t>(flag)) != 0;
     }
 
-    /// Save PPISP (and optionally controller) to standalone file
+    /// Save PPISP (and optionally controllers) to standalone file
     /// @param path Output file path (typically .ppisp extension)
     /// @param ppisp Required - the trained PPISP module
-    /// @param controller Optional - the trained controller for novel views
+    /// @param controllers Optional - per-camera controllers for novel views
     [[nodiscard]] std::expected<void, std::string> save_ppisp_file(
         const std::filesystem::path& path,
         const PPISP& ppisp,
-        const PPISPController* controller = nullptr);
+        const std::vector<std::unique_ptr<PPISPController>>* controllers = nullptr);
 
     /// Load PPISP state from standalone file
     /// @param path Input file path
     /// @param ppisp PPISP instance to load into (must be pre-constructed with matching dimensions)
-    /// @param controller Optional controller to load into
+    /// @param controllers Optional per-camera controllers to load into
     [[nodiscard]] std::expected<void, std::string> load_ppisp_file(
         const std::filesystem::path& path,
         PPISP& ppisp,
-        PPISPController* controller = nullptr);
+        std::vector<std::unique_ptr<PPISPController>>* controllers = nullptr);
 
     /// Check if a PPISP companion file exists for a given PLY/splat file
     /// Returns the companion path if it exists, empty path otherwise

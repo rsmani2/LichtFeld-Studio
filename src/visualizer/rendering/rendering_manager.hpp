@@ -29,6 +29,21 @@ namespace lfs::vis {
         GTComparison
     };
 
+    struct PPISPOverrides {
+        float exposure_offset = 0.0f; // EV stops (-3 to +3)
+        bool vignette_enabled = true;
+        float vignette_strength = 1.0f; // 0.0 to 2.0
+        float wb_temperature = 0.0f;    // -1.0 to +1.0
+        float wb_tint = 0.0f;           // -1.0 to +1.0
+        float gamma_multiplier = 1.0f;  // 0.5 to 2.5
+
+        [[nodiscard]] bool isIdentity() const {
+            return exposure_offset == 0.0f && vignette_enabled &&
+                   vignette_strength == 1.0f && wb_temperature == 0.0f &&
+                   wb_tint == 0.0f && gamma_multiplier == 1.0f;
+        }
+    };
+
     struct RenderSettings {
         // Core rendering settings
         float fov = 60.0f;
@@ -49,6 +64,7 @@ namespace lfs::vis {
 
         // Appearance correction (PPISP) - off by default for fast viewport
         bool apply_appearance_correction = false;
+        PPISPOverrides ppisp_overrides;
 
         // Background
         glm::vec3 background_color = glm::vec3(0.0f, 0.0f, 0.0f);

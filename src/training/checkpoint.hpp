@@ -107,7 +107,7 @@ namespace lfs::training {
         const lfs::core::param::TrainingParameters& params,
         const BilateralGrid* bilateral_grid = nullptr,
         const PPISP* ppisp = nullptr,
-        const PPISPController* ppisp_controller = nullptr);
+        const std::vector<std::unique_ptr<PPISPController>>* ppisp_controllers = nullptr);
 
     /// Load checkpoint header only
     std::expected<CheckpointHeader, std::string> load_checkpoint_header(
@@ -120,7 +120,7 @@ namespace lfs::training {
         lfs::core::param::TrainingParameters& params,
         BilateralGrid* bilateral_grid = nullptr,
         PPISP* ppisp = nullptr,
-        PPISPController* ppisp_controller = nullptr);
+        std::vector<std::unique_ptr<PPISPController>>* ppisp_controllers = nullptr);
 
     /// Load only SplatData from checkpoint
     std::expected<lfs::core::SplatData, std::string> load_checkpoint_splat_data(

@@ -308,13 +308,24 @@ namespace lfs::vis {
         // For standalone viewing of trained models with appearance correction
 
         void setAppearanceModel(std::unique_ptr<lfs::training::PPISP> ppisp,
-                                std::unique_ptr<lfs::training::PPISPController> controller = nullptr);
+                                std::vector<std::unique_ptr<lfs::training::PPISPController>> controllers = {});
         void clearAppearanceModel();
 
         [[nodiscard]] lfs::training::PPISP* getAppearancePPISP() { return appearance_ppisp_.get(); }
         [[nodiscard]] const lfs::training::PPISP* getAppearancePPISP() const { return appearance_ppisp_.get(); }
-        [[nodiscard]] lfs::training::PPISPController* getAppearanceController() { return appearance_controller_.get(); }
-        [[nodiscard]] const lfs::training::PPISPController* getAppearanceController() const { return appearance_controller_.get(); }
+        [[nodiscard]] lfs::training::PPISPController* getAppearanceController(int camera_idx = 0) {
+            if (camera_idx >= 0 && camera_idx < static_cast<int>(appearance_controllers_.size())) {
+                return appearance_controllers_[camera_idx].get();
+            }
+            return appearance_controllers_.empty() ? nullptr : appearance_controllers_[0].get();
+        }
+        [[nodiscard]] const lfs::training::PPISPController* getAppearanceController(int camera_idx = 0) const {
+            if (camera_idx >= 0 && camera_idx < static_cast<int>(appearance_controllers_.size())) {
+                return appearance_controllers_[camera_idx].get();
+            }
+            return appearance_controllers_.empty() ? nullptr : appearance_controllers_[0].get();
+        }
+        [[nodiscard]] bool hasAppearanceController() const { return !appearance_controllers_.empty(); }
         [[nodiscard]] bool hasAppearanceModel() const { return appearance_ppisp_ != nullptr; }
 
         // Camera access helpers (delegates to CameraDataset)
@@ -408,7 +419,7 @@ namespace lfs::vis {
 
         // Standalone appearance model (for viewing without training)
         std::unique_ptr<lfs::training::PPISP> appearance_ppisp_;
-        std::unique_ptr<lfs::training::PPISPController> appearance_controller_;
+        std::vector<std::unique_ptr<lfs::training::PPISPController>> appearance_controllers_;
     };
 
 } // namespace lfs::vis

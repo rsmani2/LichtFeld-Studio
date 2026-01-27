@@ -33,6 +33,22 @@ namespace lfs::vis {
 
 namespace lfs::training {
     class AdamOptimizer;
+
+    struct PPISPViewportOverrides {
+        float exposure_offset = 0.0f;
+        bool vignette_enabled = true;
+        float vignette_strength = 1.0f;
+        float wb_temperature = 0.0f;
+        float wb_tint = 0.0f;
+        float gamma_multiplier = 1.0f;
+
+        [[nodiscard]] bool isIdentity() const {
+            return exposure_offset == 0.0f && vignette_enabled &&
+                   vignette_strength == 1.0f && wb_temperature == 0.0f &&
+                   wb_tint == 0.0f && gamma_multiplier == 1.0f;
+        }
+    };
+
     class Trainer {
     public:
         // Legacy constructor - takes ownership of strategy and shares datasets
@@ -99,14 +115,24 @@ namespace lfs::training {
         /// Apply PPISP correction to a rendered image for viewport display
         /// @param rgb rendered image [C,H,W] or [H,W,C]
         /// @param camera_uid camera UID (-1 for novel view using controller)
+        /// @param overrides user-controlled adjustments (exposure, vignette, WB, gamma)
         /// @return corrected image, or input if PPISP not enabled
-        lfs::core::Tensor applyPPISPForViewport(const lfs::core::Tensor& rgb, int camera_uid) const;
+        lfs::core::Tensor applyPPISPForViewport(const lfs::core::Tensor& rgb, int camera_uid,
+                                                const PPISPViewportOverrides& overrides = {}) const;
 
         /// Check if PPISP is enabled and initialized
         bool hasPPISP() const { return ppisp_ != nullptr && params_.optimization.use_ppisp; }
 
         /// Check if PPISP controller is enabled and ready for novel views
-        bool hasPPISPController() const { return ppisp_controller_ != nullptr && params_.optimization.ppisp_use_controller; }
+        bool hasPPISPController() const { return !ppisp_controllers_.empty() && params_.optimization.ppisp_use_controller; }
+
+        /// Get controller for a specific camera (nullptr if out of range)
+        PPISPController* getPPISPController(int camera_idx) const {
+            if (camera_idx >= 0 && camera_idx < static_cast<int>(ppisp_controllers_.size())) {
+                return ppisp_controllers_[camera_idx].get();
+            }
+            return ppisp_controllers_.empty() ? nullptr : ppisp_controllers_[0].get();
+        }
 
         std::expected<void, std::string> save_checkpoint(int iteration);
         std::expected<int, std::string> load_checkpoint(const std::filesystem::path& checkpoint_path);
@@ -236,8 +262,9 @@ namespace lfs::training {
         // PPISP for physically-plausible ISP appearance modeling (optional)
         std::unique_ptr<PPISP> ppisp_;
 
-        // PPISP controller for novel view synthesis (Phase 2 distillation)
-        std::unique_ptr<PPISPController> ppisp_controller_;
+        // PPISP controllers for novel view synthesis (Phase 2 distillation)
+        // One controller per camera, matching Python implementation
+        std::vector<std::unique_ptr<PPISPController>> ppisp_controllers_;
 
         std::unique_ptr<ISparsityOptimizer> sparsity_optimizer_;
 

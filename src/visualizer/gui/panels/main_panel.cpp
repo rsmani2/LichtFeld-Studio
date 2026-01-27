@@ -415,6 +415,58 @@ namespace lfs::vis::gui::panels {
             widgets::SetThemedTooltip("%s", LOC(Tooltip::APPEARANCE_CORRECTION));
         }
 
+        // PPISP adjustment controls (only show when appearance correction enabled)
+        if (settings.apply_appearance_correction) {
+            ImGui::Indent();
+            auto& ov = settings.ppisp_overrides;
+
+            // Exposure
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_EXPOSURE), &ov.exposure_offset,
+                                         -3.0f, 3.0f, 0.0f, LOC(Tooltip::PPISP_EXPOSURE))) {
+                settings_changed = true;
+                render_manager->updateSettings(settings);
+            }
+
+            // Vignette toggle + strength
+            if (ImGui::Checkbox(LOC(MainPanel::PPISP_VIGNETTE), &ov.vignette_enabled)) {
+                settings_changed = true;
+                render_manager->updateSettings(settings);
+            }
+            if (ov.vignette_enabled) {
+                ImGui::SameLine();
+                ImGui::SetNextItemWidth(80.0f * getDpiScale());
+                float vig_pct = ov.vignette_strength * 100.0f;
+                if (ImGui::SliderFloat("##vig_str", &vig_pct, 0.0f, 200.0f, "%.0f%%")) {
+                    ov.vignette_strength = vig_pct / 100.0f;
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+            }
+
+            // White Balance Temperature
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_WB_TEMP), &ov.wb_temperature,
+                                         -1.0f, 1.0f, 0.0f, LOC(Tooltip::PPISP_WB_TEMP))) {
+                settings_changed = true;
+                render_manager->updateSettings(settings);
+            }
+
+            // White Balance Tint
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_WB_TINT), &ov.wb_tint,
+                                         -1.0f, 1.0f, 0.0f, LOC(Tooltip::PPISP_WB_TINT))) {
+                settings_changed = true;
+                render_manager->updateSettings(settings);
+            }
+
+            // Gamma
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA), &ov.gamma_multiplier,
+                                         0.5f, 2.5f, 1.0f, LOC(Tooltip::PPISP_GAMMA))) {
+                settings_changed = true;
+                render_manager->updateSettings(settings);
+            }
+
+            ImGui::Unindent();
+        }
+
         // Render Scale (VRAM optimization)
         ImGui::Separator();
         if (widgets::SliderWithReset(LOC(MainPanel::RENDER_SCALE), &settings.render_scale, 0.25f, 1.0f, 1.0f,

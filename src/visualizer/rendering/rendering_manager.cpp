@@ -35,10 +35,10 @@ namespace lfs::vis {
         lfs::core::Tensor applyStandaloneAppearance(
             const lfs::core::Tensor& rgb,
             Scene& scene,
-            int camera_uid) {
+            int camera_uid,
+            const PPISPOverrides& overrides) {
 
             auto* ppisp = scene.getAppearancePPISP();
-            auto* controller = scene.getAppearanceController();
             if (!ppisp) {
                 return rgb;
             }
@@ -57,13 +57,29 @@ namespace lfs::vis {
             bool is_training_camera = (camera_uid >= 0 && camera_uid < ppisp->num_frames());
 
             if (is_training_camera) {
-                // Use per-frame learned parameters (same as trainer)
-                result = ppisp->apply(input, camera_uid, camera_uid);
-            } else if (controller) {
-                // Novel view: use controller prediction
+                // Use per-frame learned parameters with overrides
+                if (overrides.isIdentity()) {
+                    result = ppisp->apply(input, camera_uid, camera_uid);
+                } else {
+                    result = ppisp->apply_with_overrides(input, camera_uid, camera_uid,
+                                                         overrides.exposure_offset, overrides.vignette_enabled,
+                                                         overrides.vignette_strength, overrides.wb_temperature,
+                                                         overrides.wb_tint, overrides.gamma_multiplier);
+                }
+            } else if (scene.hasAppearanceController()) {
+                // Novel view: use per-camera controller prediction with optional overrides
+                // Select controller based on camera_uid (modulo number of controllers)
+                auto* controller = scene.getAppearanceController(camera_uid >= 0 ? camera_uid : 0);
                 auto input_batch = input.unsqueeze(0);
                 auto params = controller->predict(input_batch, 1.0f);
-                result = ppisp->apply_with_controller_params(input, params, 0);
+                if (overrides.isIdentity()) {
+                    result = ppisp->apply_with_controller_params(input, params, 0);
+                } else {
+                    result = ppisp->apply_with_controller_params_and_overrides(
+                        input, params, 0, overrides.exposure_offset, overrides.vignette_enabled,
+                        overrides.vignette_strength, overrides.wb_temperature, overrides.wb_tint,
+                        overrides.gamma_multiplier);
+                }
             } else {
                 // No controller - return uncorrected (same as trainer)
                 return rgb;
@@ -848,7 +864,15 @@ namespace lfs::vis {
             // Try trainer's PPISP first (has per-frame params and knows training cameras)
             if (const auto* tm = scene_manager ? scene_manager->getTrainerManager() : nullptr) {
                 if (const auto* trainer = tm->getTrainer(); trainer && trainer->hasPPISP()) {
-                    auto corrected = trainer->applyPPISPForViewport(*render_result->image, current_camera_id_);
+                    lfs::training::PPISPViewportOverrides trainer_overrides{
+                        .exposure_offset = settings_.ppisp_overrides.exposure_offset,
+                        .vignette_enabled = settings_.ppisp_overrides.vignette_enabled,
+                        .vignette_strength = settings_.ppisp_overrides.vignette_strength,
+                        .wb_temperature = settings_.ppisp_overrides.wb_temperature,
+                        .wb_tint = settings_.ppisp_overrides.wb_tint,
+                        .gamma_multiplier = settings_.ppisp_overrides.gamma_multiplier};
+                    auto corrected = trainer->applyPPISPForViewport(
+                        *render_result->image, current_camera_id_, trainer_overrides);
                     render_result->image = std::make_shared<lfs::core::Tensor>(std::move(corrected));
                     applied = true;
                 }
@@ -859,7 +883,7 @@ namespace lfs::vis {
                 auto& scene = scene_manager->getScene();
                 if (scene.hasAppearanceModel()) {
                     auto corrected = applyStandaloneAppearance(
-                        *render_result->image, scene, current_camera_id_);
+                        *render_result->image, scene, current_camera_id_, settings_.ppisp_overrides);
                     if (corrected.is_valid()) {
                         render_result->image = std::make_shared<lfs::core::Tensor>(std::move(corrected));
                     }

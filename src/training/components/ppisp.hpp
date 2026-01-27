@@ -11,14 +11,21 @@
 namespace lfs::training {
 
     struct PPISPConfig {
-        double lr = 1e-3;
+        double lr = 2e-3;
         double beta1 = 0.9;
         double beta2 = 0.999;
         double eps = 1e-15;
-        int warmup_steps = 1000;
+        int warmup_steps = 500;
         double warmup_start_factor = 0.01;
         double final_lr_factor = 0.01;
-        float reg_weight = 0.001f;
+
+        // Regularization weights (matching Python PPISP)
+        float exposure_mean = 1.0f; // Encourage exposure mean ~ 0 (resolve SH ambiguity)
+        float vig_center = 0.02f;   // Encourage vignetting optical center near image center
+        float vig_channel = 0.1f;   // Encourage similar vignetting across RGB channels
+        float vig_non_pos = 0.01f;  // Penalize positive vignetting alpha coefficients
+        float color_mean = 1.0f;    // Encourage color correction mean ~ 0
+        float crf_channel = 0.1f;   // Encourage similar CRF across RGB channels
     };
 
     /// Physically-Plausible Image Signal Processing for per-camera/per-frame appearance modeling
@@ -38,6 +45,28 @@ namespace lfs::training {
         lfs::core::Tensor apply_with_controller_params(const lfs::core::Tensor& rgb,
                                                        const lfs::core::Tensor& controller_params,
                                                        int camera_idx = 0);
+
+        /// Apply ISP with controller-predicted params + user overrides (for novel view with adjustments)
+        lfs::core::Tensor apply_with_controller_params_and_overrides(const lfs::core::Tensor& rgb,
+                                                                     const lfs::core::Tensor& controller_params,
+                                                                     int camera_idx, float exposure_offset,
+                                                                     bool vignette_enabled, float vignette_strength,
+                                                                     float wb_temperature, float wb_tint,
+                                                                     float gamma_multiplier);
+
+        /// Apply ISP with user-controlled overrides (for viewport preview)
+        /// @param rgb input image [C,H,W]
+        /// @param camera_idx camera index for vignetting/CRF
+        /// @param frame_idx frame index for exposure/color params
+        /// @param exposure_offset additive EV offset
+        /// @param vignette_enabled if false, disable vignetting
+        /// @param vignette_strength multiplier on vignette alpha coefficients
+        /// @param wb_temperature white balance temperature shift (-1 to +1)
+        /// @param wb_tint white balance tint shift (-1 to +1)
+        /// @param gamma_multiplier multiplier on learned gamma
+        lfs::core::Tensor apply_with_overrides(const lfs::core::Tensor& rgb, int camera_idx, int frame_idx,
+                                               float exposure_offset, bool vignette_enabled, float vignette_strength,
+                                               float wb_temperature, float wb_tint, float gamma_multiplier);
 
         /// Backward pass: accumulate gradients (call optimizer_step after all backward calls)
         lfs::core::Tensor backward(const lfs::core::Tensor& rgb, const lfs::core::Tensor& grad_output, int camera_idx,
@@ -63,7 +92,7 @@ namespace lfs::training {
         int num_frames() const { return num_frames_; }
         double get_lr() const { return current_lr_; }
         int64_t get_step() const { return step_; }
-        float get_reg_weight() const { return config_.reg_weight; }
+        const Config& get_config() const { return config_; }
 
         /// Get learned parameters for a specific frame as [1,9] tensor
         /// Returns: [exposure, color_params[0:8]] for distillation target
@@ -120,6 +149,9 @@ namespace lfs::training {
         int total_iterations_;
         int num_cameras_;
         int num_frames_;
+
+        // ZCA pinv block-diagonal matrix for color mean regularization [8x8]
+        lfs::core::Tensor color_pinv_block_diag_;
     };
 
 } // namespace lfs::training
