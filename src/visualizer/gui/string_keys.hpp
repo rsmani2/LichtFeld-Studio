@@ -441,16 +441,8 @@ namespace lichtfeld::Strings {
         inline constexpr const char* APPEARANCE_CORRECTION = "main_panel.appearance_correction";
         inline constexpr const char* PPISP_EXPOSURE = "main_panel.ppisp_exposure";
         inline constexpr const char* PPISP_VIGNETTE = "main_panel.ppisp_vignette";
-        inline constexpr const char* PPISP_WB_TEMP = "main_panel.ppisp_wb_temperature";
-        inline constexpr const char* PPISP_WB_TINT = "main_panel.ppisp_wb_tint";
+        inline constexpr const char* PPISP_COLOR_BALANCE = "main_panel.ppisp_color_balance";
         inline constexpr const char* PPISP_GAMMA = "main_panel.ppisp_gamma";
-        inline constexpr const char* PPISP_COLOR_ADVANCED = "main_panel.ppisp_color_advanced";
-        inline constexpr const char* PPISP_COLOR_RED_X = "main_panel.ppisp_color_red_x";
-        inline constexpr const char* PPISP_COLOR_RED_Y = "main_panel.ppisp_color_red_y";
-        inline constexpr const char* PPISP_COLOR_GREEN_X = "main_panel.ppisp_color_green_x";
-        inline constexpr const char* PPISP_COLOR_GREEN_Y = "main_panel.ppisp_color_green_y";
-        inline constexpr const char* PPISP_COLOR_BLUE_X = "main_panel.ppisp_color_blue_x";
-        inline constexpr const char* PPISP_COLOR_BLUE_Y = "main_panel.ppisp_color_blue_y";
         inline constexpr const char* PPISP_CRF_ADVANCED = "main_panel.ppisp_crf_advanced";
         inline constexpr const char* PPISP_GAMMA_RED = "main_panel.ppisp_gamma_red";
         inline constexpr const char* PPISP_GAMMA_GREEN = "main_panel.ppisp_gamma_green";
@@ -586,8 +578,6 @@ namespace lichtfeld::Strings {
         inline constexpr const char* MIP_FILTER = "tooltip.mip_filter";
         inline constexpr const char* APPEARANCE_CORRECTION = "tooltip.appearance_correction";
         inline constexpr const char* PPISP_EXPOSURE = "tooltip.ppisp_exposure";
-        inline constexpr const char* PPISP_WB_TEMP = "tooltip.ppisp_wb_temperature";
-        inline constexpr const char* PPISP_WB_TINT = "tooltip.ppisp_wb_tint";
         inline constexpr const char* PPISP_GAMMA = "tooltip.ppisp_gamma";
         inline constexpr const char* PPISP_COLOR_RGB = "tooltip.ppisp_color_rgb";
         inline constexpr const char* PPISP_GAMMA_CHANNEL = "tooltip.ppisp_gamma_channel";

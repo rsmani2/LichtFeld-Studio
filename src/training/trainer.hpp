@@ -146,10 +146,9 @@ namespace lfs::training {
         /// Check if PPISP controller is enabled and ready for novel views
         bool hasPPISPController() const { return ppisp_controller_pool_ != nullptr && params_.optimization.ppisp_use_controller; }
 
-        /// Get the controller pool (nullptr if not enabled)
-        PPISPControllerPool* getPPISPControllerPool() const {
-            return ppisp_controller_pool_.get();
-        }
+        PPISPControllerPool* getPPISPControllerPool() const { return ppisp_controller_pool_.get(); }
+        std::unique_ptr<PPISP> takePPISP() { return std::move(ppisp_); }
+        std::unique_ptr<PPISPControllerPool> takePPISPControllerPool() { return std::move(ppisp_controller_pool_); }
 
         std::expected<void, std::string> save_checkpoint(int iteration);
         std::expected<int, std::string> load_checkpoint(const std::filesystem::path& checkpoint_path);

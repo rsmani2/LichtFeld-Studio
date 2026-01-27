@@ -62,6 +62,12 @@ namespace lfs::vis::gui::widgets {
     bool ChromaticityPicker2D(const char* label, float* x, float* y, float range = 0.5f,
                               const ImVec4& color_tint = ImVec4(1, 1, 1, 1));
 
+    // Unified chromaticity diagram with 4 draggable control points (R, G, B, Neutral)
+    // Shows rg chromaticity space with all color correction points in one widget.
+    // Returns true if any value changed.
+    bool ChromaticityDiagram(const char* label, float* red_x, float* red_y, float* green_x, float* green_y,
+                             float* blue_x, float* blue_y, float* neutral_x, float* neutral_y, float range = 0.5f);
+
     // CRF tone curve preview (read-only visualization)
     // Shows the effect of gamma, toe, and shoulder on the tone curve
     void CRFCurvePreview(const char* label, float gamma, float toe, float shoulder,

@@ -123,11 +123,7 @@ namespace {
             // Optional flag arguments
             ::args::Flag enable_mip(parser, "enable_mip", "Enable mip filter (anti-aliasing)", {"enable-mip"});
             ::args::Flag use_bilateral_grid(parser, "bilateral_grid", "Enable bilateral grid filtering", {"bilateral-grid"});
-            ::args::Flag use_ppisp(parser, "ppisp", "Enable PPISP appearance modeling", {"ppisp"});
-            ::args::Flag ppisp_no_controller(parser, "ppisp_no_controller", "Disable PPISP controller distillation", {"ppisp-no-controller"});
-            ::args::Flag ppisp_no_freeze(parser, "ppisp_no_freeze", "Don't freeze Gaussians during controller distillation", {"ppisp-no-freeze"});
-            ::args::ValueFlag<int> ppisp_controller_step(parser, "step", "Iteration to start controller distillation (default: auto = iterations - 5000)", {"ppisp-controller-step"});
-            ::args::ValueFlag<float> ppisp_controller_lr(parser, "lr", "PPISP controller learning rate (default: 0.002)", {"ppisp-controller-lr"});
+            ::args::Flag ppisp_controller(parser, "ppisp_controller", "Enable PPISP controller for novel views", {"ppisp-controller"});
             ::args::Flag enable_eval(parser, "eval", "Enable evaluation during training", {"eval"});
             ::args::Flag headless(parser, "headless", "Disable visualization during training", {"headless"});
             ::args::Flag auto_train(parser, "train", "Start training immediately on startup", {"train"});
@@ -404,15 +400,10 @@ namespace {
                                         prune_ratio_val = prune_ratio ? std::optional<float>(::args::get(prune_ratio)) : std::optional<float>(),
                                         // Mask parameters
                                         mask_mode_val = mask_mode ? std::optional<lfs::core::param::MaskMode>(::args::get(mask_mode)) : std::optional<lfs::core::param::MaskMode>(),
-                                        // PPISP controller parameters
-                                        ppisp_controller_step_val = ppisp_controller_step ? std::optional<int>(::args::get(ppisp_controller_step)) : std::optional<int>(),
-                                        ppisp_controller_lr_val = ppisp_controller_lr ? std::optional<float>(::args::get(ppisp_controller_lr)) : std::optional<float>(),
                                         // Capture flag states
                                         enable_mip_flag = bool(enable_mip),
                                         use_bilateral_grid_flag = bool(use_bilateral_grid),
-                                        use_ppisp_flag = bool(use_ppisp),
-                                        ppisp_no_controller_flag = bool(ppisp_no_controller),
-                                        ppisp_no_freeze_flag = bool(ppisp_no_freeze),
+                                        ppisp_controller_flag = bool(ppisp_controller),
                                         enable_eval_flag = bool(enable_eval),
                                         headless_flag = bool(headless),
                                         auto_train_flag = bool(auto_train),
@@ -465,13 +456,7 @@ namespace {
 
                 setFlag(enable_mip_flag, opt.mip_filter);
                 setFlag(use_bilateral_grid_flag, opt.use_bilateral_grid);
-                setFlag(use_ppisp_flag, opt.use_ppisp);
-                if (ppisp_no_controller_flag)
-                    opt.ppisp_use_controller = false;
-                if (ppisp_no_freeze_flag)
-                    opt.ppisp_freeze_gaussians_on_distill = false;
-                setVal(ppisp_controller_step_val, opt.ppisp_controller_activation_step);
-                setVal(ppisp_controller_lr_val, opt.ppisp_controller_lr);
+                setFlag(ppisp_controller_flag, opt.ppisp_use_controller);
                 setFlag(enable_eval_flag, opt.enable_eval);
                 setFlag(headless_flag, opt.headless);
                 setFlag(auto_train_flag, opt.auto_train);

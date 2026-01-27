@@ -1605,14 +1605,26 @@ namespace lfs::vis {
         auto splat_data = std::move(model_node->model);
         const size_t num_gaussians = splat_data->size();
 
-        if (services().trainerOrNull()) {
-            services().trainerOrNull()->clearTrainer();
+        // Extract PPISP models from trainer before clearing
+        std::unique_ptr<lfs::training::PPISP> ppisp;
+        std::unique_ptr<lfs::training::PPISPControllerPool> controller_pool;
+        if (auto* trainer_mgr = services().trainerOrNull()) {
+            if (auto* trainer = trainer_mgr->getTrainer(); trainer && trainer->hasPPISP()) {
+                ppisp = trainer->takePPISP();
+                controller_pool = trainer->takePPISPControllerPool();
+            }
+            trainer_mgr->clearTrainer();
         }
         scene_.clear();
 
         constexpr const char* MODEL_NAME = "Trained Model";
         scene_.addNode(MODEL_NAME, std::move(splat_data));
         selectNode(MODEL_NAME);
+
+        // Restore PPISP appearance model to scene
+        if (ppisp) {
+            scene_.setAppearanceModel(std::move(ppisp), std::move(controller_pool));
+        }
 
         {
             std::lock_guard lock(state_mutex_);

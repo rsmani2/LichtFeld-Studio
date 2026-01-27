@@ -436,23 +436,17 @@ namespace lfs::vis::gui::panels {
                 ImGui::SameLine();
                 ImGui::SetNextItemWidth(80.0f * getDpiScale());
                 float vig_pct = ov.vignette_strength * 100.0f;
-                if (ImGui::SliderFloat("##vig_str", &vig_pct, 0.0f, 200.0f, "%.0f%%")) {
+                if (ImGui::SliderFloat("##vig_str", &vig_pct, 0.0f, 500.0f, "%.0f%%")) {
                     ov.vignette_strength = vig_pct / 100.0f;
                     settings_changed = true;
                     render_manager->updateSettings(settings);
                 }
             }
 
-            // White Balance Temperature
-            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_WB_TEMP), &ov.wb_temperature, -1.0f, 1.0f, 0.0f,
-                                         LOC(Tooltip::PPISP_WB_TEMP))) {
-                settings_changed = true;
-                render_manager->updateSettings(settings);
-            }
-
-            // White Balance Tint
-            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_WB_TINT), &ov.wb_tint, -1.0f, 1.0f, 0.0f,
-                                         LOC(Tooltip::PPISP_WB_TINT))) {
+            // Unified chromaticity diagram with R, G, B, Neutral control points
+            if (widgets::ChromaticityDiagram(LOC(MainPanel::PPISP_COLOR_BALANCE), &ov.color_red_x, &ov.color_red_y,
+                                             &ov.color_green_x, &ov.color_green_y, &ov.color_blue_x, &ov.color_blue_y,
+                                             &ov.wb_temperature, &ov.wb_tint, 1.0f)) {
                 settings_changed = true;
                 render_manager->updateSettings(settings);
             }
@@ -462,34 +456,6 @@ namespace lfs::vis::gui::panels {
                                          LOC(Tooltip::PPISP_GAMMA))) {
                 settings_changed = true;
                 render_manager->updateSettings(settings);
-            }
-
-            // Advanced Color Correction (collapsible)
-            if (ImGui::TreeNode(LOC(MainPanel::PPISP_COLOR_ADVANCED))) {
-                // Red chromaticity picker
-                if (widgets::ChromaticityPicker2D(LOC(MainPanel::PPISP_COLOR_RED_X),
-                                                  &ov.color_red_x, &ov.color_red_y, 0.5f,
-                                                  ImVec4(1.0f, 0.3f, 0.3f, 1.0f))) {
-                    settings_changed = true;
-                    render_manager->updateSettings(settings);
-                }
-
-                // Green chromaticity picker
-                if (widgets::ChromaticityPicker2D(LOC(MainPanel::PPISP_COLOR_GREEN_X),
-                                                  &ov.color_green_x, &ov.color_green_y, 0.5f,
-                                                  ImVec4(0.3f, 0.9f, 0.3f, 1.0f))) {
-                    settings_changed = true;
-                    render_manager->updateSettings(settings);
-                }
-
-                // Blue chromaticity picker
-                if (widgets::ChromaticityPicker2D(LOC(MainPanel::PPISP_COLOR_BLUE_X),
-                                                  &ov.color_blue_x, &ov.color_blue_y, 0.5f,
-                                                  ImVec4(0.3f, 0.5f, 1.0f, 1.0f))) {
-                    settings_changed = true;
-                    render_manager->updateSettings(settings);
-                }
-                ImGui::TreePop();
             }
 
             // Advanced CRF (collapsible)

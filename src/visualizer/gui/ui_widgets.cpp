@@ -577,6 +577,148 @@ namespace lfs::vis::gui::widgets {
         return changed;
     }
 
+    bool ChromaticityDiagram(const char* label, float* red_x, float* red_y, float* green_x, float* green_y,
+                             float* blue_x, float* blue_y, float* neutral_x, float* neutral_y, const float range) {
+        constexpr float DIAGRAM_SIZE_BASE = 140.0f;
+        constexpr float POINT_RADIUS_BASE = 6.0f;
+        constexpr float POINT_OUTLINE_WIDTH = 2.0f;
+        constexpr float HIT_RADIUS_BASE = 10.0f;
+
+        const auto& t = theme();
+        const float dpi = getDpiScale();
+        const float size = DIAGRAM_SIZE_BASE * dpi;
+        const float point_radius = POINT_RADIUS_BASE * dpi;
+        const float hit_radius = HIT_RADIUS_BASE * dpi;
+
+        ImGui::PushID(label);
+
+        bool changed = false;
+        const ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
+        auto* const draw_list = ImGui::GetWindowDrawList();
+
+        // Draw rg chromaticity background gradient
+        constexpr int GRID_RES = 24;
+        const float cell_size = size / GRID_RES;
+        for (int iy = 0; iy < GRID_RES; ++iy) {
+            for (int ix = 0; ix < GRID_RES; ++ix) {
+                const float r_chrom = static_cast<float>(ix) / (GRID_RES - 1);
+                const float g_chrom = 1.0f - static_cast<float>(iy) / (GRID_RES - 1);
+                const float b_chrom = std::max(0.0f, 1.0f - r_chrom - g_chrom);
+
+                // Convert chromaticity to displayable RGB (with some saturation)
+                const float intensity = 0.7f;
+                float r = r_chrom * intensity + 0.15f;
+                float g = g_chrom * intensity + 0.15f;
+                float b = b_chrom * intensity + 0.15f;
+                const float max_val = std::max({r, g, b});
+                if (max_val > 1.0f) {
+                    r /= max_val;
+                    g /= max_val;
+                    b /= max_val;
+                }
+
+                const ImU32 cell_color =
+                    IM_COL32(static_cast<int>(r * 255), static_cast<int>(g * 255), static_cast<int>(b * 255), 255);
+                const ImVec2 p0(cursor_pos.x + ix * cell_size, cursor_pos.y + iy * cell_size);
+                const ImVec2 p1(p0.x + cell_size + 1, p0.y + cell_size + 1);
+                draw_list->AddRectFilled(p0, p1, cell_color);
+            }
+        }
+
+        // Border
+        const ImU32 border_color = ImGui::ColorConvertFloat4ToU32(t.palette.border);
+        draw_list->AddRect(cursor_pos, ImVec2(cursor_pos.x + size, cursor_pos.y + size), border_color, 0.0f, 0, 1.5f);
+
+        // Reference chromaticity positions (where pure R, G, B, Gray would be)
+        // In our normalized space: center = (0,0), range maps to half the widget
+        const float center = size * 0.5f;
+
+        // Control point data: {x_ptr, y_ptr, color, base_x, base_y, name}
+        struct ControlPoint {
+            float* x;
+            float* y;
+            ImU32 fill_color;
+            ImU32 outline_color;
+            const char* name;
+        };
+
+        ControlPoint points[4] = {
+            {red_x, red_y, IM_COL32(255, 80, 80, 255), IM_COL32(180, 0, 0, 255), "R"},
+            {green_x, green_y, IM_COL32(80, 220, 80, 255), IM_COL32(0, 150, 0, 255), "G"},
+            {blue_x, blue_y, IM_COL32(80, 120, 255, 255), IM_COL32(0, 0, 180, 255), "B"},
+            {neutral_x, neutral_y, IM_COL32(200, 200, 200, 255), IM_COL32(80, 80, 80, 255), "N"},
+        };
+
+        // Handle interaction
+        ImGui::InvisibleButton("##diagram", ImVec2(size, size));
+        const bool is_hovered = ImGui::IsItemHovered();
+
+        static int dragging_point = -1;
+
+        if (is_hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+            const ImVec2 mouse = ImGui::GetMousePos();
+            float best_dist = hit_radius;
+            dragging_point = -1;
+
+            for (int i = 0; i < 4; ++i) {
+                const float px = cursor_pos.x + center + (*points[i].x / range) * center;
+                const float py = cursor_pos.y + center - (*points[i].y / range) * center;
+                const float dx = mouse.x - px;
+                const float dy = mouse.y - py;
+                const float dist = std::sqrt(dx * dx + dy * dy);
+                if (dist < best_dist) {
+                    best_dist = dist;
+                    dragging_point = i;
+                }
+            }
+        }
+
+        if (dragging_point >= 0 && ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            const ImVec2 mouse = ImGui::GetMousePos();
+            *points[dragging_point].x = ((mouse.x - cursor_pos.x) / size - 0.5f) * 2.0f * range;
+            *points[dragging_point].y = -((mouse.y - cursor_pos.y) / size - 0.5f) * 2.0f * range;
+            *points[dragging_point].x = std::clamp(*points[dragging_point].x, -range, range);
+            *points[dragging_point].y = std::clamp(*points[dragging_point].y, -range, range);
+            changed = true;
+        }
+
+        if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+            dragging_point = -1;
+        }
+
+        // Double-click to reset all
+        if (is_hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            *red_x = *red_y = *green_x = *green_y = *blue_x = *blue_y = *neutral_x = *neutral_y = 0.0f;
+            changed = true;
+        }
+
+        // Draw control points
+        for (int i = 0; i < 4; ++i) {
+            const float px = cursor_pos.x + center + (*points[i].x / range) * center;
+            const float py = cursor_pos.y + center - (*points[i].y / range) * center;
+            const float r = (i == dragging_point) ? point_radius * 1.3f : point_radius;
+
+            draw_list->AddCircleFilled(ImVec2(px, py), r, points[i].fill_color);
+            draw_list->AddCircle(ImVec2(px, py), r, points[i].outline_color, 0, POINT_OUTLINE_WIDTH);
+
+            // Draw label
+            const ImVec2 text_pos(px - 3, py - 4);
+            draw_list->AddText(text_pos, IM_COL32(0, 0, 0, 255), points[i].name);
+        }
+
+        // Side info
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::Text("%s", label);
+        if (is_hovered) {
+            ImGui::TextDisabled("(%s)", LOC(lichtfeld::Strings::Common::DOUBLE_CLICK_RESET));
+        }
+        ImGui::EndGroup();
+
+        ImGui::PopID();
+        return changed;
+    }
+
     void CRFCurvePreview(const char* label, const float gamma, const float toe, const float shoulder,
                          const float gamma_r, const float gamma_g, const float gamma_b) {
         constexpr float PLOT_WIDTH_BASE = 200.0f;

@@ -85,11 +85,11 @@ namespace lfs::core {
             float tv_loss_weight = 10.f;
 
             // PPISP (Physically-Plausible ISP) parameters
-            bool use_ppisp = false;
+            bool use_ppisp = true;
             float ppisp_lr = 2e-3f;
             float ppisp_reg_weight = 0.001f;
             int ppisp_warmup_steps = 500;
-            bool ppisp_use_controller = true;
+            bool ppisp_use_controller = false;
             bool ppisp_freeze_gaussians_on_distill = true;
             int ppisp_controller_activation_step = -1; // -1 = auto (iterations - 5000)
             float ppisp_controller_lr = 2e-3f;
