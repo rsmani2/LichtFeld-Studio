@@ -9,7 +9,13 @@
 
 namespace {
 
-    class PPISPControllerTest : public ::testing::Test {};
+    class PPISPControllerTest : public ::testing::Test {
+    protected:
+        void SetUp() override {
+            // Preallocate shared buffers for the largest test image size
+            lfs::training::PPISPController::preallocate_shared_buffers(256, 256);
+        }
+    };
 
     TEST_F(PPISPControllerTest, ConstructorInitializesWeights) {
         lfs::training::PPISPController controller(10000);

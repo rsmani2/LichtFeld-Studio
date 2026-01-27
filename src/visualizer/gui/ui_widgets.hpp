@@ -57,4 +57,14 @@ namespace lfs::vis::gui::widgets {
     // InputInt with thousand separator display (shows formatted when not editing)
     bool InputIntFormatted(const char* label, int* v, int step = 0, int step_fast = 0);
 
+    // 2D point picker for chromaticity offset (color grading)
+    // Returns true if value changed. Color tint shows which channel (red/green/blue).
+    bool ChromaticityPicker2D(const char* label, float* x, float* y, float range = 0.5f,
+                              const ImVec4& color_tint = ImVec4(1, 1, 1, 1));
+
+    // CRF tone curve preview (read-only visualization)
+    // Shows the effect of gamma, toe, and shoulder on the tone curve
+    void CRFCurvePreview(const char* label, float gamma, float toe, float shoulder,
+                         float gamma_r = 0.0f, float gamma_g = 0.0f, float gamma_b = 0.0f);
+
 } // namespace lfs::vis::gui::widgets

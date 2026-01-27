@@ -4,7 +4,8 @@
 
 #include "trainer.hpp"
 #include "components/bilateral_grid.hpp"
-#include "components/ppisp_controller.hpp"
+#include "components/ppisp.hpp"
+#include "components/ppisp_controller_pool.hpp"
 #include "components/ppisp_file.hpp"
 #include "components/sparsity_optimizer.hpp"
 #include "core/cuda/memory_arena.hpp"
@@ -37,6 +38,30 @@
 
 namespace lfs::training {
 
+    namespace {
+        PPISPRenderOverrides toRenderOverrides(const PPISPViewportOverrides& ov) {
+            PPISPRenderOverrides r;
+            r.exposure_offset = ov.exposure_offset;
+            r.vignette_enabled = ov.vignette_enabled;
+            r.vignette_strength = ov.vignette_strength;
+            r.wb_temperature = ov.wb_temperature;
+            r.wb_tint = ov.wb_tint;
+            r.color_red_x = ov.color_red_x;
+            r.color_red_y = ov.color_red_y;
+            r.color_green_x = ov.color_green_x;
+            r.color_green_y = ov.color_green_y;
+            r.color_blue_x = ov.color_blue_x;
+            r.color_blue_y = ov.color_blue_y;
+            r.gamma_multiplier = ov.gamma_multiplier;
+            r.gamma_red = ov.gamma_red;
+            r.gamma_green = ov.gamma_green;
+            r.gamma_blue = ov.gamma_blue;
+            r.crf_toe = ov.crf_toe;
+            r.crf_shoulder = ov.crf_shoulder;
+            return r;
+        }
+    } // namespace
+
     // Tile configuration for memory-efficient training
     enum class TileMode {
         One = 1, // 1 tile  - 1x1 - Render full image (no tiling)
@@ -60,7 +85,7 @@ namespace lfs::training {
         progress_.reset();
         bilateral_grid_.reset();
         ppisp_.reset();
-        ppisp_controllers_.clear();
+        ppisp_controller_pool_.reset();
         sparsity_optimizer_.reset();
         evaluator_.reset();
 
@@ -146,7 +171,7 @@ namespace lfs::training {
         }
 
         try {
-            PPISPControllerConfig config;
+            PPISPControllerPool::Config config;
             config.lr = params_.optimization.ppisp_controller_lr;
 
             if (params_.optimization.ppisp_controller_activation_step < 0) {
@@ -157,19 +182,24 @@ namespace lfs::training {
                 static_cast<int>(params_.optimization.iterations) - params_.optimization.ppisp_controller_activation_step;
             int num_cameras = ppisp_->num_cameras();
 
-            ppisp_controllers_.clear();
-            ppisp_controllers_.reserve(num_cameras);
-            for (int i = 0; i < num_cameras; ++i) {
-                ppisp_controllers_.push_back(std::make_unique<PPISPController>(distillation_iters, config));
-            }
+            ppisp_controller_pool_ = std::make_unique<PPISPControllerPool>(num_cameras, distillation_iters, config);
 
-            LOG_INFO("PPISP controllers initialized: num_cameras={}, activation_step={}, lr={:.2e}",
+            size_t max_h = 0, max_w = 0;
+            for (const auto& cam : train_dataset_->get_cameras()) {
+                if (cam) {
+                    max_h = std::max(max_h, static_cast<size_t>(cam->image_height()));
+                    max_w = std::max(max_w, static_cast<size_t>(cam->image_width()));
+                }
+            }
+            ppisp_controller_pool_->allocate_buffers(max_h, max_w);
+
+            LOG_INFO("PPISP controller pool initialized: num_cameras={}, activation_step={}, lr={:.2e}, max_image={}x{}",
                      num_cameras, params_.optimization.ppisp_controller_activation_step,
-                     params_.optimization.ppisp_controller_lr);
+                     params_.optimization.ppisp_controller_lr, static_cast<int>(max_h), static_cast<int>(max_w));
 
             return {};
         } catch (const std::exception& e) {
-            return std::unexpected(std::format("Failed to init PPISP controllers: {}", e.what()));
+            return std::unexpected(std::format("Failed to init PPISP controller pool: {}", e.what()));
         }
     }
 
@@ -670,7 +700,7 @@ namespace lfs::training {
         strategy_.reset();
         bilateral_grid_.reset();
         ppisp_.reset();
-        ppisp_controllers_.clear();
+        ppisp_controller_pool_.reset();
         sparsity_optimizer_.reset();
         evaluator_.reset();
         progress_.reset();
@@ -1294,39 +1324,21 @@ namespace lfs::training {
 
             // PPISP controller Phase 2: distillation (per-camera controller)
             const int camera_idx = cam->uid();
-            const bool in_controller_phase = !ppisp_controllers_.empty() && ppisp_ &&
+            const bool in_controller_phase = ppisp_controller_pool_ && ppisp_ &&
                                              params_.optimization.ppisp_use_controller &&
                                              iter >= params_.optimization.ppisp_controller_activation_step &&
                                              camera_idx >= 0 &&
-                                             camera_idx < static_cast<int>(ppisp_controllers_.size());
+                                             camera_idx < ppisp_controller_pool_->num_cameras();
             if (in_controller_phase) {
                 nvtxRangePush("ppisp_controller_distillation");
 
-                // Get the corrected image (either from bilateral_grid output or raw render)
-                lfs::core::Tensor distill_input = r_output.image;
-                if (bilateral_grid_ && params_.optimization.use_bilateral_grid) {
-                    distill_input = bilateral_grid_->apply(r_output.image, camera_idx);
-                }
-
-                // Get the controller for this camera
-                auto* controller = ppisp_controllers_[camera_idx].get();
-
-                // Controller predicts params from rendered image
-                auto pred = controller->predict(distill_input.unsqueeze(0), 1.0f);
-
-                // Get target from learned PPISP params (frame_idx == camera uid in this case)
+                auto pred = ppisp_controller_pool_->predict(camera_idx, r_output.image.unsqueeze(0), 1.0f);
                 auto target = ppisp_->get_params_for_frame(camera_idx);
-
-                // Compute distillation loss and backward
-                auto distill_loss = controller->distillation_loss(pred, target);
-                loss_tensor_gpu = loss_tensor_gpu + distill_loss;
-
-                // Manual gradient: d(MSE)/d(pred) = 2 * (pred - target) / n_elements
-                auto grad_output = (pred - target).mul(2.0f / 9.0f);
-                controller->backward(grad_output);
-                controller->optimizer_step();
-                controller->zero_grad();
-                controller->scheduler_step();
+                ppisp_controller_pool_->compute_mse_gradient(pred, target);
+                ppisp_controller_pool_->backward(camera_idx, ppisp_controller_pool_->get_mse_gradient());
+                ppisp_controller_pool_->optimizer_step(camera_idx);
+                ppisp_controller_pool_->zero_grad();
+                ppisp_controller_pool_->scheduler_step(camera_idx);
 
                 nvtxRangePop();
             }
@@ -1404,7 +1416,7 @@ namespace lfs::training {
                     }
 
                     // Skip strategy step if we're in controller distillation phase and freeze is enabled
-                    const bool freeze_gaussians = !ppisp_controllers_.empty() &&
+                    const bool freeze_gaussians = ppisp_controller_pool_ &&
                                                   params_.optimization.ppisp_use_controller &&
                                                   params_.optimization.ppisp_freeze_gaussians_on_distill &&
                                                   iter >= params_.optimization.ppisp_controller_activation_step;
@@ -1562,6 +1574,7 @@ namespace lfs::training {
             LOG_DEBUG("Starting training iterations");
             while (iter <= params_.optimization.iterations) {
                 lfs::core::CudaMemoryPool::instance().set_iteration(iter);
+
                 if (stop_token.stop_requested() || stop_requested_.load())
                     break;
                 if (callback_busy_.load())
@@ -1721,7 +1734,7 @@ namespace lfs::training {
         // Save checkpoint alongside PLY for training resumption
         auto ckpt_result = lfs::training::save_checkpoint(
             save_path, iter_num, *strategy_, params_, bilateral_grid_.get(), ppisp_.get(),
-            ppisp_controllers_.empty() ? nullptr : &ppisp_controllers_);
+            ppisp_controller_pool_.get());
         if (!ckpt_result) {
             LOG_WARN("Failed to save checkpoint: {}", ckpt_result.error());
         }
@@ -1729,8 +1742,7 @@ namespace lfs::training {
         // Save PPISP companion file alongside PLY for standalone appearance loading
         if (ppisp_) {
             auto ppisp_path = get_ppisp_companion_path(ply_options.output_path);
-            auto ppisp_result = save_ppisp_file(ppisp_path, *ppisp_,
-                                                ppisp_controllers_.empty() ? nullptr : &ppisp_controllers_);
+            auto ppisp_result = save_ppisp_file(ppisp_path, *ppisp_, ppisp_controller_pool_.get());
             if (!ppisp_result) {
                 LOG_WARN("Failed to save PPISP file: {}", ppisp_result.error());
             }
@@ -1747,7 +1759,7 @@ namespace lfs::training {
         return lfs::training::save_checkpoint(
             params_.dataset.output_path, iteration, *strategy_, params_,
             bilateral_grid_.get(), ppisp_.get(),
-            ppisp_controllers_.empty() ? nullptr : &ppisp_controllers_);
+            ppisp_controller_pool_.get());
     }
 
     lfs::core::Tensor Trainer::applyPPISPForViewport(const lfs::core::Tensor& rgb, int camera_uid,
@@ -1775,23 +1787,17 @@ namespace lfs::training {
             if (overrides.isIdentity()) {
                 result = ppisp_->apply(rgb_chw, camera_uid, camera_uid);
             } else {
-                result = ppisp_->apply_with_overrides(rgb_chw, camera_uid, camera_uid,
-                                                      overrides.exposure_offset, overrides.vignette_enabled,
-                                                      overrides.vignette_strength, overrides.wb_temperature,
-                                                      overrides.wb_tint, overrides.gamma_multiplier);
+                result = ppisp_->apply_with_overrides(rgb_chw, camera_uid, camera_uid, toRenderOverrides(overrides));
             }
-        } else if (!ppisp_controllers_.empty() && params_.optimization.ppisp_use_controller) {
+        } else if (ppisp_controller_pool_ && params_.optimization.ppisp_use_controller) {
             // Use per-camera controller for novel views with optional overrides
-            // Select nearest camera's controller (camera_uid % num_controllers for now)
-            const int controller_idx = camera_uid >= 0 ? camera_uid % static_cast<int>(ppisp_controllers_.size()) : 0;
-            auto controller_params = ppisp_controllers_[controller_idx]->predict(rgb_chw.unsqueeze(0), 1.0f);
+            const int controller_idx = camera_uid >= 0 ? camera_uid % ppisp_controller_pool_->num_cameras() : 0;
+            auto controller_params = ppisp_controller_pool_->predict(controller_idx, rgb_chw.unsqueeze(0), 1.0f);
             if (overrides.isIdentity()) {
                 result = ppisp_->apply_with_controller_params(rgb_chw, controller_params, 0);
             } else {
-                result = ppisp_->apply_with_controller_params_and_overrides(
-                    rgb_chw, controller_params, 0, overrides.exposure_offset, overrides.vignette_enabled,
-                    overrides.vignette_strength, overrides.wb_temperature, overrides.wb_tint,
-                    overrides.gamma_multiplier);
+                result = ppisp_->apply_with_controller_params_and_overrides(rgb_chw, controller_params, 0,
+                                                                            toRenderOverrides(overrides));
             }
         } else {
             // No controller available - return uncorrected
@@ -1829,16 +1835,16 @@ namespace lfs::training {
             }
         }
 
-        // Create PPISP controllers before loading if needed
-        if (params_.optimization.ppisp_use_controller && ppisp_controllers_.empty()) {
+        // Create PPISP controller pool before loading if needed
+        if (params_.optimization.ppisp_use_controller && !ppisp_controller_pool_) {
             if (auto init_result = initialize_ppisp_controller(); !init_result) {
-                LOG_WARN("Failed to init PPISP controllers for resume: {}", init_result.error());
+                LOG_WARN("Failed to init PPISP controller pool for resume: {}", init_result.error());
             }
         }
 
         auto result = lfs::training::load_checkpoint(
             checkpoint_path, *strategy_, params_, bilateral_grid_.get(), ppisp_.get(),
-            ppisp_controllers_.empty() ? nullptr : &ppisp_controllers_);
+            ppisp_controller_pool_.get());
         if (!result) {
             return result;
         }

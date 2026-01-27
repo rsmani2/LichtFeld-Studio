@@ -83,7 +83,8 @@ set(TRAINING_NEW_SOURCES
     rasterization/gsplat_rasterizer.cpp
     components/bilateral_grid.cpp
     components/ppisp.cpp
-    components/ppisp_controller.cpp
+    components/ppisp_controller.cu
+    components/ppisp_controller_pool.cu
     components/ppisp_file.cpp
     components/sparsity_optimizer.cpp
     metrics/metrics.cpp

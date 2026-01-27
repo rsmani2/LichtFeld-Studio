@@ -153,4 +153,19 @@ namespace lfs::core::tensor_ops {
             input, bias, output, total_elements, channels, spatial_size);
     }
 
+    __global__ void relu_kernel(const float* __restrict__ input,
+                                float* __restrict__ output, int n) {
+        for (int idx = blockIdx.x * blockDim.x + threadIdx.x; idx < n;
+             idx += blockDim.x * gridDim.x) {
+            output[idx] = fmaxf(input[idx], 0.0f);
+        }
+    }
+
+    void launch_relu(const float* input, float* output, int n, cudaStream_t stream) {
+        if (n == 0)
+            return;
+        const int num_blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+        relu_kernel<<<num_blocks, BLOCK_SIZE, 0, stream>>>(input, output, n);
+    }
+
 } // namespace lfs::core::tensor_ops

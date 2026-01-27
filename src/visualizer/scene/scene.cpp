@@ -1993,17 +1993,17 @@ namespace lfs::vis {
     }
 
     void Scene::setAppearanceModel(std::unique_ptr<lfs::training::PPISP> ppisp,
-                                   std::vector<std::unique_ptr<lfs::training::PPISPController>> controllers) {
+                                   std::unique_ptr<lfs::training::PPISPControllerPool> controller_pool) {
         appearance_ppisp_ = std::move(ppisp);
-        appearance_controllers_ = std::move(controllers);
+        appearance_controller_pool_ = std::move(controller_pool);
         LOG_INFO("Scene: appearance model set (PPISP: {}, Controllers: {})",
                  appearance_ppisp_ ? "yes" : "no",
-                 appearance_controllers_.size());
+                 appearance_controller_pool_ ? appearance_controller_pool_->num_cameras() : 0);
     }
 
     void Scene::clearAppearanceModel() {
         appearance_ppisp_.reset();
-        appearance_controllers_.clear();
+        appearance_controller_pool_.reset();
         LOG_DEBUG("Scene: appearance model cleared");
     }
 

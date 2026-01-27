@@ -387,6 +387,52 @@ namespace lfs::core {
 
     // ========== _out variants that write into pre-allocated output tensors ==========
 
+    void Tensor::conv1x1_bias_out(const Tensor& weight, const Tensor& bias, Tensor& output) const {
+        assert(is_valid() && "conv1x1_bias_out: invalid input tensor");
+        assert(weight.is_valid() && "conv1x1_bias_out: invalid weight tensor");
+        assert(bias.is_valid() && "conv1x1_bias_out: invalid bias tensor");
+        assert(output.is_valid() && "conv1x1_bias_out: invalid output tensor");
+        assert(shape_.rank() == 4 && "conv1x1_bias_out: input must be 4D [N,C,H,W]");
+        assert(weight.shape_.rank() == 2 && "conv1x1_bias_out: weight must be 2D [C_out,C_in]");
+        assert(shape_[1] == weight.shape_[1] && "conv1x1_bias_out: channel mismatch");
+        assert(device_ == Device::CUDA && "conv1x1_bias_out: CUDA only");
+
+        const size_t N = shape_[0];
+        const size_t C_in = shape_[1];
+        const size_t H = shape_[2];
+        const size_t W = shape_[3];
+        const size_t C_out = weight.shape_[0];
+        const size_t S = H * W;
+
+        assert(output.shape()[0] == N && output.shape()[1] == C_out &&
+               output.shape()[2] == H && output.shape()[3] == W &&
+               "conv1x1_bias_out: output shape mismatch");
+        assert(bias.shape_[0] == C_out && "conv1x1_bias_out: bias mismatch");
+
+        const Tensor& input_cont = is_contiguous() ? *this : contiguous();
+        const Tensor& weight_cont = weight.is_contiguous() ? weight : weight.contiguous();
+
+        tensor_ops::launch_sgemm(weight_cont.ptr<float>(), input_cont.ptr<float>(),
+                                 output.ptr<float>(), C_out, S, C_in, stream());
+
+        const int total = static_cast<int>(N * C_out * H * W);
+        tensor_ops::launch_bias_add(output.ptr<float>(), bias.ptr<float>(),
+                                    output.ptr<float>(), total,
+                                    static_cast<int>(C_out), static_cast<int>(S),
+                                    stream());
+    }
+
+    void Tensor::relu_out(Tensor& output) const {
+        assert(is_valid() && "relu_out: invalid input tensor");
+        assert(output.is_valid() && "relu_out: invalid output tensor");
+        assert(numel() == output.numel() && "relu_out: size mismatch");
+        assert(device_ == Device::CUDA && "relu_out: CUDA only");
+
+        const Tensor& input_cont = is_contiguous() ? *this : contiguous();
+        tensor_ops::launch_relu(input_cont.ptr<float>(), output.ptr<float>(),
+                                static_cast<int>(numel()), stream());
+    }
+
     void Tensor::conv1x1_bias_relu_out(const Tensor& weight, const Tensor& bias, Tensor& output) const {
         assert(is_valid() && "conv1x1_bias_relu_out: invalid input tensor");
         assert(weight.is_valid() && "conv1x1_bias_relu_out: invalid weight tensor");

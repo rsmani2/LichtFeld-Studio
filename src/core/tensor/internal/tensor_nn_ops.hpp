@@ -36,4 +36,8 @@ namespace lfs::core::tensor_ops {
                          int total_elements, int channels, int spatial_size,
                          cudaStream_t stream = nullptr);
 
+    // ReLU: output = max(0, input)
+    void launch_relu(const float* input, float* output, int n,
+                     cudaStream_t stream = nullptr);
+
 } // namespace lfs::core::tensor_ops

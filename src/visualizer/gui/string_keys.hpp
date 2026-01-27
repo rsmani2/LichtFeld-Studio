@@ -354,6 +354,7 @@ namespace lichtfeld::Strings {
         inline constexpr const char* BROWSE = "common.browse";
         inline constexpr const char* APPLY = "common.apply";
         inline constexpr const char* RESET = "common.reset";
+        inline constexpr const char* DOUBLE_CLICK_RESET = "common.double_click_reset";
     } // namespace Common
 
     namespace Status {
@@ -443,6 +444,19 @@ namespace lichtfeld::Strings {
         inline constexpr const char* PPISP_WB_TEMP = "main_panel.ppisp_wb_temperature";
         inline constexpr const char* PPISP_WB_TINT = "main_panel.ppisp_wb_tint";
         inline constexpr const char* PPISP_GAMMA = "main_panel.ppisp_gamma";
+        inline constexpr const char* PPISP_COLOR_ADVANCED = "main_panel.ppisp_color_advanced";
+        inline constexpr const char* PPISP_COLOR_RED_X = "main_panel.ppisp_color_red_x";
+        inline constexpr const char* PPISP_COLOR_RED_Y = "main_panel.ppisp_color_red_y";
+        inline constexpr const char* PPISP_COLOR_GREEN_X = "main_panel.ppisp_color_green_x";
+        inline constexpr const char* PPISP_COLOR_GREEN_Y = "main_panel.ppisp_color_green_y";
+        inline constexpr const char* PPISP_COLOR_BLUE_X = "main_panel.ppisp_color_blue_x";
+        inline constexpr const char* PPISP_COLOR_BLUE_Y = "main_panel.ppisp_color_blue_y";
+        inline constexpr const char* PPISP_CRF_ADVANCED = "main_panel.ppisp_crf_advanced";
+        inline constexpr const char* PPISP_GAMMA_RED = "main_panel.ppisp_gamma_red";
+        inline constexpr const char* PPISP_GAMMA_GREEN = "main_panel.ppisp_gamma_green";
+        inline constexpr const char* PPISP_GAMMA_BLUE = "main_panel.ppisp_gamma_blue";
+        inline constexpr const char* PPISP_CRF_TOE = "main_panel.ppisp_crf_toe";
+        inline constexpr const char* PPISP_CRF_SHOULDER = "main_panel.ppisp_crf_shoulder";
         inline constexpr const char* RENDER_SCALE = "main_panel.render_scale";
         inline constexpr const char* SELECTION_COLORS = "main_panel.selection_colors";
         inline constexpr const char* COMMITTED = "main_panel.committed";
@@ -575,6 +589,10 @@ namespace lichtfeld::Strings {
         inline constexpr const char* PPISP_WB_TEMP = "tooltip.ppisp_wb_temperature";
         inline constexpr const char* PPISP_WB_TINT = "tooltip.ppisp_wb_tint";
         inline constexpr const char* PPISP_GAMMA = "tooltip.ppisp_gamma";
+        inline constexpr const char* PPISP_COLOR_RGB = "tooltip.ppisp_color_rgb";
+        inline constexpr const char* PPISP_GAMMA_CHANNEL = "tooltip.ppisp_gamma_channel";
+        inline constexpr const char* PPISP_CRF_TOE = "tooltip.ppisp_crf_toe";
+        inline constexpr const char* PPISP_CRF_SHOULDER = "tooltip.ppisp_crf_shoulder";
         inline constexpr const char* RENDER_SCALE = "tooltip.render_scale";
         inline constexpr const char* POINT_CLOUD_FORCED = "tooltip.point_cloud_forced";
         inline constexpr const char* DESATURATE_UNSELECTED = "tooltip.desaturate_unselected";

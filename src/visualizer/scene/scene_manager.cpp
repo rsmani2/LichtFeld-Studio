@@ -340,26 +340,31 @@ namespace lfs::vis {
                 static_cast<int>(header.num_frames),
                 1);
 
-            // Create per-camera controllers if present in file
-            std::vector<std::unique_ptr<lfs::training::PPISPController>> controllers;
+            // Create controller pool if present in file
+            std::unique_ptr<lfs::training::PPISPControllerPool> controller_pool;
             if (lfs::training::has_flag(header.flags, lfs::training::PPISPFileFlags::HAS_CONTROLLER)) {
-                // One controller per camera, matching Python implementation
-                controllers.reserve(header.num_cameras);
-                for (uint32_t i = 0; i < header.num_cameras; ++i) {
-                    controllers.push_back(std::make_unique<lfs::training::PPISPController>(1));
-                }
+                controller_pool = std::make_unique<lfs::training::PPISPControllerPool>(
+                    static_cast<int>(header.num_cameras), 1);
             }
 
             // Load the actual data
-            auto result = lfs::training::load_ppisp_file(ppisp_path, *ppisp,
-                                                         controllers.empty() ? nullptr : &controllers);
+            auto result = lfs::training::load_ppisp_file(ppisp_path, *ppisp, controller_pool.get());
             if (!result) {
                 LOG_ERROR("Failed to load PPISP file: {}", result.error());
                 return;
             }
 
+            // Allocate CNN buffers for controller if present
+            if (controller_pool) {
+                // Use a reasonable default size for viewport rendering
+                // Buffers will be reallocated if larger images are needed
+                constexpr size_t DEFAULT_MAX_H = 1080;
+                constexpr size_t DEFAULT_MAX_W = 1920;
+                controller_pool->allocate_buffers(DEFAULT_MAX_H, DEFAULT_MAX_W);
+            }
+
             // Store in scene for rendering
-            scene_.setAppearanceModel(std::move(ppisp), std::move(controllers));
+            scene_.setAppearanceModel(std::move(ppisp), std::move(controller_pool));
 
         } catch (const std::exception& e) {
             LOG_ERROR("Failed to load PPISP companion: {}", e.what());

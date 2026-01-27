@@ -7,7 +7,7 @@
 #include "checkpoint.hpp"
 #include "components/bilateral_grid.hpp"
 #include "components/ppisp.hpp"
-#include "components/ppisp_controller.hpp"
+#include "components/ppisp_controller_pool.hpp"
 #include "components/sparsity_optimizer.hpp"
 #include "core/camera.hpp"
 #include "core/parameters.hpp"
@@ -35,17 +35,37 @@ namespace lfs::training {
     class AdamOptimizer;
 
     struct PPISPViewportOverrides {
+        // Exposure
         float exposure_offset = 0.0f;
+
+        // Vignetting
         bool vignette_enabled = true;
         float vignette_strength = 1.0f;
+
+        // Color correction
         float wb_temperature = 0.0f;
         float wb_tint = 0.0f;
+        float color_red_x = 0.0f;
+        float color_red_y = 0.0f;
+        float color_green_x = 0.0f;
+        float color_green_y = 0.0f;
+        float color_blue_x = 0.0f;
+        float color_blue_y = 0.0f;
+
+        // CRF
         float gamma_multiplier = 1.0f;
+        float gamma_red = 0.0f;
+        float gamma_green = 0.0f;
+        float gamma_blue = 0.0f;
+        float crf_toe = 0.0f;
+        float crf_shoulder = 0.0f;
 
         [[nodiscard]] bool isIdentity() const {
-            return exposure_offset == 0.0f && vignette_enabled &&
-                   vignette_strength == 1.0f && wb_temperature == 0.0f &&
-                   wb_tint == 0.0f && gamma_multiplier == 1.0f;
+            return exposure_offset == 0.0f && vignette_enabled && vignette_strength == 1.0f &&
+                   wb_temperature == 0.0f && wb_tint == 0.0f && color_red_x == 0.0f && color_red_y == 0.0f &&
+                   color_green_x == 0.0f && color_green_y == 0.0f && color_blue_x == 0.0f && color_blue_y == 0.0f &&
+                   gamma_multiplier == 1.0f && gamma_red == 0.0f && gamma_green == 0.0f && gamma_blue == 0.0f &&
+                   crf_toe == 0.0f && crf_shoulder == 0.0f;
         }
     };
 
@@ -124,14 +144,11 @@ namespace lfs::training {
         bool hasPPISP() const { return ppisp_ != nullptr && params_.optimization.use_ppisp; }
 
         /// Check if PPISP controller is enabled and ready for novel views
-        bool hasPPISPController() const { return !ppisp_controllers_.empty() && params_.optimization.ppisp_use_controller; }
+        bool hasPPISPController() const { return ppisp_controller_pool_ != nullptr && params_.optimization.ppisp_use_controller; }
 
-        /// Get controller for a specific camera (nullptr if out of range)
-        PPISPController* getPPISPController(int camera_idx) const {
-            if (camera_idx >= 0 && camera_idx < static_cast<int>(ppisp_controllers_.size())) {
-                return ppisp_controllers_[camera_idx].get();
-            }
-            return ppisp_controllers_.empty() ? nullptr : ppisp_controllers_[0].get();
+        /// Get the controller pool (nullptr if not enabled)
+        PPISPControllerPool* getPPISPControllerPool() const {
+            return ppisp_controller_pool_.get();
         }
 
         std::expected<void, std::string> save_checkpoint(int iteration);
@@ -262,9 +279,9 @@ namespace lfs::training {
         // PPISP for physically-plausible ISP appearance modeling (optional)
         std::unique_ptr<PPISP> ppisp_;
 
-        // PPISP controllers for novel view synthesis (Phase 2 distillation)
-        // One controller per camera, matching Python implementation
-        std::vector<std::unique_ptr<PPISPController>> ppisp_controllers_;
+        // PPISP controller pool for novel view synthesis (Phase 2 distillation)
+        // Shared CNN and per-camera FC weights for memory efficiency
+        std::unique_ptr<PPISPControllerPool> ppisp_controller_pool_;
 
         std::unique_ptr<ISparsityOptimizer> sparsity_optimizer_;
 

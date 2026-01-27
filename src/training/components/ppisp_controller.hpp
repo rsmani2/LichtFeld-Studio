@@ -25,9 +25,14 @@ namespace lfs::training {
 
         PPISPController(int total_iterations, Config config = {});
 
+        // Pre-allocate shared buffers for given max image size (call once, used by all controllers)
+        static void preallocate_shared_buffers(size_t max_H, size_t max_W);
+
         lfs::core::Tensor predict(const lfs::core::Tensor& rendered_rgb, float exposure_prior = 1.0f);
         void backward(const lfs::core::Tensor& grad_output);
         lfs::core::Tensor distillation_loss(const lfs::core::Tensor& pred, const lfs::core::Tensor& target);
+        void compute_mse_gradient(const lfs::core::Tensor& pred, const lfs::core::Tensor& target);
+        const lfs::core::Tensor& get_mse_gradient() const { return bwd_mse_grad_; }
         void optimizer_step();
         void zero_grad();
         void scheduler_step();
@@ -54,40 +59,50 @@ namespace lfs::training {
         void adam_update(lfs::core::Tensor& param, lfs::core::Tensor& exp_avg,
                          lfs::core::Tensor& exp_avg_sq, const lfs::core::Tensor& grad);
 
-        void ensure_buffers_allocated(size_t H, size_t W);
-
         // Conv layers (fixed random features, not trained)
         lfs::core::Tensor conv1_w_, conv1_b_;
         lfs::core::Tensor conv2_w_, conv2_b_;
         lfs::core::Tensor conv3_w_, conv3_b_;
 
-        // FC layers (trained)
+        // FC layers (trained): fc1 (1601→128), fc2 (128→128), fc3 (128→128), fc4 (128→9)
         lfs::core::Tensor fc1_w_, fc1_b_;
         lfs::core::Tensor fc2_w_, fc2_b_;
         lfs::core::Tensor fc3_w_, fc3_b_;
+        lfs::core::Tensor fc4_w_, fc4_b_;
 
         // FC gradients
         lfs::core::Tensor fc1_w_grad_, fc1_b_grad_;
         lfs::core::Tensor fc2_w_grad_, fc2_b_grad_;
         lfs::core::Tensor fc3_w_grad_, fc3_b_grad_;
+        lfs::core::Tensor fc4_w_grad_, fc4_b_grad_;
 
         // FC Adam state
         lfs::core::Tensor fc1_w_m_, fc1_w_v_, fc1_b_m_, fc1_b_v_;
         lfs::core::Tensor fc2_w_m_, fc2_w_v_, fc2_b_m_, fc2_b_v_;
         lfs::core::Tensor fc3_w_m_, fc3_w_v_, fc3_b_m_, fc3_b_v_;
+        lfs::core::Tensor fc4_w_m_, fc4_w_v_, fc4_b_m_, fc4_b_v_;
 
-        // Pre-allocated buffers
-        size_t buf_h_ = 0, buf_w_ = 0;
-        lfs::core::Tensor buf_conv1_;
-        lfs::core::Tensor buf_pool_;
-        lfs::core::Tensor buf_conv2_;
-        lfs::core::Tensor buf_conv3_;
-        lfs::core::Tensor buf_pool2_;
+        // Per-instance buffers (needed for backward pass)
         lfs::core::Tensor buf_fc1_;
         lfs::core::Tensor buf_fc2_;
+        lfs::core::Tensor buf_fc3_;
         lfs::core::Tensor buf_output_;
         lfs::core::Tensor fc_input_buffer_;
         lfs::core::Tensor cached_flat_;
+
+        // Shared forward buffers (static, only one controller active at a time)
+        static size_t shared_buf_h_, shared_buf_w_;
+        static lfs::core::Tensor shared_buf_conv1_;
+        static lfs::core::Tensor shared_buf_pool_;
+        static lfs::core::Tensor shared_buf_conv2_;
+        static lfs::core::Tensor shared_buf_conv3_;
+        static lfs::core::Tensor shared_buf_pool2_;
+
+        // Pre-allocated backward buffers
+        lfs::core::Tensor bwd_grad_fc3_out_;
+        lfs::core::Tensor bwd_grad_fc2_out_;
+        lfs::core::Tensor bwd_grad_fc1_out_;
+        lfs::core::Tensor bwd_mse_grad_;
 
         Config config_;
         int64_t step_ = 0;

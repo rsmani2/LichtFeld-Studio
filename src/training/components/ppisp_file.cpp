@@ -5,7 +5,7 @@
 #include "core/logger.hpp"
 #include "core/path_utils.hpp"
 #include "ppisp.hpp"
-#include "ppisp_controller.hpp"
+#include "ppisp_controller_pool.hpp"
 #include <fstream>
 
 namespace lfs::training {
@@ -13,7 +13,7 @@ namespace lfs::training {
     std::expected<void, std::string> save_ppisp_file(
         const std::filesystem::path& path,
         const PPISP& ppisp,
-        const std::vector<std::unique_ptr<PPISPController>>* controllers) {
+        const PPISPControllerPool* controller_pool) {
 
         try {
             std::ofstream file;
@@ -25,7 +25,7 @@ namespace lfs::training {
             header.num_cameras = static_cast<uint32_t>(ppisp.num_cameras());
             header.num_frames = static_cast<uint32_t>(ppisp.num_frames());
             header.flags = 0;
-            if (controllers && !controllers->empty()) {
+            if (controller_pool) {
                 header.flags |= static_cast<uint32_t>(PPISPFileFlags::HAS_CONTROLLER);
             }
 
@@ -33,21 +33,17 @@ namespace lfs::training {
 
             ppisp.serialize_inference(file);
 
-            // Save per-camera controllers
-            if (controllers && !controllers->empty()) {
-                const uint32_t num_controllers = static_cast<uint32_t>(controllers->size());
-                file.write(reinterpret_cast<const char*>(&num_controllers), sizeof(num_controllers));
-                for (const auto& controller : *controllers) {
-                    controller->serialize_inference(file);
-                }
+            // Save controller pool
+            if (controller_pool) {
+                controller_pool->serialize_inference(file);
             }
 
             LOG_INFO("PPISP file saved: {} ({} cameras, {} frames{})",
                      lfs::core::path_to_utf8(path),
                      header.num_cameras,
                      header.num_frames,
-                     (controllers && !controllers->empty())
-                         ? ", +controllers(" + std::to_string(controllers->size()) + ")"
+                     controller_pool
+                         ? ", +controller_pool(" + std::to_string(controller_pool->num_cameras()) + ")"
                          : "");
 
             return {};
@@ -60,7 +56,7 @@ namespace lfs::training {
     std::expected<void, std::string> load_ppisp_file(
         const std::filesystem::path& path,
         PPISP& ppisp,
-        std::vector<std::unique_ptr<PPISPController>>* controllers) {
+        PPISPControllerPool* controller_pool) {
 
         try {
             std::ifstream file;
@@ -92,38 +88,31 @@ namespace lfs::training {
             ppisp.deserialize_inference(file);
 
             if (has_flag(header.flags, PPISPFileFlags::HAS_CONTROLLER)) {
-                uint32_t num_controllers = 0;
-                file.read(reinterpret_cast<char*>(&num_controllers), sizeof(num_controllers));
-
-                if (controllers && !controllers->empty()) {
-                    if (num_controllers != controllers->size()) {
-                        LOG_WARN("Controller count mismatch: file has {}, provided {} - loading min",
-                                 num_controllers, controllers->size());
-                    }
-                    const size_t load_count = std::min(static_cast<size_t>(num_controllers), controllers->size());
-                    for (size_t i = 0; i < load_count; ++i) {
-                        (*controllers)[i]->deserialize_inference(file);
-                    }
-                    // Skip remaining controllers if file has more
-                    for (size_t i = load_count; i < num_controllers; ++i) {
-                        PPISPController temp(1);
-                        temp.deserialize_inference(file);
-                    }
-                    LOG_INFO("PPISP file loaded: {} ({} cameras, {} frames, +controllers({}))",
-                             lfs::core::path_to_utf8(path), header.num_cameras, header.num_frames, load_count);
+                if (controller_pool) {
+                    controller_pool->deserialize_inference(file);
+                    LOG_INFO("PPISP file loaded: {} ({} cameras, {} frames, +controller_pool({}))",
+                             lfs::core::path_to_utf8(path), header.num_cameras, header.num_frames,
+                             controller_pool->num_cameras());
                 } else {
-                    LOG_WARN("PPISP file has {} controllers but none provided - skipping", num_controllers);
-                    // Skip all controller data
-                    for (size_t i = 0; i < num_controllers; ++i) {
-                        PPISPController temp(1);
-                        temp.deserialize_inference(file);
-                    }
+                    LOG_WARN("PPISP file has controller pool but none provided - skipping");
+                    // Skip controller pool data by reading into a temporary
+                    constexpr uint32_t INFERENCE_MAGIC = 0x4C464349;
+                    uint32_t magic, version;
+                    int num_cameras;
+                    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+                    file.read(reinterpret_cast<char*>(&version), sizeof(version));
+                    file.read(reinterpret_cast<char*>(&num_cameras), sizeof(num_cameras));
+                    // Create temporary pool to skip data
+                    PPISPControllerPool temp(num_cameras, 1);
+                    file.seekg(-static_cast<std::streamoff>(sizeof(magic) + sizeof(version) + sizeof(num_cameras)),
+                               std::ios::cur);
+                    temp.deserialize_inference(file);
                     LOG_INFO("PPISP file loaded: {} ({} cameras, {} frames)",
                              lfs::core::path_to_utf8(path), header.num_cameras, header.num_frames);
                 }
             } else {
-                if (controllers && !controllers->empty()) {
-                    LOG_WARN("Controllers requested but not present in PPISP file");
+                if (controller_pool) {
+                    LOG_WARN("Controller pool requested but not present in PPISP file");
                 }
                 LOG_INFO("PPISP file loaded: {} ({} cameras, {} frames)",
                          lfs::core::path_to_utf8(path), header.num_cameras, header.num_frames);

@@ -68,7 +68,7 @@ namespace lfs::training {
     class IStrategy;
     class BilateralGrid;
     class PPISP;
-    class PPISPController;
+    class PPISPControllerPool;
 
     constexpr uint32_t CHECKPOINT_MAGIC = 0x4C464B50; // "LFKP"
     constexpr uint32_t CHECKPOINT_VERSION = 1;
@@ -107,7 +107,7 @@ namespace lfs::training {
         const lfs::core::param::TrainingParameters& params,
         const BilateralGrid* bilateral_grid = nullptr,
         const PPISP* ppisp = nullptr,
-        const std::vector<std::unique_ptr<PPISPController>>* ppisp_controllers = nullptr);
+        const PPISPControllerPool* ppisp_controller_pool = nullptr);
 
     /// Load checkpoint header only
     std::expected<CheckpointHeader, std::string> load_checkpoint_header(
@@ -120,7 +120,7 @@ namespace lfs::training {
         lfs::core::param::TrainingParameters& params,
         BilateralGrid* bilateral_grid = nullptr,
         PPISP* ppisp = nullptr,
-        std::vector<std::unique_ptr<PPISPController>>* ppisp_controllers = nullptr);
+        PPISPControllerPool* ppisp_controller_pool = nullptr);
 
     /// Load only SplatData from checkpoint
     std::expected<lfs::core::SplatData, std::string> load_checkpoint_splat_data(

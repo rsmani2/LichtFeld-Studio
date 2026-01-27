@@ -12,8 +12,10 @@
 #include "theme/theme.hpp"
 #include "training/training_manager.hpp"
 #include "visualizer_impl.hpp"
+#include <cmath>
 #include <cstdarg>
 #include <glad/glad.h>
+#include <implot.h>
 #include <imgui.h>
 
 namespace lfs::vis::gui::widgets {
@@ -496,6 +498,173 @@ namespace lfs::vis::gui::widgets {
 
         ImGui::PopID();
         return changed;
+    }
+
+    bool ChromaticityPicker2D(const char* label, float* x, float* y, const float range,
+                              const ImVec4& color_tint) {
+        constexpr float PICKER_SIZE_BASE = 80.0f;
+        constexpr float POINT_RADIUS_BASE = 5.0f;
+        constexpr float POINT_OUTLINE_WIDTH = 1.5f;
+        constexpr float COLOR_BLEND = 0.8f;
+        constexpr float COLOR_OFFSET = 0.2f;
+
+        const auto& t = theme();
+        const float dpi = getDpiScale();
+        const float size = PICKER_SIZE_BASE * dpi;
+
+        ImGui::PushID(label);
+
+        bool changed = false;
+        const ImVec2 cursor_pos = ImGui::GetCursorScreenPos();
+        auto* const draw_list = ImGui::GetWindowDrawList();
+
+        const ImU32 bg_color = t.isLightTheme() ? IM_COL32(240, 240, 240, 255) : IM_COL32(40, 40, 40, 255);
+        const ImU32 grid_color = t.isLightTheme() ? IM_COL32(200, 200, 200, 255) : IM_COL32(70, 70, 70, 255);
+        const ImU32 border_color = ImGui::ColorConvertFloat4ToU32(t.palette.border);
+
+        draw_list->AddRectFilled(cursor_pos, ImVec2(cursor_pos.x + size, cursor_pos.y + size), bg_color);
+
+        const float center = size * 0.5f;
+        draw_list->AddLine(ImVec2(cursor_pos.x + center, cursor_pos.y),
+                           ImVec2(cursor_pos.x + center, cursor_pos.y + size), grid_color);
+        draw_list->AddLine(ImVec2(cursor_pos.x, cursor_pos.y + center),
+                           ImVec2(cursor_pos.x + size, cursor_pos.y + center), grid_color);
+
+        draw_list->AddRect(cursor_pos, ImVec2(cursor_pos.x + size, cursor_pos.y + size), border_color);
+
+        ImGui::InvisibleButton("##picker", ImVec2(size, size));
+        const bool is_active = ImGui::IsItemActive();
+        const bool is_hovered = ImGui::IsItemHovered();
+
+        if (is_active && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+            const ImVec2 mouse = ImGui::GetMousePos();
+            *x = ((mouse.x - cursor_pos.x) / size - 0.5f) * 2.0f * range;
+            *y = -((mouse.y - cursor_pos.y) / size - 0.5f) * 2.0f * range;
+            *x = std::clamp(*x, -range, range);
+            *y = std::clamp(*y, -range, range);
+            changed = true;
+        }
+
+        if (is_hovered && ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left)) {
+            *x = 0.0f;
+            *y = 0.0f;
+            changed = true;
+        }
+
+        const float px = cursor_pos.x + center + (*x / range) * center;
+        const float py = cursor_pos.y + center - (*y / range) * center;
+        const float point_radius = POINT_RADIUS_BASE * dpi;
+
+        const ImU32 point_outline = t.isLightTheme() ? IM_COL32(60, 60, 60, 255) : IM_COL32(255, 255, 255, 255);
+        const ImU32 point_fill = ImGui::ColorConvertFloat4ToU32(ImVec4(
+            color_tint.x * COLOR_BLEND + COLOR_OFFSET, color_tint.y * COLOR_BLEND + COLOR_OFFSET,
+            color_tint.z * COLOR_BLEND + COLOR_OFFSET, 1.0f));
+
+        draw_list->AddCircleFilled(ImVec2(px, py), point_radius, point_fill);
+        draw_list->AddCircle(ImVec2(px, py), point_radius, point_outline, 0, POINT_OUTLINE_WIDTH);
+
+        ImGui::SameLine();
+        ImGui::BeginGroup();
+        ImGui::TextColored(ImVec4(color_tint.x, color_tint.y, color_tint.z, 1.0f), "%s", label);
+        ImGui::Text("X: %.3f", *x);
+        ImGui::Text("Y: %.3f", *y);
+        if (is_hovered) {
+            ImGui::TextDisabled("(%s)", LOC(lichtfeld::Strings::Common::DOUBLE_CLICK_RESET));
+        }
+        ImGui::EndGroup();
+
+        ImGui::PopID();
+        return changed;
+    }
+
+    void CRFCurvePreview(const char* label, const float gamma, const float toe, const float shoulder,
+                         const float gamma_r, const float gamma_g, const float gamma_b) {
+        constexpr float PLOT_WIDTH_BASE = 200.0f;
+        constexpr float PLOT_HEIGHT_BASE = 120.0f;
+        constexpr int NUM_POINTS = 64;
+        constexpr float TOE_FACTOR = 0.5f;
+        constexpr float SHOULDER_FACTOR = 0.3f;
+        constexpr float MIDPOINT = 0.5f;
+
+        const auto& t = theme();
+        const float dpi = getDpiScale();
+        const ImVec2 plot_size(PLOT_WIDTH_BASE * dpi, PLOT_HEIGHT_BASE * dpi);
+
+        float xs[NUM_POINTS];
+        float ys_combined[NUM_POINTS];
+        float ys_r[NUM_POINTS];
+        float ys_g[NUM_POINTS];
+        float ys_b[NUM_POINTS];
+
+        const auto apply_crf = [](const float x, const float g, const float t_param, const float s_param) {
+            float y = std::pow(x, 1.0f / g);
+            if (t_param != 0.0f && x < MIDPOINT) {
+                const float t_factor = 1.0f + t_param * TOE_FACTOR;
+                y = y * t_factor - (t_factor - 1.0f) * x * 2.0f * (MIDPOINT - x);
+            }
+            if (s_param != 0.0f && x > MIDPOINT) {
+                const float s_factor = 1.0f - s_param * SHOULDER_FACTOR;
+                const float blend = (x - MIDPOINT) * 2.0f;
+                y = y * (1.0f - blend * (1.0f - s_factor));
+            }
+            return std::clamp(y, 0.0f, 1.0f);
+        };
+
+        const bool has_per_channel = (gamma_r != 0.0f || gamma_g != 0.0f || gamma_b != 0.0f);
+
+        for (int i = 0; i < NUM_POINTS; ++i) {
+            xs[i] = static_cast<float>(i) / (NUM_POINTS - 1);
+            ys_combined[i] = apply_crf(xs[i], gamma, toe, shoulder);
+            if (has_per_channel) {
+                ys_r[i] = apply_crf(xs[i], gamma * (1.0f + gamma_r), toe, shoulder);
+                ys_g[i] = apply_crf(xs[i], gamma * (1.0f + gamma_g), toe, shoulder);
+                ys_b[i] = apply_crf(xs[i], gamma * (1.0f + gamma_b), toe, shoulder);
+            }
+        }
+
+        ImPlot::PushStyleColor(ImPlotCol_FrameBg,
+                               t.isLightTheme() ? ImVec4(0.95f, 0.95f, 0.95f, 1.0f) : ImVec4(0.15f, 0.15f, 0.15f, 1.0f));
+        ImPlot::PushStyleColor(ImPlotCol_PlotBg,
+                               t.isLightTheme() ? ImVec4(1.0f, 1.0f, 1.0f, 1.0f) : ImVec4(0.1f, 0.1f, 0.1f, 1.0f));
+        ImPlot::PushStyleColor(ImPlotCol_PlotBorder, t.palette.border);
+        ImPlot::PushStyleColor(ImPlotCol_Line, t.palette.text);
+
+        constexpr auto PLOT_FLAGS = ImPlotFlags_NoTitle | ImPlotFlags_NoLegend | ImPlotFlags_NoMenus |
+                                    ImPlotFlags_NoBoxSelect | ImPlotFlags_NoMouseText;
+        constexpr auto AXIS_FLAGS = ImPlotAxisFlags_NoTickLabels | ImPlotAxisFlags_NoGridLines | ImPlotAxisFlags_Lock;
+
+        if (ImPlot::BeginPlot(label, plot_size, PLOT_FLAGS)) {
+            ImPlot::SetupAxes(nullptr, nullptr, AXIS_FLAGS, AXIS_FLAGS);
+            ImPlot::SetupAxesLimits(0.0, 1.0, 0.0, 1.0, ImPlotCond_Always);
+
+            const float diag[] = {0.0f, 1.0f};
+            ImPlot::PushStyleColor(ImPlotCol_Line,
+                                   t.isLightTheme() ? ImVec4(0.8f, 0.8f, 0.8f, 1.0f) : ImVec4(0.3f, 0.3f, 0.3f, 1.0f));
+            ImPlot::PlotLine("##diag", diag, diag, 2);
+            ImPlot::PopStyleColor();
+
+            if (has_per_channel) {
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.9f, 0.3f, 0.3f, 0.8f));
+                ImPlot::PlotLine("##r", xs, ys_r, NUM_POINTS);
+                ImPlot::PopStyleColor();
+
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.3f, 0.8f, 0.3f, 0.8f));
+                ImPlot::PlotLine("##g", xs, ys_g, NUM_POINTS);
+                ImPlot::PopStyleColor();
+
+                ImPlot::PushStyleColor(ImPlotCol_Line, ImVec4(0.3f, 0.5f, 0.9f, 0.8f));
+                ImPlot::PlotLine("##b", xs, ys_b, NUM_POINTS);
+                ImPlot::PopStyleColor();
+            } else {
+                ImPlot::PushStyleColor(ImPlotCol_Line, t.palette.primary);
+                ImPlot::PlotLine("##curve", xs, ys_combined, NUM_POINTS);
+                ImPlot::PopStyleColor();
+            }
+
+            ImPlot::EndPlot();
+        }
+
+        ImPlot::PopStyleColor(4);
     }
 
 } // namespace lfs::vis::gui::widgets

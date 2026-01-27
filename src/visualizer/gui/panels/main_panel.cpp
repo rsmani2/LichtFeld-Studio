@@ -421,8 +421,8 @@ namespace lfs::vis::gui::panels {
             auto& ov = settings.ppisp_overrides;
 
             // Exposure
-            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_EXPOSURE), &ov.exposure_offset,
-                                         -3.0f, 3.0f, 0.0f, LOC(Tooltip::PPISP_EXPOSURE))) {
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_EXPOSURE), &ov.exposure_offset, -3.0f, 3.0f, 0.0f,
+                                         LOC(Tooltip::PPISP_EXPOSURE))) {
                 settings_changed = true;
                 render_manager->updateSettings(settings);
             }
@@ -444,24 +444,91 @@ namespace lfs::vis::gui::panels {
             }
 
             // White Balance Temperature
-            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_WB_TEMP), &ov.wb_temperature,
-                                         -1.0f, 1.0f, 0.0f, LOC(Tooltip::PPISP_WB_TEMP))) {
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_WB_TEMP), &ov.wb_temperature, -1.0f, 1.0f, 0.0f,
+                                         LOC(Tooltip::PPISP_WB_TEMP))) {
                 settings_changed = true;
                 render_manager->updateSettings(settings);
             }
 
             // White Balance Tint
-            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_WB_TINT), &ov.wb_tint,
-                                         -1.0f, 1.0f, 0.0f, LOC(Tooltip::PPISP_WB_TINT))) {
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_WB_TINT), &ov.wb_tint, -1.0f, 1.0f, 0.0f,
+                                         LOC(Tooltip::PPISP_WB_TINT))) {
                 settings_changed = true;
                 render_manager->updateSettings(settings);
             }
 
             // Gamma
-            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA), &ov.gamma_multiplier,
-                                         0.5f, 2.5f, 1.0f, LOC(Tooltip::PPISP_GAMMA))) {
+            if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA), &ov.gamma_multiplier, 0.5f, 2.5f, 1.0f,
+                                         LOC(Tooltip::PPISP_GAMMA))) {
                 settings_changed = true;
                 render_manager->updateSettings(settings);
+            }
+
+            // Advanced Color Correction (collapsible)
+            if (ImGui::TreeNode(LOC(MainPanel::PPISP_COLOR_ADVANCED))) {
+                // Red chromaticity picker
+                if (widgets::ChromaticityPicker2D(LOC(MainPanel::PPISP_COLOR_RED_X),
+                                                  &ov.color_red_x, &ov.color_red_y, 0.5f,
+                                                  ImVec4(1.0f, 0.3f, 0.3f, 1.0f))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+
+                // Green chromaticity picker
+                if (widgets::ChromaticityPicker2D(LOC(MainPanel::PPISP_COLOR_GREEN_X),
+                                                  &ov.color_green_x, &ov.color_green_y, 0.5f,
+                                                  ImVec4(0.3f, 0.9f, 0.3f, 1.0f))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+
+                // Blue chromaticity picker
+                if (widgets::ChromaticityPicker2D(LOC(MainPanel::PPISP_COLOR_BLUE_X),
+                                                  &ov.color_blue_x, &ov.color_blue_y, 0.5f,
+                                                  ImVec4(0.3f, 0.5f, 1.0f, 1.0f))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+                ImGui::TreePop();
+            }
+
+            // Advanced CRF (collapsible)
+            if (ImGui::TreeNode(LOC(MainPanel::PPISP_CRF_ADVANCED))) {
+                // Curve preview
+                widgets::CRFCurvePreview("##crf_curve", ov.gamma_multiplier, ov.crf_toe, ov.crf_shoulder,
+                                         ov.gamma_red, ov.gamma_green, ov.gamma_blue);
+
+                // Per-channel gamma
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA_RED), &ov.gamma_red, -0.5f, 0.5f, 0.0f,
+                                             LOC(Tooltip::PPISP_GAMMA_CHANNEL))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA_GREEN), &ov.gamma_green, -0.5f, 0.5f, 0.0f,
+                                             LOC(Tooltip::PPISP_GAMMA_CHANNEL))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_GAMMA_BLUE), &ov.gamma_blue, -0.5f, 0.5f, 0.0f,
+                                             LOC(Tooltip::PPISP_GAMMA_CHANNEL))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+
+                // Toe (shadows)
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_CRF_TOE), &ov.crf_toe, -1.0f, 1.0f, 0.0f,
+                                             LOC(Tooltip::PPISP_CRF_TOE))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+
+                // Shoulder (highlights)
+                if (widgets::SliderWithReset(LOC(MainPanel::PPISP_CRF_SHOULDER), &ov.crf_shoulder, -1.0f, 1.0f, 0.0f,
+                                             LOC(Tooltip::PPISP_CRF_SHOULDER))) {
+                    settings_changed = true;
+                    render_manager->updateSettings(settings);
+                }
+                ImGui::TreePop();
             }
 
             ImGui::Unindent();

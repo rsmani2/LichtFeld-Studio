@@ -31,6 +31,28 @@ namespace lfs::vis {
     namespace {
         constexpr int GPU_ALIGNMENT = 16; // 16-pixel alignment for GPU texture efficiency
 
+        lfs::training::PPISPRenderOverrides toRenderOverrides(const PPISPOverrides& ov) {
+            lfs::training::PPISPRenderOverrides r;
+            r.exposure_offset = ov.exposure_offset;
+            r.vignette_enabled = ov.vignette_enabled;
+            r.vignette_strength = ov.vignette_strength;
+            r.wb_temperature = ov.wb_temperature;
+            r.wb_tint = ov.wb_tint;
+            r.color_red_x = ov.color_red_x;
+            r.color_red_y = ov.color_red_y;
+            r.color_green_x = ov.color_green_x;
+            r.color_green_y = ov.color_green_y;
+            r.color_blue_x = ov.color_blue_x;
+            r.color_blue_y = ov.color_blue_y;
+            r.gamma_multiplier = ov.gamma_multiplier;
+            r.gamma_red = ov.gamma_red;
+            r.gamma_green = ov.gamma_green;
+            r.gamma_blue = ov.gamma_blue;
+            r.crf_toe = ov.crf_toe;
+            r.crf_shoulder = ov.crf_shoulder;
+            return r;
+        }
+
         // Apply standalone appearance model (for viewing without training context)
         lfs::core::Tensor applyStandaloneAppearance(
             const lfs::core::Tensor& rgb,
@@ -61,24 +83,19 @@ namespace lfs::vis {
                 if (overrides.isIdentity()) {
                     result = ppisp->apply(input, camera_uid, camera_uid);
                 } else {
-                    result = ppisp->apply_with_overrides(input, camera_uid, camera_uid,
-                                                         overrides.exposure_offset, overrides.vignette_enabled,
-                                                         overrides.vignette_strength, overrides.wb_temperature,
-                                                         overrides.wb_tint, overrides.gamma_multiplier);
+                    result = ppisp->apply_with_overrides(input, camera_uid, camera_uid, toRenderOverrides(overrides));
                 }
             } else if (scene.hasAppearanceController()) {
                 // Novel view: use per-camera controller prediction with optional overrides
-                // Select controller based on camera_uid (modulo number of controllers)
-                auto* controller = scene.getAppearanceController(camera_uid >= 0 ? camera_uid : 0);
+                auto* pool = scene.getAppearanceControllerPool();
+                const int controller_idx = camera_uid >= 0 ? camera_uid % pool->num_cameras() : 0;
                 auto input_batch = input.unsqueeze(0);
-                auto params = controller->predict(input_batch, 1.0f);
+                auto params = pool->predict(controller_idx, input_batch, 1.0f);
                 if (overrides.isIdentity()) {
                     result = ppisp->apply_with_controller_params(input, params, 0);
                 } else {
-                    result = ppisp->apply_with_controller_params_and_overrides(
-                        input, params, 0, overrides.exposure_offset, overrides.vignette_enabled,
-                        overrides.vignette_strength, overrides.wb_temperature, overrides.wb_tint,
-                        overrides.gamma_multiplier);
+                    result = ppisp->apply_with_controller_params_and_overrides(input, params, 0,
+                                                                               toRenderOverrides(overrides));
                 }
             } else {
                 // No controller - return uncorrected (same as trainer)

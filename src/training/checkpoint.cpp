@@ -4,7 +4,7 @@
 #include "checkpoint.hpp"
 #include "components/bilateral_grid.hpp"
 #include "components/ppisp.hpp"
-#include "components/ppisp_controller.hpp"
+#include "components/ppisp_controller_pool.hpp"
 #include "core/events.hpp"
 #include "core/logger.hpp"
 #include "core/path_utils.hpp"
@@ -22,7 +22,7 @@ namespace lfs::training {
         const lfs::core::param::TrainingParameters& params,
         const BilateralGrid* bilateral_grid,
         const PPISP* ppisp,
-        const std::vector<std::unique_ptr<PPISPController>>* ppisp_controllers) {
+        const PPISPControllerPool* ppisp_controller_pool) {
 
         try {
             // Validate input path
@@ -121,7 +121,7 @@ namespace lfs::training {
                 header.flags = header.flags | CheckpointFlags::HAS_BILATERAL_GRID;
             if (ppisp)
                 header.flags = header.flags | CheckpointFlags::HAS_PPISP;
-            if (ppisp_controllers && !ppisp_controllers->empty())
+            if (ppisp_controller_pool)
                 header.flags = header.flags | CheckpointFlags::HAS_PPISP_CONTROLLER;
 
             const auto header_pos = file.tellp();
@@ -151,14 +151,10 @@ namespace lfs::training {
                           ppisp->get_step(), ppisp->get_lr());
             }
 
-            // PPISP controllers (if present) - one per camera
-            if (ppisp_controllers && !ppisp_controllers->empty()) {
-                const uint32_t num_controllers = static_cast<uint32_t>(ppisp_controllers->size());
-                file.write(reinterpret_cast<const char*>(&num_controllers), sizeof(num_controllers));
-                for (const auto& controller : *ppisp_controllers) {
-                    controller->serialize(file);
-                }
-                LOG_DEBUG("PPISP controllers saved: {} cameras", num_controllers);
+            // PPISP controller pool (if present)
+            if (ppisp_controller_pool) {
+                ppisp_controller_pool->serialize(file);
+                LOG_DEBUG("PPISP controller pool saved: {} cameras", ppisp_controller_pool->num_cameras());
             }
 
             // Training parameters as JSON
@@ -181,8 +177,8 @@ namespace lfs::training {
                 extras += ", +bilateral";
             if (ppisp)
                 extras += ", +ppisp";
-            if (ppisp_controllers && !ppisp_controllers->empty())
-                extras += ", +ppisp_ctrl(" + std::to_string(ppisp_controllers->size()) + ")";
+            if (ppisp_controller_pool)
+                extras += ", +ppisp_ctrl(" + std::to_string(ppisp_controller_pool->num_cameras()) + ")";
             LOG_INFO("Checkpoint saved: {} ({} Gaussians, iter {}{})",
                      lfs::core::path_to_utf8(checkpoint_path), header.num_gaussians, iteration,
                      extras);
@@ -224,7 +220,7 @@ namespace lfs::training {
         lfs::core::param::TrainingParameters& params,
         BilateralGrid* bilateral_grid,
         PPISP* ppisp,
-        std::vector<std::unique_ptr<PPISPController>>* ppisp_controllers) {
+        PPISPControllerPool* ppisp_controller_pool) {
 
         try {
             std::ifstream file;
@@ -264,8 +260,9 @@ namespace lfs::training {
                     LOG_INFO("Bilateral grid restored (step={}, lr={:.2e})",
                              bilateral_grid->get_step(), bilateral_grid->get_lr());
                 } else {
-                    LOG_WARN("Checkpoint has bilateral grid but none provided - skipping");
-                    // Skip bilateral grid data by reading params offset
+                    LOG_WARN("Checkpoint has bilateral grid but none provided - skipping data");
+                    BilateralGrid temp(1, 1, 1, 1, 1);
+                    temp.deserialize(file);
                 }
             } else if (bilateral_grid) {
                 LOG_WARN("Bilateral grid requested but not in checkpoint - using fresh state");
@@ -278,43 +275,41 @@ namespace lfs::training {
                     LOG_INFO("PPISP restored (step={}, lr={:.2e})",
                              ppisp->get_step(), ppisp->get_lr());
                 } else {
-                    LOG_WARN("Checkpoint has PPISP but none provided - skipping");
+                    LOG_WARN("Checkpoint has PPISP but none provided - skipping data");
+                    PPISP temp(1, 1, 1);
+                    temp.deserialize(file);
                 }
             } else if (ppisp) {
                 LOG_WARN("PPISP requested but not in checkpoint - using fresh state");
             }
 
-            // PPISP controllers (if present in checkpoint) - one per camera
+            // PPISP controller pool (if present in checkpoint)
             if (has_flag(header.flags, CheckpointFlags::HAS_PPISP_CONTROLLER)) {
-                uint32_t num_controllers = 0;
-                file.read(reinterpret_cast<char*>(&num_controllers), sizeof(num_controllers));
-
-                if (ppisp_controllers && !ppisp_controllers->empty()) {
-                    if (num_controllers != ppisp_controllers->size()) {
-                        LOG_WARN("Controller count mismatch: checkpoint has {}, current has {} - loading min",
-                                 num_controllers, ppisp_controllers->size());
-                    }
-                    const size_t load_count = std::min(static_cast<size_t>(num_controllers), ppisp_controllers->size());
-                    for (size_t i = 0; i < load_count; ++i) {
-                        (*ppisp_controllers)[i]->deserialize(file);
-                    }
-                    // Skip remaining controllers if checkpoint has more
-                    for (size_t i = load_count; i < num_controllers; ++i) {
-                        PPISPController temp(1);
-                        temp.deserialize(file);
-                    }
-                    LOG_INFO("PPISP controllers restored: {} cameras (step={}, lr={:.2e})",
-                             load_count, (*ppisp_controllers)[0]->get_step(), (*ppisp_controllers)[0]->get_lr());
+                if (ppisp_controller_pool) {
+                    ppisp_controller_pool->deserialize(file);
+                    LOG_INFO("PPISP controller pool restored: {} cameras (step={}, lr={:.2e})",
+                             ppisp_controller_pool->num_cameras(),
+                             0, // step not easily accessible from pool
+                             ppisp_controller_pool->get_learning_rate());
                 } else {
-                    LOG_WARN("Checkpoint has {} PPISP controllers but none provided - skipping", num_controllers);
-                    // Skip all controller data
-                    for (size_t i = 0; i < num_controllers; ++i) {
-                        PPISPController temp(1);
-                        temp.deserialize(file);
-                    }
+                    LOG_WARN("Checkpoint has PPISP controller pool but none provided - skipping");
+                    // Skip the pool data by reading into a temporary
+                    // Pool format: magic + version + num_cameras + ... (variable size)
+                    // We need to read it to advance the file position
+                    uint32_t magic, version;
+                    int num_cameras, total_iter;
+                    file.read(reinterpret_cast<char*>(&magic), sizeof(magic));
+                    file.read(reinterpret_cast<char*>(&version), sizeof(version));
+                    file.read(reinterpret_cast<char*>(&num_cameras), sizeof(num_cameras));
+                    // Create a temporary pool to skip the data
+                    PPISPControllerPool temp(num_cameras, 1);
+                    // Rewind and deserialize properly to skip
+                    file.seekg(-static_cast<std::streamoff>(sizeof(magic) + sizeof(version) + sizeof(num_cameras)),
+                               std::ios::cur);
+                    temp.deserialize(file);
                 }
-            } else if (ppisp_controllers && !ppisp_controllers->empty()) {
-                LOG_WARN("PPISP controllers requested but not in checkpoint - using fresh state");
+            } else if (ppisp_controller_pool) {
+                LOG_WARN("PPISP controller pool requested but not in checkpoint - using fresh state");
             }
 
             // Reserve capacity for MCMC densification

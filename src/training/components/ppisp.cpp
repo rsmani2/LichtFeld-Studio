@@ -129,10 +129,10 @@ namespace lfs::training {
         return output;
     }
 
-    lfs::core::Tensor PPISP::apply_with_controller_params_and_overrides(
-        const lfs::core::Tensor& rgb, const lfs::core::Tensor& controller_params, int camera_idx,
-        float exposure_offset, bool vignette_enabled, float vignette_strength, float wb_temperature, float wb_tint,
-        float gamma_multiplier) {
+    lfs::core::Tensor PPISP::apply_with_controller_params_and_overrides(const lfs::core::Tensor& rgb,
+                                                                        const lfs::core::Tensor& controller_params,
+                                                                        int camera_idx,
+                                                                        const PPISPRenderOverrides& ov) {
         assert(controller_params.shape().rank() == 2 && "Expected [1,9]");
         assert(controller_params.shape()[0] == 1 && controller_params.shape()[1] == 9);
         assert(camera_idx >= 0 && camera_idx < num_cameras_ && "camera_idx out of range");
@@ -147,21 +147,29 @@ namespace lfs::training {
 
         // Extract and modify exposure from controller output
         auto exposure_temp = controller_params.slice(1, 0, 1).reshape({1}).clone();
-        if (exposure_offset != 0.0f) {
+        if (ov.exposure_offset != 0.0f) {
             auto exp_cpu = exposure_temp.cpu();
-            exp_cpu.ptr<float>()[0] += exposure_offset;
+            exp_cpu.ptr<float>()[0] += ov.exposure_offset;
             cudaMemcpy(exposure_temp.ptr<float>(), exp_cpu.ptr<float>(), sizeof(float), cudaMemcpyHostToDevice);
         }
 
         // Extract and modify color params from controller output
+        // Layout: [b.x, b.y, r.x, r.y, g.x, g.y, n.x, n.y]
         auto color_temp = controller_params.slice(1, 1, 9).reshape({8}).clone();
-        if (wb_temperature != 0.0f || wb_tint != 0.0f) {
+        {
             auto color_cpu = color_temp.cpu();
-            float* color_ptr = color_cpu.ptr<float>();
+            float* p = color_cpu.ptr<float>();
+            constexpr float COLOR_SCALE = 0.15f;
             constexpr float WB_SCALE = 0.15f;
-            color_ptr[6] += wb_temperature * WB_SCALE; // n.x
-            color_ptr[7] += wb_tint * WB_SCALE;        // n.y
-            cudaMemcpy(color_temp.ptr<float>(), color_ptr, 8 * sizeof(float), cudaMemcpyHostToDevice);
+            p[0] += ov.color_blue_x * COLOR_SCALE;  // b.x
+            p[1] += ov.color_blue_y * COLOR_SCALE;  // b.y
+            p[2] += ov.color_red_x * COLOR_SCALE;   // r.x
+            p[3] += ov.color_red_y * COLOR_SCALE;   // r.y
+            p[4] += ov.color_green_x * COLOR_SCALE; // g.x
+            p[5] += ov.color_green_y * COLOR_SCALE; // g.y
+            p[6] += ov.wb_temperature * WB_SCALE;   // n.x (warm/cool)
+            p[7] += ov.wb_tint * WB_SCALE;          // n.y (green/magenta)
+            cudaMemcpy(color_temp.ptr<float>(), p, 8 * sizeof(float), cudaMemcpyHostToDevice);
         }
 
         // Modify vignetting params
@@ -169,7 +177,7 @@ namespace lfs::training {
         {
             auto vig_cpu = vignetting_modified.cpu();
             float* vig_ptr = vig_cpu.ptr<float>();
-            const float mult = vignette_enabled ? vignette_strength : 0.0f;
+            const float mult = ov.vignette_enabled ? ov.vignette_strength : 0.0f;
             for (int ch = 0; ch < 3; ++ch) {
                 size_t base = static_cast<size_t>(camera_idx) * 15 + static_cast<size_t>(ch) * 5;
                 vig_ptr[base + 2] *= mult;
@@ -177,22 +185,27 @@ namespace lfs::training {
                 vig_ptr[base + 4] *= mult;
             }
             size_t copy_offset = static_cast<size_t>(camera_idx) * 15;
-            cudaMemcpy(vignetting_modified.ptr<float>() + copy_offset, vig_ptr + copy_offset,
-                       15 * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(vignetting_modified.ptr<float>() + copy_offset, vig_ptr + copy_offset, 15 * sizeof(float),
+                       cudaMemcpyHostToDevice);
         }
 
-        // Modify CRF gamma
+        // Modify CRF: toe, shoulder, gamma (per-channel)
+        // Layout per channel: [toe, shoulder, gamma, center]
         auto crf_modified = crf_params_.clone();
-        if (gamma_multiplier != 1.0f) {
+        {
             auto crf_cpu = crf_modified.cpu();
             float* crf_ptr = crf_cpu.ptr<float>();
+            const float gamma_offsets[3] = {ov.gamma_red, ov.gamma_green, ov.gamma_blue};
+            const float log_gamma_mult = std::log(ov.gamma_multiplier);
             for (int ch = 0; ch < 3; ++ch) {
                 size_t base = static_cast<size_t>(camera_idx) * 12 + static_cast<size_t>(ch) * 4;
-                crf_ptr[base + 2] += std::log(gamma_multiplier);
+                crf_ptr[base + 0] += ov.crf_toe;                         // toe (τ)
+                crf_ptr[base + 1] += ov.crf_shoulder;                    // shoulder (η)
+                crf_ptr[base + 2] += log_gamma_mult + gamma_offsets[ch]; // gamma (γ)
             }
             size_t copy_offset = static_cast<size_t>(camera_idx) * 12;
-            cudaMemcpy(crf_modified.ptr<float>() + copy_offset, crf_ptr + copy_offset,
-                       12 * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(crf_modified.ptr<float>() + copy_offset, crf_ptr + copy_offset, 12 * sizeof(float),
+                       cudaMemcpyHostToDevice);
         }
 
         kernels::launch_ppisp_forward_chw(exposure_temp.ptr<float>(), vignetting_modified.ptr<float>(),
@@ -203,8 +216,7 @@ namespace lfs::training {
     }
 
     lfs::core::Tensor PPISP::apply_with_overrides(const lfs::core::Tensor& rgb, int camera_idx, int frame_idx,
-                                                  float exposure_offset, bool vignette_enabled, float vignette_strength,
-                                                  float wb_temperature, float wb_tint, float gamma_multiplier) {
+                                                  const PPISPRenderOverrides& ov) {
         assert(camera_idx >= -1 && camera_idx < num_cameras_ && "camera_idx out of range");
         assert(frame_idx >= -1 && frame_idx < num_frames_ && "frame_idx out of range");
 
@@ -216,66 +228,69 @@ namespace lfs::training {
 
         auto output = lfs::core::Tensor::empty({3, shape[1], shape[2]}, lfs::core::Device::CUDA);
 
-        // Create modified parameter copies for overrides
         // Exposure: add offset to learned value
         auto exposure_modified = exposure_params_.clone();
-        if (frame_idx >= 0 && exposure_offset != 0.0f) {
+        if (frame_idx >= 0 && ov.exposure_offset != 0.0f) {
             auto exp_cpu = exposure_modified.slice(0, frame_idx, frame_idx + 1).cpu();
-            float* exp_ptr = exp_cpu.ptr<float>();
-            exp_ptr[0] += exposure_offset;
-            cudaMemcpy(exposure_modified.ptr<float>() + frame_idx, exp_ptr, sizeof(float), cudaMemcpyHostToDevice);
+            exp_cpu.ptr<float>()[0] += ov.exposure_offset;
+            cudaMemcpy(exposure_modified.ptr<float>() + frame_idx, exp_cpu.ptr<float>(), sizeof(float),
+                       cudaMemcpyHostToDevice);
         }
 
         // Vignetting: multiply alpha coefficients by strength (or zero if disabled)
         auto vignetting_modified = vignetting_params_.clone();
         if (camera_idx >= 0) {
-            // Each camera has 3 channels, each with 5 params: cx, cy, alpha0, alpha1, alpha2
-            // Only modify alpha0 (idx 2), alpha1 (idx 3), alpha2 (idx 4) for each channel
             auto vig_cpu = vignetting_modified.cpu();
             float* vig_ptr = vig_cpu.ptr<float>();
-            const float mult = vignette_enabled ? vignette_strength : 0.0f;
+            const float mult = ov.vignette_enabled ? ov.vignette_strength : 0.0f;
             for (int ch = 0; ch < 3; ++ch) {
                 size_t base = static_cast<size_t>(camera_idx) * 15 + static_cast<size_t>(ch) * 5;
-                vig_ptr[base + 2] *= mult; // alpha0
-                vig_ptr[base + 3] *= mult; // alpha1
-                vig_ptr[base + 4] *= mult; // alpha2
+                vig_ptr[base + 2] *= mult;
+                vig_ptr[base + 3] *= mult;
+                vig_ptr[base + 4] *= mult;
             }
             size_t copy_offset = static_cast<size_t>(camera_idx) * 15;
-            cudaMemcpy(vignetting_modified.ptr<float>() + copy_offset, vig_ptr + copy_offset,
-                       15 * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(vignetting_modified.ptr<float>() + copy_offset, vig_ptr + copy_offset, 15 * sizeof(float),
+                       cudaMemcpyHostToDevice);
         }
 
-        // Color: offset neutral point (n) for white balance
-        // Color layout: [num_frames * 8] where each frame has: b.x, b.y, r.x, r.y, g.x, g.y, n.x, n.y
+        // Color correction: apply all 4 chromaticity point offsets
+        // Layout: [b.x, b.y, r.x, r.y, g.x, g.y, n.x, n.y]
         auto color_modified = color_params_.clone();
-        if (frame_idx >= 0 && (wb_temperature != 0.0f || wb_tint != 0.0f)) {
+        if (frame_idx >= 0) {
             auto color_cpu = color_modified.cpu();
-            float* color_ptr = color_cpu.ptr<float>();
+            float* p = color_cpu.ptr<float>();
             size_t base = static_cast<size_t>(frame_idx) * 8;
-            // n.x (index 6) and n.y (index 7) - temperature shifts blue-yellow, tint shifts magenta-green
+            constexpr float COLOR_SCALE = 0.15f;
             constexpr float WB_SCALE = 0.15f;
-            color_ptr[base + 6] += wb_temperature * WB_SCALE;
-            color_ptr[base + 7] += wb_tint * WB_SCALE;
-            cudaMemcpy(color_modified.ptr<float>() + base, color_ptr + base, 8 * sizeof(float), cudaMemcpyHostToDevice);
+            p[base + 0] += ov.color_blue_x * COLOR_SCALE;  // b.x
+            p[base + 1] += ov.color_blue_y * COLOR_SCALE;  // b.y
+            p[base + 2] += ov.color_red_x * COLOR_SCALE;   // r.x
+            p[base + 3] += ov.color_red_y * COLOR_SCALE;   // r.y
+            p[base + 4] += ov.color_green_x * COLOR_SCALE; // g.x
+            p[base + 5] += ov.color_green_y * COLOR_SCALE; // g.y
+            p[base + 6] += ov.wb_temperature * WB_SCALE;   // n.x (warm/cool)
+            p[base + 7] += ov.wb_tint * WB_SCALE;          // n.y (green/magenta)
+            cudaMemcpy(color_modified.ptr<float>() + base, p + base, 8 * sizeof(float), cudaMemcpyHostToDevice);
         }
 
-        // CRF: multiply gamma values
-        // CRF layout: [num_cameras * 3 * 4] where each channel has: toe, shoulder, gamma, center
+        // CRF: toe, shoulder, gamma (per-channel)
+        // Layout per channel: [toe, shoulder, gamma, center]
         auto crf_modified = crf_params_.clone();
-        if (camera_idx >= 0 && gamma_multiplier != 1.0f) {
+        if (camera_idx >= 0) {
             auto crf_cpu = crf_modified.cpu();
             float* crf_ptr = crf_cpu.ptr<float>();
+            const float gamma_offsets[3] = {ov.gamma_red, ov.gamma_green, ov.gamma_blue};
+            const float log_gamma_mult = std::log(ov.gamma_multiplier);
             for (int ch = 0; ch < 3; ++ch) {
                 size_t base = static_cast<size_t>(camera_idx) * 12 + static_cast<size_t>(ch) * 4;
-                // gamma is at index 2 in each channel's params
-                // The raw param goes through bounded_positive_forward: 0.1 + log(1 + exp(raw))
-                // To multiply the output by gamma_multiplier, we need to adjust the raw param
-                // For small adjustments, we can approximate by adding log(multiplier) to raw gamma
-                crf_ptr[base + 2] += std::log(gamma_multiplier);
+                crf_ptr[base + 0] += ov.crf_toe;                         // toe (τ)
+                crf_ptr[base + 1] += ov.crf_shoulder;                    // shoulder (η)
+                crf_ptr[base + 2] += log_gamma_mult + gamma_offsets[ch]; // gamma (γ)
             }
             size_t copy_offset = static_cast<size_t>(camera_idx) * 12;
-            cudaMemcpy(crf_modified.ptr<float>() + copy_offset, crf_ptr + copy_offset,
-                       12 * sizeof(float), cudaMemcpyHostToDevice);
+            cudaMemcpy(crf_modified.ptr<float>() + copy_offset, crf_ptr + copy_offset, 12 * sizeof(float),
+                       cudaMemcpyHostToDevice);
         }
 
         kernels::launch_ppisp_forward_chw(exposure_modified.ptr<float>(), vignetting_modified.ptr<float>(),

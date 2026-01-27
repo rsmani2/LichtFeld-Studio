@@ -1546,7 +1546,9 @@ namespace lfs::core {
         Tensor linear_bias_relu(const Tensor& weight, const Tensor& bias) const;
 
         // _out variants that write into pre-allocated output tensors (zero allocation)
+        void conv1x1_bias_out(const Tensor& weight, const Tensor& bias, Tensor& output) const;
         void conv1x1_bias_relu_out(const Tensor& weight, const Tensor& bias, Tensor& output) const;
+        void relu_out(Tensor& output) const;
         void max_pool2d_out(int kernel_size, int stride, int padding, Tensor& output) const;
         void adaptive_avg_pool2d_out(int output_h, int output_w, Tensor& output) const;
         void linear_bias_relu_out(const Tensor& weight, const Tensor& bias, Tensor& output) const;

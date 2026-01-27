@@ -10,6 +10,36 @@
 
 namespace lfs::training {
 
+    /// User-controllable overrides for PPISP rendering (matches paper Section 4 / Supplementary D)
+    struct PPISPRenderOverrides {
+        // Exposure (Section 4.1)
+        float exposure_offset = 0.0f; // EV stops
+
+        // Vignetting (Section 4.2)
+        bool vignette_enabled = true;
+        float vignette_strength = 1.0f;
+
+        // Color Correction (Section 4.3) - 4 chromaticity control points
+        // RGB primary offsets (Δc_R, Δc_G, Δc_B)
+        float color_blue_x = 0.0f;
+        float color_blue_y = 0.0f;
+        float color_red_x = 0.0f;
+        float color_red_y = 0.0f;
+        float color_green_x = 0.0f;
+        float color_green_y = 0.0f;
+        // White/neutral point offset (Δc_W) - exposed as temperature/tint
+        float wb_temperature = 0.0f;
+        float wb_tint = 0.0f;
+
+        // CRF (Section 4.4) - piecewise power curve
+        float gamma_multiplier = 1.0f; // Overall gamma
+        float gamma_red = 0.0f;        // Per-channel gamma offsets
+        float gamma_green = 0.0f;
+        float gamma_blue = 0.0f;
+        float crf_toe = 0.0f;      // Shadow compression (τ adjustment)
+        float crf_shoulder = 0.0f; // Highlight roll-off (η adjustment)
+    };
+
     struct PPISPConfig {
         double lr = 2e-3;
         double beta1 = 0.9;
@@ -49,24 +79,13 @@ namespace lfs::training {
         /// Apply ISP with controller-predicted params + user overrides (for novel view with adjustments)
         lfs::core::Tensor apply_with_controller_params_and_overrides(const lfs::core::Tensor& rgb,
                                                                      const lfs::core::Tensor& controller_params,
-                                                                     int camera_idx, float exposure_offset,
-                                                                     bool vignette_enabled, float vignette_strength,
-                                                                     float wb_temperature, float wb_tint,
-                                                                     float gamma_multiplier);
+                                                                     int camera_idx,
+                                                                     const PPISPRenderOverrides& overrides);
 
         /// Apply ISP with user-controlled overrides (for viewport preview)
-        /// @param rgb input image [C,H,W]
-        /// @param camera_idx camera index for vignetting/CRF
-        /// @param frame_idx frame index for exposure/color params
-        /// @param exposure_offset additive EV offset
-        /// @param vignette_enabled if false, disable vignetting
-        /// @param vignette_strength multiplier on vignette alpha coefficients
-        /// @param wb_temperature white balance temperature shift (-1 to +1)
-        /// @param wb_tint white balance tint shift (-1 to +1)
-        /// @param gamma_multiplier multiplier on learned gamma
+        /// Full control over all PPISP parameters as described in paper Section 4 and Supplementary D
         lfs::core::Tensor apply_with_overrides(const lfs::core::Tensor& rgb, int camera_idx, int frame_idx,
-                                               float exposure_offset, bool vignette_enabled, float vignette_strength,
-                                               float wb_temperature, float wb_tint, float gamma_multiplier);
+                                               const PPISPRenderOverrides& overrides);
 
         /// Backward pass: accumulate gradients (call optimizer_step after all backward calls)
         lfs::core::Tensor backward(const lfs::core::Tensor& rgb, const lfs::core::Tensor& grad_output, int camera_idx,
