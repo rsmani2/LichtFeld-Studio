@@ -294,53 +294,27 @@ namespace lfs::training::kernels {
                                                int num_cameras, int num_frames) {
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-        // Initialize exposure to 0 (no adjustment)
         if (idx < num_frames) {
             exposure[idx] = 0.0f;
         }
 
-        // Initialize vignetting: [num_cameras, 3, 5] - center at (0,0), no falloff
         int vig_total = num_cameras * 3 * 5;
         if (idx < vig_total) {
-            int cam = idx / (3 * 5);
-            int rem = idx % (3 * 5);
-            int ch = rem / 5;
-            int param_idx = rem % 5;
-            (void)cam;
-            (void)ch;
-
-            // cx=0, cy=0, alpha0=0, alpha1=0, alpha2=0
             vignetting[idx] = 0.0f;
         }
 
-        // Initialize color: [num_frames, 8] - all zeros (identity homography)
         int color_total = num_frames * 8;
         if (idx < color_total) {
             color[idx] = 0.0f;
         }
 
-        // Initialize CRF: [num_cameras, 3, 4] - identity curve
         int crf_total = num_cameras * 3 * 4;
         if (idx < crf_total) {
-            int cam = idx / (3 * 4);
-            int rem = idx % (3 * 4);
-            int ch = rem / 4;
-            int param_idx = rem % 4;
-            (void)cam;
-            (void)ch;
-
-            // toe=0, shoulder=0, gamma=0, center=0 -> transforms to reasonable defaults
             crf[idx] = 0.0f;
         }
     }
 
-    // Regularization loss kernel (L2 on all params)
     __global__ void ppisp_reg_loss_kernel(const float* params, float* loss_out, int num_elements) {
-        __shared__ float block_sum;
-        if (threadIdx.x == 0)
-            block_sum = 0.0f;
-        __syncthreads();
-
         int idx = blockIdx.x * blockDim.x + threadIdx.x;
         float local_sum = 0.0f;
 
@@ -349,7 +323,6 @@ namespace lfs::training::kernels {
             local_sum = val * val;
         }
 
-        // Block reduction
         typedef cub::BlockReduce<float, PPISP_BLOCK_SIZE> BlockReduce;
         __shared__ typename BlockReduce::TempStorage temp;
         float sum = BlockReduce(temp).Sum(local_sum);

@@ -256,6 +256,14 @@ namespace lichtfeld::Strings {
             inline constexpr const char* SAVE_STEP_INPUT = "training.tooltip.save_step_input";
             inline constexpr const char* SAVE_STEP_ADD = "training.tooltip.save_step_add";
             inline constexpr const char* SAVE_STEP_REMOVE = "training.tooltip.save_step_remove";
+            inline constexpr const char* PPISP = "training.tooltip.ppisp";
+            inline constexpr const char* PPISP_CONTROLLER = "training.tooltip.ppisp_controller";
+            inline constexpr const char* PPISP_LR = "training.tooltip.ppisp_lr";
+            inline constexpr const char* PPISP_REG = "training.tooltip.ppisp_reg";
+            inline constexpr const char* PPISP_WARMUP = "training.tooltip.ppisp_warmup";
+            inline constexpr const char* PPISP_ACTIVATION_STEP = "training.tooltip.ppisp_activation_step";
+            inline constexpr const char* PPISP_CONTROLLER_LR = "training.tooltip.ppisp_controller_lr";
+            inline constexpr const char* PPISP_FREEZE_GAUSSIANS = "training.tooltip.ppisp_freeze_gaussians";
         } // namespace Tooltip
 
         namespace Status {
@@ -743,6 +751,16 @@ namespace lichtfeld::Strings {
         inline constexpr const char* SPARSIFY_STEPS = "training_params.sparsify_steps";
         inline constexpr const char* INIT_RHO = "training_params.init_rho";
         inline constexpr const char* PRUNE_RATIO = "training_params.prune_ratio";
+        inline constexpr const char* PPISP = "training_params.ppisp";
+        inline constexpr const char* PPISP_CONTROLLER = "training_params.ppisp_controller";
+        inline constexpr const char* PPISP_SETTINGS = "training_params.ppisp_settings";
+        inline constexpr const char* PPISP_LR = "training_params.ppisp_lr";
+        inline constexpr const char* PPISP_REG = "training_params.ppisp_reg";
+        inline constexpr const char* PPISP_WARMUP = "training_params.ppisp_warmup";
+        inline constexpr const char* PPISP_ENABLE_CONTROLLER = "training_params.ppisp_enable_controller";
+        inline constexpr const char* PPISP_ACTIVATION_STEP = "training_params.ppisp_activation_step";
+        inline constexpr const char* PPISP_CONTROLLER_LR = "training_params.ppisp_controller_lr";
+        inline constexpr const char* PPISP_FREEZE_GAUSSIANS = "training_params.ppisp_freeze_gaussians";
         inline constexpr const char* DISABLED = "training_params.disabled";
     } // namespace TrainingParams
 

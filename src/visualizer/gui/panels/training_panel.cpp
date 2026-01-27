@@ -682,16 +682,28 @@ namespace lfs::vis::gui::panels {
                     ImGui::Text("Activation Step");
                     ImGui::TableNextColumn();
                     if (can_edit) {
-                        ImGui::PushItemWidth(-1);
-                        if (widgets::InputIntFormatted("##ppisp_controller_step", &opt_params.ppisp_controller_activation_step, 1000, 5000)) {
-                            opt_params.ppisp_controller_activation_step = std::max(1, opt_params.ppisp_controller_activation_step);
+                        bool is_auto = opt_params.ppisp_controller_activation_step < 0;
+                        if (ImGui::Checkbox("Auto##ppisp_auto_step", &is_auto)) {
+                            opt_params.ppisp_controller_activation_step = is_auto ? -1 : static_cast<int>(opt_params.iterations) - 5000;
                         }
-                        ImGui::PopItemWidth();
+                        if (!is_auto) {
+                            ImGui::SameLine();
+                            ImGui::PushItemWidth(-1);
+                            if (widgets::InputIntFormatted("##ppisp_controller_step", &opt_params.ppisp_controller_activation_step, 1000, 5000)) {
+                                opt_params.ppisp_controller_activation_step = std::max(1, opt_params.ppisp_controller_activation_step);
+                            }
+                            ImGui::PopItemWidth();
+                        }
                     } else {
-                        ImGui::Text("%s", widgets::formatNumber(opt_params.ppisp_controller_activation_step).c_str());
+                        if (opt_params.ppisp_controller_activation_step < 0) {
+                            int auto_val = std::max(0, static_cast<int>(opt_params.iterations) - 5000);
+                            ImGui::Text("Auto (%s)", widgets::formatNumber(auto_val).c_str());
+                        } else {
+                            ImGui::Text("%s", widgets::formatNumber(opt_params.ppisp_controller_activation_step).c_str());
+                        }
                     }
                     if (ImGui::IsItemHovered()) {
-                        widgets::SetThemedTooltip("Iteration to start Phase 2 controller distillation");
+                        widgets::SetThemedTooltip("Iteration to start Phase 2 controller distillation (-1 = auto: iterations - 5000)");
                     }
 
                     ImGui::TableNextRow();
@@ -1310,6 +1322,22 @@ namespace lfs::vis::gui::panels {
             }
             if (ImGui::IsItemHovered()) {
                 widgets::SetThemedTooltip("Enable PPISP (Physically-Plausible ISP) for per-camera appearance modeling");
+            }
+
+            // PPISP Controller (shown when PPISP enabled)
+            if (opt_params.use_ppisp) {
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::Text("  Controller");
+                ImGui::TableNextColumn();
+                if (can_edit) {
+                    ImGui::Checkbox("##ppisp_controller_main", &opt_params.ppisp_use_controller);
+                } else {
+                    ImGui::Text("%s", opt_params.ppisp_use_controller ? "Enabled" : "Disabled");
+                }
+                if (ImGui::IsItemHovered()) {
+                    widgets::SetThemedTooltip("Enable controller for novel view synthesis (trains in last 5k iterations)");
+                }
             }
 
             // Mask Mode

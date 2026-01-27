@@ -9,10 +9,7 @@
 
 namespace {
 
-    class PPISPControllerTest : public ::testing::Test {
-    protected:
-        void SetUp() override {}
-    };
+    class PPISPControllerTest : public ::testing::Test {};
 
     TEST_F(PPISPControllerTest, ConstructorInitializesWeights) {
         lfs::training::PPISPController controller(10000);

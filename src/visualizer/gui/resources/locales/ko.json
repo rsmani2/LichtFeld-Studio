@@ -189,7 +189,14 @@
     "tooltip.save_step_input": "반복 횟수 (+/-로 조정)",
     "tooltip.save_step_add": "이 반복에 체크포인트 추가",
     "tooltip.save_step_remove": "이 체크포인트 삭제",
-
+    "tooltip.ppisp": "카메라별 외관 보정 (노출, 비네트, 색상, CRF)",
+    "tooltip.ppisp_controller": "Novel View Synthesis용 컨트롤러 CNN 활성화",
+    "tooltip.ppisp_lr": "PPISP 파라미터 학습률",
+    "tooltip.ppisp_reg": "PPISP 파라미터 정규화 가중치",
+    "tooltip.ppisp_warmup": "PPISP 학습 시작 전 단계",
+    "tooltip.ppisp_activation_step": "컨트롤러 학습 시작 반복 (-1 = 자동: 반복 - 5000)",
+    "tooltip.ppisp_controller_lr": "컨트롤러 네트워크 학습률",
+    "tooltip.ppisp_freeze_gaussians": "컨트롤러 학습 중 가우시안 파라미터 고정",
 
     "losses.lambda_dssim": "Lambda DSSIM:",
     "losses.opacity_reg": "Opacity Reg:",
@@ -666,7 +673,17 @@
     "sparsify_steps": "Sparsify Steps:",
     "init_rho": "Init Rho:",
     "prune_ratio": "Prune Ratio:",
-    "disabled": "Disabled"
+    "ppisp": "PPISP:",
+    "ppisp_controller": "  컨트롤러:",
+    "ppisp_settings": "PPISP 설정",
+    "ppisp_lr": "학습률:",
+    "ppisp_reg": "정규화:",
+    "ppisp_warmup": "워밍업 단계:",
+    "ppisp_enable_controller": "컨트롤러 활성화:",
+    "ppisp_activation_step": "활성화 단계:",
+    "ppisp_controller_lr": "컨트롤러 LR:",
+    "ppisp_freeze_gaussians": "가우시안 고정:",
+    "disabled": "비활성화됨"
   },
 
   "image_preview": {

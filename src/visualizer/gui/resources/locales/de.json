@@ -189,7 +189,14 @@
     "tooltip.save_step_input": "Iterationsnummer (+/- zum Anpassen)",
     "tooltip.save_step_add": "Checkpoint bei dieser Iteration hinzufügen",
     "tooltip.save_step_remove": "Diesen Checkpoint entfernen",
-
+    "tooltip.ppisp": "Pro-Kamera Erscheinungskorrektur (Belichtung, Vignettierung, Farbe, CRF)",
+    "tooltip.ppisp_controller": "Controller CNN für Novel View Synthesis aktivieren",
+    "tooltip.ppisp_lr": "Lernrate für PPISP-Parameter",
+    "tooltip.ppisp_reg": "Regularisierungsgewicht für PPISP-Parameter",
+    "tooltip.ppisp_warmup": "Schritte vor PPISP-Training",
+    "tooltip.ppisp_activation_step": "Iteration für Controller-Training-Start (-1 = auto: Iterationen - 5000)",
+    "tooltip.ppisp_controller_lr": "Lernrate für das Controller-Netzwerk",
+    "tooltip.ppisp_freeze_gaussians": "Gaussian-Parameter während Controller-Training einfrieren",
 
     "losses.lambda_dssim": "Lambda DSSIM:",
     "losses.opacity_reg": "Opazität Reg:",
@@ -666,6 +673,16 @@
     "sparsify_steps": "Sparsify Schritte:",
     "init_rho": "Init Rho:",
     "prune_ratio": "Prune Verhältnis:",
+    "ppisp": "PPISP:",
+    "ppisp_controller": "  Controller:",
+    "ppisp_settings": "PPISP-Einstellungen",
+    "ppisp_lr": "Lernrate:",
+    "ppisp_reg": "Regularisierung:",
+    "ppisp_warmup": "Warmup-Schritte:",
+    "ppisp_enable_controller": "Controller aktivieren:",
+    "ppisp_activation_step": "Aktivierungsschritt:",
+    "ppisp_controller_lr": "Controller LR:",
+    "ppisp_freeze_gaussians": "Gaussians einfrieren:",
     "disabled": "Deaktiviert"
   },
 

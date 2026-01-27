@@ -210,6 +210,7 @@ set(TEST_FILES
     test_background_image.cpp
     test_tensor_nn_ops.cpp
     test_ppisp_controller.cpp
+    test_ppisp_regularization.cpp
 )
 
 # Build test sources list

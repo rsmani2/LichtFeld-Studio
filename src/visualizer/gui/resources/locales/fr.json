@@ -189,7 +189,14 @@
     "tooltip.save_step_input": "Numéro d'itération (+/- pour ajuster)",
     "tooltip.save_step_add": "Ajouter un checkpoint à cette itération",
     "tooltip.save_step_remove": "Supprimer ce checkpoint",
-
+    "tooltip.ppisp": "Correction d'apparence par caméra (exposition, vignettage, couleur, CRF)",
+    "tooltip.ppisp_controller": "Activer le contrôleur CNN pour la synthèse de nouvelles vues",
+    "tooltip.ppisp_lr": "Taux d'apprentissage pour les paramètres PPISP",
+    "tooltip.ppisp_reg": "Poids de régularisation pour les paramètres PPISP",
+    "tooltip.ppisp_warmup": "Étapes avant le début de l'entraînement PPISP",
+    "tooltip.ppisp_activation_step": "Itération de début d'entraînement du contrôleur (-1 = auto: itérations - 5000)",
+    "tooltip.ppisp_controller_lr": "Taux d'apprentissage pour le réseau contrôleur",
+    "tooltip.ppisp_freeze_gaussians": "Geler les paramètres Gaussiens pendant l'entraînement du contrôleur",
 
     "losses.lambda_dssim": "Lambda DSSIM:",
     "losses.opacity_reg": "Opacity Reg:",
@@ -666,7 +673,17 @@
     "sparsify_steps": "Sparsify Steps:",
     "init_rho": "Init Rho:",
     "prune_ratio": "Prune Ratio:",
-    "disabled": "Disabled"
+    "ppisp": "PPISP:",
+    "ppisp_controller": "  Contrôleur:",
+    "ppisp_settings": "Paramètres PPISP",
+    "ppisp_lr": "Taux d'apprentissage:",
+    "ppisp_reg": "Régularisation:",
+    "ppisp_warmup": "Étapes de préchauffage:",
+    "ppisp_enable_controller": "Activer le contrôleur:",
+    "ppisp_activation_step": "Étape d'activation:",
+    "ppisp_controller_lr": "LR du contrôleur:",
+    "ppisp_freeze_gaussians": "Geler les Gaussiens:",
+    "disabled": "Désactivé"
   },
 
   "image_preview": {

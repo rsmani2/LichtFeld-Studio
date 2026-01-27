@@ -149,7 +149,12 @@ namespace lfs::training {
             PPISPControllerConfig config;
             config.lr = params_.optimization.ppisp_controller_lr;
 
-            int distillation_iters = params_.optimization.iterations - params_.optimization.ppisp_controller_activation_step;
+            if (params_.optimization.ppisp_controller_activation_step < 0) {
+                params_.optimization.ppisp_controller_activation_step =
+                    std::max(0, static_cast<int>(params_.optimization.iterations) - 5000);
+            }
+            int distillation_iters =
+                static_cast<int>(params_.optimization.iterations) - params_.optimization.ppisp_controller_activation_step;
             int num_cameras = ppisp_->num_cameras();
 
             ppisp_controllers_.clear();

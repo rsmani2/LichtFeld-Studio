@@ -123,10 +123,10 @@ namespace {
             // Optional flag arguments
             ::args::Flag enable_mip(parser, "enable_mip", "Enable mip filter (anti-aliasing)", {"enable-mip"});
             ::args::Flag use_bilateral_grid(parser, "bilateral_grid", "Enable bilateral grid filtering", {"bilateral-grid"});
-            ::args::Flag use_ppisp(parser, "ppisp", "Enable PPISP (Physically-Plausible ISP) appearance modeling", {"ppisp"});
-            ::args::Flag ppisp_use_controller(parser, "ppisp_controller", "Enable PPISP controller for novel view synthesis", {"ppisp-controller"});
+            ::args::Flag use_ppisp(parser, "ppisp", "Enable PPISP appearance modeling", {"ppisp"});
+            ::args::Flag ppisp_no_controller(parser, "ppisp_no_controller", "Disable PPISP controller distillation", {"ppisp-no-controller"});
             ::args::Flag ppisp_no_freeze(parser, "ppisp_no_freeze", "Don't freeze Gaussians during controller distillation", {"ppisp-no-freeze"});
-            ::args::ValueFlag<int> ppisp_controller_step(parser, "step", "Iteration to activate PPISP controller distillation (default: 25000)", {"ppisp-controller-step"});
+            ::args::ValueFlag<int> ppisp_controller_step(parser, "step", "Iteration to start controller distillation (default: auto = iterations - 5000)", {"ppisp-controller-step"});
             ::args::ValueFlag<float> ppisp_controller_lr(parser, "lr", "PPISP controller learning rate (default: 0.002)", {"ppisp-controller-lr"});
             ::args::Flag enable_eval(parser, "eval", "Enable evaluation during training", {"eval"});
             ::args::Flag headless(parser, "headless", "Disable visualization during training", {"headless"});
@@ -411,7 +411,7 @@ namespace {
                                         enable_mip_flag = bool(enable_mip),
                                         use_bilateral_grid_flag = bool(use_bilateral_grid),
                                         use_ppisp_flag = bool(use_ppisp),
-                                        ppisp_use_controller_flag = bool(ppisp_use_controller),
+                                        ppisp_no_controller_flag = bool(ppisp_no_controller),
                                         ppisp_no_freeze_flag = bool(ppisp_no_freeze),
                                         enable_eval_flag = bool(enable_eval),
                                         headless_flag = bool(headless),
@@ -466,7 +466,8 @@ namespace {
                 setFlag(enable_mip_flag, opt.mip_filter);
                 setFlag(use_bilateral_grid_flag, opt.use_bilateral_grid);
                 setFlag(use_ppisp_flag, opt.use_ppisp);
-                setFlag(ppisp_use_controller_flag, opt.ppisp_use_controller);
+                if (ppisp_no_controller_flag)
+                    opt.ppisp_use_controller = false;
                 if (ppisp_no_freeze_flag)
                     opt.ppisp_freeze_gaussians_on_distill = false;
                 setVal(ppisp_controller_step_val, opt.ppisp_controller_activation_step);
@@ -519,6 +520,18 @@ namespace {
         }
     }
 
+    void apply_ppisp_defaults(lfs::core::param::TrainingParameters& params) {
+        auto& opt = params.optimization;
+        if (!opt.ppisp_use_controller)
+            return;
+
+        if (opt.ppisp_controller_activation_step < 0) {
+            constexpr int CONTROLLER_TRAINING_ITERS = 5000;
+            opt.ppisp_controller_activation_step =
+                std::max(0, static_cast<int>(opt.iterations) - CONTROLLER_TRAINING_ITERS);
+        }
+    }
+
     std::vector<std::string> convert_args(int argc, const char* const argv[]) {
         return std::vector<std::string>(argv, argv + argc);
     }
@@ -565,6 +578,7 @@ lfs::core::args::parse_args_and_params(int argc, const char* const argv[]) {
         apply_overrides();
     }
     apply_step_scaling(*params);
+    apply_ppisp_defaults(*params);
 
     return params;
 }
