@@ -7,6 +7,8 @@
 #include "core/observable.hpp"
 #include "core/splat_data.hpp"
 #include "core/tensor.hpp"
+#include "training/components/ppisp.hpp"
+#include "training/components/ppisp_controller.hpp"
 #include <glm/glm.hpp>
 #include <memory>
 #include <string>
@@ -18,8 +20,6 @@
 // Forward declarations for training data
 namespace lfs::training {
     class CameraDataset;
-    class PPISP;
-    class PPISPController;
 } // namespace lfs::training
 namespace lfs::core {
     struct PointCloud;
