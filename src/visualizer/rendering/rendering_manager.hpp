@@ -316,6 +316,7 @@ namespace lfs::vis {
         // Depth buffer access for tools (returns camera-space depth at pixel, or -1 if invalid)
         float getDepthAtPixel(int x, int y) const;
         const lfs::rendering::RenderResult& getCachedResult() const { return cached_result_; }
+        glm::ivec2 getRenderedSize() const { return cached_result_size_; }
 
         // Screen positions output for brush tool
         void setOutputScreenPositions(bool enable) { output_screen_positions_ = enable; }

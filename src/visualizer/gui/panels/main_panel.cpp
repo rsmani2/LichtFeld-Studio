@@ -356,10 +356,14 @@ namespace lfs::vis::gui::panels {
                 .equirectangular = std::nullopt}
                 .emit();
         }
-        const float hfov = lfs::rendering::focalLengthToHFov(focal_mm);
-        const float vfov = lfs::rendering::focalLengthToVFov(focal_mm);
-        ImGui::TextDisabled("%s: %.1f%s H / %.1f%s V",
-                            LOC(MainPanel::FOV_INFO), hfov, "\xC2\xB0", vfov, "\xC2\xB0");
+        const glm::ivec2 render_size = render_manager->getRenderedSize();
+        if (render_size.x > 0 && render_size.y > 0) {
+            const float vfov = lfs::rendering::focalLengthToVFov(focal_mm);
+            const float aspect = static_cast<float>(render_size.x) / static_cast<float>(render_size.y);
+            const float hfov = glm::degrees(2.0f * std::atan(aspect * std::tan(glm::radians(vfov * 0.5f))));
+            ImGui::TextDisabled("%s: %.1f%s H / %.1f%s V",
+                                LOC(MainPanel::FOV_INFO), hfov, "\xC2\xB0", vfov, "\xC2\xB0");
+        }
 
         // SH DEGREE selection
         const char* sh_degrees[] = {"0", "1", "2", "3"};
