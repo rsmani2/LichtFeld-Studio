@@ -56,10 +56,10 @@ namespace lfs::vis::gui::widgets {
     } // namespace
 
     bool SliderWithReset(const char* label, float* v, float min, float max, float reset_value,
-                         const char* tooltip) {
+                         const char* tooltip, const char* format) {
         ensureIconsLoaded();
 
-        bool changed = ImGui::SliderFloat(label, v, min, max);
+        bool changed = ImGui::SliderFloat(label, v, min, max, format);
         bool slider_hovered = ImGui::IsItemHovered();
 
         ImGui::SameLine();

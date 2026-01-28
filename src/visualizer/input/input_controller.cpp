@@ -1217,8 +1217,9 @@ namespace lfs::vis {
         const bool is_equirectangular =
             cam_data->camera_model_type() == lfs::core::CameraModelType::EQUIRECTANGULAR;
 
+        const auto focal_mm = lfs::rendering::vFovToFocalLength(fov_y_deg);
         ui::RenderSettingsChanged{
-            .fov = is_equirectangular ? std::nullopt : std::optional(fov_y_deg),
+            .focal_length_mm = is_equirectangular ? std::nullopt : std::optional(focal_mm),
             .equirectangular = is_equirectangular}
             .emit();
 

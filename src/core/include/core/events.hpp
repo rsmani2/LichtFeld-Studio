@@ -194,7 +194,7 @@ namespace lfs::core {
             EVENT(ZoomSpeedChanged, float zoom_speed; float max_zoom_speed;);
             EVENT(RenderSettingsChanged,
                   std::optional<int> sh_degree;
-                  std::optional<float> fov;
+                  std::optional<float> focal_length_mm;
                   std::optional<float> scaling_modifier;
                   std::optional<bool> antialiasing;
                   std::optional<glm::vec3> background_color;
@@ -235,7 +235,7 @@ namespace lfs::core {
             EVENT(TrainingReadyToStart, );
             EVENT(WindowFocusLost, );
         } // namespace internal
-    } // namespace events
+    }     // namespace events
 
     // ============================================================================
     // Convenience functions

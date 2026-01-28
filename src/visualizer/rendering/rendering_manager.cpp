@@ -424,9 +424,9 @@ namespace lfs::vis {
                 settings_.sh_degree = *event.sh_degree;
                 LOG_TRACE("SH_DEGREE changed to: {}", settings_.sh_degree);
             }
-            if (event.fov) {
-                settings_.fov = *event.fov;
-                LOG_TRACE("FOV changed to: {}", settings_.fov);
+            if (event.focal_length_mm) {
+                settings_.focal_length_mm = *event.focal_length_mm;
+                LOG_TRACE("Focal length changed to: {} mm", settings_.focal_length_mm);
             }
             if (event.scaling_modifier) {
                 settings_.scaling_modifier = *event.scaling_modifier;
@@ -604,7 +604,8 @@ namespace lfs::vis {
                 LOG_WARN("setOrthographic: invalid viewport_height={} or distance={}", viewport_height, distance_to_pivot);
                 settings_.ortho_scale = DEFAULT_SCALE;
             } else {
-                const float half_tan_fov = std::tan(glm::radians(settings_.fov) * 0.5f);
+                const float vfov = lfs::rendering::focalLengthToVFov(settings_.focal_length_mm);
+                const float half_tan_fov = std::tan(glm::radians(vfov) * 0.5f);
                 settings_.ortho_scale = std::clamp(
                     viewport_height / (2.0f * distance_to_pivot * half_tan_fov),
                     MIN_SCALE, MAX_SCALE);
@@ -617,7 +618,20 @@ namespace lfs::vis {
 
     float RenderingManager::getFovDegrees() const {
         std::lock_guard<std::mutex> lock(settings_mutex_);
-        return settings_.fov;
+        return lfs::rendering::focalLengthToVFov(settings_.focal_length_mm);
+    }
+
+    float RenderingManager::getFocalLengthMm() const {
+        std::lock_guard<std::mutex> lock(settings_mutex_);
+        return settings_.focal_length_mm;
+    }
+
+    void RenderingManager::setFocalLength(const float focal_mm) {
+        std::lock_guard<std::mutex> lock(settings_mutex_);
+        settings_.focal_length_mm = std::clamp(focal_mm,
+                                               lfs::rendering::MIN_FOCAL_LENGTH_MM,
+                                               lfs::rendering::MAX_FOCAL_LENGTH_MM);
+        markDirty();
     }
 
     float RenderingManager::getScalingModifier() const {
@@ -625,13 +639,7 @@ namespace lfs::vis {
         return settings_.scaling_modifier;
     }
 
-    void RenderingManager::setFov(float f) {
-        std::lock_guard<std::mutex> lock(settings_mutex_);
-        settings_.fov = f;
-        markDirty();
-    }
-
-    void RenderingManager::setScalingModifier(float s) {
+    void RenderingManager::setScalingModifier(const float s) {
         std::lock_guard<std::mutex> lock(settings_mutex_);
         settings_.scaling_modifier = s;
         markDirty();
@@ -749,12 +757,11 @@ namespace lfs::vis {
         glClearColor(settings_.background_color.r, settings_.background_color.g, settings_.background_color.b, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Create viewport data
         lfs::rendering::ViewportData viewport_data{
             .rotation = context.viewport.getRotationMatrix(),
             .translation = context.viewport.getTranslation(),
             .size = render_size,
-            .fov = settings_.fov,
+            .focal_length_mm = settings_.focal_length_mm,
             .orthographic = settings_.orthographic,
             .ortho_scale = settings_.ortho_scale};
 
@@ -1281,12 +1288,11 @@ namespace lfs::vis {
                     point_cloud_transform = scene_state.model_transforms[0];
                 }
 
-                // Create viewport data
                 lfs::rendering::ViewportData viewport_data{
                     .rotation = context.viewport.getRotationMatrix(),
                     .translation = context.viewport.getTranslation(),
                     .size = render_size,
-                    .fov = settings_.fov,
+                    .focal_length_mm = settings_.focal_length_mm,
                     .orthographic = settings_.orthographic,
                     .ortho_scale = settings_.ortho_scale};
 
@@ -1372,12 +1378,11 @@ namespace lfs::vis {
                 static_cast<int>(context.viewport_region->height));
         }
 
-        // Create viewport data
         lfs::rendering::ViewportData viewport_data{
             .rotation = context.viewport.getRotationMatrix(),
             .translation = context.viewport.getTranslation(),
             .size = render_size,
-            .fov = settings_.fov,
+            .focal_length_mm = settings_.focal_length_mm,
             .orthographic = settings_.orthographic,
             .ortho_scale = settings_.ortho_scale};
 
@@ -1503,7 +1508,7 @@ namespace lfs::vis {
             .rotation = context.viewport.getRotationMatrix(),
             .translation = context.viewport.getTranslation(),
             .size = render_size,
-            .fov = settings_.fov,
+            .focal_length_mm = settings_.focal_length_mm,
             .orthographic = settings_.orthographic,
             .ortho_scale = settings_.ortho_scale};
 

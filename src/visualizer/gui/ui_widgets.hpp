@@ -14,7 +14,7 @@ namespace lfs::vis::gui::widgets {
 
     // Reusable UI widgets
     bool SliderWithReset(const char* label, float* v, float min, float max, float reset_value,
-                         const char* tooltip = nullptr);
+                         const char* tooltip = nullptr, const char* format = "%.3f");
     bool DragFloat3WithReset(const char* label, float* v, float speed, float reset_value,
                              const char* tooltip = nullptr);
     void HelpMarker(const char* desc);

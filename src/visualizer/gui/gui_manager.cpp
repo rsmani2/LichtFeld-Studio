@@ -2100,8 +2100,8 @@ namespace lfs::vis::gui {
         auto& viewport = ctx.viewer->getViewport();
         const glm::mat4 view = viewport.getViewMatrix();
         const glm::ivec2 vp_size(static_cast<int>(viewport_size_.x), static_cast<int>(viewport_size_.y));
-        const glm::mat4 projection = lfs::rendering::createProjectionMatrix(
-            vp_size, settings.fov, settings.orthographic, settings.ortho_scale);
+        const glm::mat4 projection = lfs::rendering::createProjectionMatrixFromFocal(
+            vp_size, settings.focal_length_mm, settings.orthographic, settings.ortho_scale);
 
         // Get cropbox state from scene graph
         const glm::vec3 cropbox_min = cropbox_node->cropbox->min;
@@ -2362,8 +2362,8 @@ namespace lfs::vis::gui {
         auto& viewport = ctx.viewer->getViewport();
         const glm::mat4 view = viewport.getViewMatrix();
         const glm::ivec2 vp_size(static_cast<int>(viewport_size_.x), static_cast<int>(viewport_size_.y));
-        const glm::mat4 projection = lfs::rendering::createProjectionMatrix(
-            vp_size, settings.fov, settings.orthographic, settings.ortho_scale);
+        const glm::mat4 projection = lfs::rendering::createProjectionMatrixFromFocal(
+            vp_size, settings.focal_length_mm, settings.orthographic, settings.ortho_scale);
 
         const glm::vec3 radii = ellipsoid_node->ellipsoid->radii;
         const glm::mat4 world_transform = scene_manager->getScene().getWorldTransform(ellipsoid_id);
@@ -2570,8 +2570,8 @@ namespace lfs::vis::gui {
         auto& viewport = ctx.viewer->getViewport();
         const glm::mat4 view = viewport.getViewMatrix();
         const glm::ivec2 vp_size(static_cast<int>(viewport_size_.x), static_cast<int>(viewport_size_.y));
-        const glm::mat4 projection = lfs::rendering::createProjectionMatrix(
-            vp_size, settings.fov, settings.orthographic, settings.ortho_scale);
+        const glm::mat4 projection = lfs::rendering::createProjectionMatrixFromFocal(
+            vp_size, settings.focal_length_mm, settings.orthographic, settings.ortho_scale);
 
         const bool use_world_space =
             (gizmo_toolbar_state_.transform_space == panels::TransformSpace::World) || is_multi_selection;

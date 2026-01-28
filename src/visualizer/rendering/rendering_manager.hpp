@@ -68,7 +68,7 @@ namespace lfs::vis {
 
     struct RenderSettings {
         // Core rendering settings
-        float fov = 60.0f;
+        float focal_length_mm = lfs::rendering::DEFAULT_FOCAL_LENGTH_MM;
         float scaling_modifier = 1.0f;
         bool antialiasing = false;
         bool mip_filter = false;
@@ -284,11 +284,11 @@ namespace lfs::vis {
         // Toggle orthographic mode, calculating ortho_scale to preserve size at pivot
         void setOrthographic(bool enabled, float viewport_height, float distance_to_pivot);
 
-        // Direct accessors
         float getFovDegrees() const;
         float getScalingModifier() const;
-        void setFov(float f);
         void setScalingModifier(float s);
+        float getFocalLengthMm() const;
+        void setFocalLength(float focal_mm);
 
         // Split view control
         void advanceSplitOffset();

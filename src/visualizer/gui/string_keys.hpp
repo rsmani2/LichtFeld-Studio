@@ -39,7 +39,7 @@ namespace lichtfeld::Strings {
             inline constexpr const char* GETTING_STARTED = "menu.help.getting_started";
             inline constexpr const char* ABOUT = "menu.help.about";
         } // namespace Help
-    } // namespace Menu
+    }     // namespace Menu
 
     namespace Window {
         inline constexpr const char* GETTING_STARTED = "window.getting_started";
@@ -99,7 +99,7 @@ namespace lichtfeld::Strings {
             inline constexpr const char* ENABLED = "about.interop.enabled";
             inline constexpr const char* DISABLED = "about.interop.disabled";
         } // namespace Interop
-    } // namespace About
+    }     // namespace About
 
     namespace Training {
         namespace Section {
@@ -285,7 +285,7 @@ namespace lichtfeld::Strings {
             inline constexpr const char* ADD = "training.button.add";
             inline constexpr const char* REMOVE = "training.button.remove";
         } // namespace Button
-    } // namespace Training
+    }     // namespace Training
 
     namespace Scene {
         inline constexpr const char* ADD_PLY = "scene.add_ply";
@@ -434,6 +434,8 @@ namespace lichtfeld::Strings {
         inline constexpr const char* DESATURATE_UNSELECTED = "main_panel.desaturate_unselected";
         inline constexpr const char* DESATURATE_CROPPING = "main_panel.desaturate_cropping";
         inline constexpr const char* FOV = "main_panel.fov";
+        inline constexpr const char* FOCAL_LENGTH = "main_panel.focal_length";
+        inline constexpr const char* FOV_INFO = "main_panel.fov_info";
         inline constexpr const char* SH_DEGREE = "main_panel.sh_degree";
         inline constexpr const char* EQUIRECTANGULAR = "main_panel.equirectangular";
         inline constexpr const char* GUT_MODE = "main_panel.gut_mode";
@@ -598,6 +600,7 @@ namespace lichtfeld::Strings {
         inline constexpr const char* SH_DEGREE = "tooltip.sh_degree";
         inline constexpr const char* EQUIRECTANGULAR = "tooltip.equirectangular";
         inline constexpr const char* FOV = "tooltip.fov";
+        inline constexpr const char* FOCAL_LENGTH = "tooltip.focal_length";
         inline constexpr const char* BACKGROUND = "tooltip.background";
         inline constexpr const char* COORD_AXES = "tooltip.coord_axes";
         inline constexpr const char* PIVOT = "tooltip.pivot";

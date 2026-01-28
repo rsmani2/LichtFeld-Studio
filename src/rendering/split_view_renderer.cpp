@@ -162,7 +162,7 @@ namespace lfs::rendering {
                 .view_rotation = request.viewport.rotation,
                 .view_translation = request.viewport.translation,
                 .viewport_size = render_size,
-                .fov = request.viewport.fov,
+                .focal_length_mm = request.viewport.focal_length_mm,
                 .scaling_modifier = request.scaling_modifier,
                 .antialiasing = request.antialiasing,
                 .sh_degree = request.sh_degree,
