@@ -21,20 +21,20 @@
 
 namespace {
 
-constexpr float REL_TOL = 1e-4f;
-constexpr float ABS_TOL = 1e-6f;
+    constexpr float REL_TOL = 1e-4f;
+    constexpr float ABS_TOL = 1e-6f;
 
-bool tensors_close(const torch::Tensor& a, const torch::Tensor& b, float rtol = REL_TOL, float atol = ABS_TOL) {
-    return torch::allclose(a, b, rtol, atol);
-}
+    bool tensors_close(const torch::Tensor& a, const torch::Tensor& b, float rtol = REL_TOL, float atol = ABS_TOL) {
+        return torch::allclose(a, b, rtol, atol);
+    }
 
-float max_rel_error(const torch::Tensor& a, const torch::Tensor& b) {
-    auto diff = (a - b).abs();
-    auto scale = torch::max(a.abs(), b.abs()) + 1e-8f;
-    return (diff / scale).max().item<float>();
-}
+    float max_rel_error(const torch::Tensor& a, const torch::Tensor& b) {
+        auto diff = (a - b).abs();
+        auto scale = torch::max(a.abs(), b.abs()) + 1e-8f;
+        return (diff / scale).max().item<float>();
+    }
 
-}  // namespace
+} // namespace
 
 class AnalyticalGradientTest : public ::testing::Test {
 protected:
@@ -53,7 +53,7 @@ TEST_F(AnalyticalGradientTest, QuaternionToRotation) {
     const int N = 100;
 
     auto quat = torch::randn({N, 4}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
-    quat = quat / quat.norm(2, -1, true);  // normalize
+    quat = quat / quat.norm(2, -1, true); // normalize
 
     // Forward with autograd
     auto quat_ag = quat.clone().set_requires_grad(true);
@@ -79,11 +79,10 @@ TEST_F(AnalyticalGradientTest, QuaternionToRotation) {
     auto R21 = 2 * (yz + wx);
     auto R22 = 1 - 2 * (x2 + y2);
 
-    auto R = torch::stack({
-        torch::stack({R00, R01, R02}, 1),
-        torch::stack({R10, R11, R12}, 1),
-        torch::stack({R20, R21, R22}, 1)
-    }, 1);  // [N, 3, 3]
+    auto R = torch::stack({torch::stack({R00, R01, R02}, 1),
+                           torch::stack({R10, R11, R12}, 1),
+                           torch::stack({R20, R21, R22}, 1)},
+                          1); // [N, 3, 3]
 
     // Random upstream gradient
     auto v_R = torch::randn_like(R);
@@ -151,20 +150,19 @@ TEST_F(AnalyticalGradientTest, BuildCov3D) {
     auto qn = quat_ag / quat_ag.norm(2, -1, true);
     auto w = qn.select(1, 0), x = qn.select(1, 1), y = qn.select(1, 2), z = qn.select(1, 3);
 
-    auto R00 = 1 - 2 * (y*y + z*z), R01 = 2 * (x*y - w*z), R02 = 2 * (x*z + w*y);
-    auto R10 = 2 * (x*y + w*z), R11 = 1 - 2 * (x*x + z*z), R12 = 2 * (y*z - w*x);
-    auto R20 = 2 * (x*z - w*y), R21 = 2 * (y*z + w*x), R22 = 1 - 2 * (x*x + y*y);
+    auto R00 = 1 - 2 * (y * y + z * z), R01 = 2 * (x * y - w * z), R02 = 2 * (x * z + w * y);
+    auto R10 = 2 * (x * y + w * z), R11 = 1 - 2 * (x * x + z * z), R12 = 2 * (y * z - w * x);
+    auto R20 = 2 * (x * z - w * y), R21 = 2 * (y * z + w * x), R22 = 1 - 2 * (x * x + y * y);
 
-    auto R = torch::stack({
-        torch::stack({R00, R01, R02}, 1),
-        torch::stack({R10, R11, R12}, 1),
-        torch::stack({R20, R21, R22}, 1)
-    }, 1);  // [N, 3, 3]
+    auto R = torch::stack({torch::stack({R00, R01, R02}, 1),
+                           torch::stack({R10, R11, R12}, 1),
+                           torch::stack({R20, R21, R22}, 1)},
+                          1); // [N, 3, 3]
 
     // Build variance and covariance
-    auto var = torch::exp(2 * scale_ag);  // [N, 3]
-    auto S = torch::diag_embed(var);      // [N, 3, 3]
-    auto cov3d = torch::bmm(torch::bmm(R, S), R.transpose(1, 2));  // [N, 3, 3]
+    auto var = torch::exp(2 * scale_ag);                          // [N, 3]
+    auto S = torch::diag_embed(var);                              // [N, 3, 3]
+    auto cov3d = torch::bmm(torch::bmm(R, S), R.transpose(1, 2)); // [N, 3, 3]
 
     auto v_cov3d = torch::randn_like(cov3d);
     cov3d.backward(v_cov3d);
@@ -335,7 +333,7 @@ TEST_F(AnalyticalGradientTest, Gaussian2DEval) {
 TEST_F(AnalyticalGradientTest, AlphaBlending) {
     const int N = 100;
 
-    auto T = torch::rand({N}, torch::dtype(torch::kFloat32).device(torch::kCUDA)) * 0.9f + 0.1f;  // transmittance
+    auto T = torch::rand({N}, torch::dtype(torch::kFloat32).device(torch::kCUDA)) * 0.9f + 0.1f; // transmittance
     auto alpha = torch::rand({N}, torch::dtype(torch::kFloat32).device(torch::kCUDA)) * 0.5f;
     auto color_r = torch::rand({N}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
     auto color_g = torch::rand({N}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
@@ -399,7 +397,7 @@ TEST_F(AnalyticalGradientTest, SHDegree0) {
     auto sh_ag = sh_coeff.clone().set_requires_grad(true);
 
     // color = SH_C0 * coeff + 0.5
-    auto color = SH_C0 * sh_ag.squeeze(1) + 0.5f;  // [N, 3]
+    auto color = SH_C0 * sh_ag.squeeze(1) + 0.5f; // [N, 3]
 
     auto v_color = torch::randn_like(color);
     color.backward(v_color);
@@ -425,7 +423,7 @@ TEST_F(AnalyticalGradientTest, SHDegree1) {
 
     auto sh_coeffs = torch::randn({N, 4, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
     auto dir = torch::randn({N, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
-    dir = dir / dir.norm(2, -1, true);  // normalize
+    dir = dir / dir.norm(2, -1, true); // normalize
 
     // Autograd path
     auto sh_ag = sh_coeffs.clone().set_requires_grad(true);
@@ -439,11 +437,9 @@ TEST_F(AnalyticalGradientTest, SHDegree1) {
     auto color = SH_C0 * sh_ag.select(1, 0);
 
     // Degree 1: SH_C1 * (-y * coeff[1] + z * coeff[2] - x * coeff[3])
-    color = color + SH_C1 * (
-        -y.unsqueeze(1) * sh_ag.select(1, 1) +
-         z.unsqueeze(1) * sh_ag.select(1, 2) +
-        -x.unsqueeze(1) * sh_ag.select(1, 3)
-    );
+    color = color + SH_C1 * (-y.unsqueeze(1) * sh_ag.select(1, 1) +
+                             z.unsqueeze(1) * sh_ag.select(1, 2) +
+                             -x.unsqueeze(1) * sh_ag.select(1, 3));
 
     color = color + 0.5f;
 
@@ -491,15 +487,14 @@ TEST_F(AnalyticalGradientTest, FullForwardChain) {
     auto qn = quat_ag / quat_ag.norm(2, -1, true);
     auto w = qn.select(1, 0), x = qn.select(1, 1), y = qn.select(1, 2), z = qn.select(1, 3);
 
-    auto R00 = 1 - 2*(y*y + z*z), R01 = 2*(x*y - w*z), R02 = 2*(x*z + w*y);
-    auto R10 = 2*(x*y + w*z), R11 = 1 - 2*(x*x + z*z), R12 = 2*(y*z - w*x);
-    auto R20 = 2*(x*z - w*y), R21 = 2*(y*z + w*x), R22 = 1 - 2*(x*x + y*y);
+    auto R00 = 1 - 2 * (y * y + z * z), R01 = 2 * (x * y - w * z), R02 = 2 * (x * z + w * y);
+    auto R10 = 2 * (x * y + w * z), R11 = 1 - 2 * (x * x + z * z), R12 = 2 * (y * z - w * x);
+    auto R20 = 2 * (x * z - w * y), R21 = 2 * (y * z + w * x), R22 = 1 - 2 * (x * x + y * y);
 
-    auto R = torch::stack({
-        torch::stack({R00, R01, R02}, 1),
-        torch::stack({R10, R11, R12}, 1),
-        torch::stack({R20, R21, R22}, 1)
-    }, 1);
+    auto R = torch::stack({torch::stack({R00, R01, R02}, 1),
+                           torch::stack({R10, R11, R12}, 1),
+                           torch::stack({R20, R21, R22}, 1)},
+                          1);
 
     // Build 3D covariance
     auto var = torch::exp(2 * scale_ag);
@@ -507,7 +502,7 @@ TEST_F(AnalyticalGradientTest, FullForwardChain) {
     auto cov3d = torch::bmm(torch::bmm(R, S), R.transpose(1, 2));
 
     // Project to 2D (simplified: J * cov3d * J^T)
-    auto cov2d = torch::bmm(torch::bmm(J, cov3d), J.transpose(1, 2));  // [N, 2, 2]
+    auto cov2d = torch::bmm(torch::bmm(J, cov3d), J.transpose(1, 2)); // [N, 2, 2]
 
     // Add blur for numerical stability
     cov2d = cov2d + 0.3f * torch::eye(2, torch::dtype(torch::kFloat32).device(torch::kCUDA)).unsqueeze(0);
@@ -575,14 +570,14 @@ namespace {
     constexpr float SH_C0 = 0.2820947917738781f;
     constexpr float SH_C1 = 0.48860251190292f;
     constexpr float SH_DC_OFFSET = 0.5f;
-}
+} // namespace
 
 // =============================================================================
 // Test: SH Degree 0 CUDA Kernel vs LibTorch Autograd
 // =============================================================================
 TEST_F(CUDAKernelGradientTest, SHDegree0_CUDA_vs_Autograd) {
     const int N = 100;
-    const int K = 1;  // Degree 0 has 1 coefficient
+    const int K = 1; // Degree 0 has 1 coefficient
 
     // Create test data
     auto sh_coeffs = torch::randn({N, K, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
@@ -590,7 +585,7 @@ TEST_F(CUDAKernelGradientTest, SHDegree0_CUDA_vs_Autograd) {
 
     // LibTorch autograd path
     auto sh_ag = sh_coeffs.clone().set_requires_grad(true);
-    auto color = SH_C0 * sh_ag.squeeze(1) + SH_DC_OFFSET;  // [N, 3]
+    auto color = SH_C0 * sh_ag.squeeze(1) + SH_DC_OFFSET; // [N, 3]
     color.backward(v_colors);
     auto grad_sh_autograd = sh_ag.grad().contiguous();
 
@@ -598,17 +593,17 @@ TEST_F(CUDAKernelGradientTest, SHDegree0_CUDA_vs_Autograd) {
     auto v_coeffs_cuda = torch::zeros_like(sh_coeffs);
 
     gsplat_lfs::launch_spherical_harmonics_bwd_kernel(
-        0,  // degrees_to_use
-        nullptr,  // dirs (not needed for degree 0)
+        0,       // degrees_to_use
+        nullptr, // dirs (not needed for degree 0)
         sh_coeffs.data_ptr<float>(),
-        nullptr,  // masks
+        nullptr, // masks
         v_colors.data_ptr<float>(),
         N,
         K,
-        false,  // compute_v_dirs
+        false, // compute_v_dirs
         v_coeffs_cuda.data_ptr<float>(),
-        nullptr,  // v_dirs
-        nullptr   // stream
+        nullptr, // v_dirs
+        nullptr  // stream
     );
 
     cudaDeviceSynchronize();
@@ -628,8 +623,8 @@ TEST_F(CUDAKernelGradientTest, SHDegree0_CUDA_vs_Autograd) {
 // w.r.t. unnormalized inputs. LibTorch must match this behavior.
 // =============================================================================
 TEST_F(CUDAKernelGradientTest, SHDegree1_CUDA_vs_Autograd) {
-    const int N = 1;  // Single element to isolate the issue
-    const int K = 4;  // Degree 1 has 4 coefficients (1 + 3)
+    const int N = 1; // Single element to isolate the issue
+    const int K = 4; // Degree 1 has 4 coefficients (1 + 3)
     const uint32_t degree = 1;
 
     // Create test data with UNNORMALIZED directions (matching CUDA kernel input)
@@ -655,11 +650,9 @@ TEST_F(CUDAKernelGradientTest, SHDegree1_CUDA_vs_Autograd) {
     auto color = SH_C0 * sh_ag.select(1, 0);
 
     // Degree 1: SH_C1 * (-y * coeff[1] + z * coeff[2] - x * coeff[3])
-    color = color + SH_C1 * (
-        -y.unsqueeze(1) * sh_ag.select(1, 1) +
-         z.unsqueeze(1) * sh_ag.select(1, 2) +
-        -x.unsqueeze(1) * sh_ag.select(1, 3)
-    );
+    color = color + SH_C1 * (-y.unsqueeze(1) * sh_ag.select(1, 1) +
+                             z.unsqueeze(1) * sh_ag.select(1, 2) +
+                             -x.unsqueeze(1) * sh_ag.select(1, 3));
 
     color = color + SH_DC_OFFSET;
 
@@ -691,14 +684,14 @@ TEST_F(CUDAKernelGradientTest, SHDegree1_CUDA_vs_Autograd) {
         degree,
         dirs.data_ptr<float>(),
         sh_coeffs.data_ptr<float>(),
-        nullptr,  // masks
+        nullptr, // masks
         v_colors.data_ptr<float>(),
         N,
         K,
-        true,  // compute_v_dirs
+        true, // compute_v_dirs
         v_coeffs_cuda.data_ptr<float>(),
         v_dirs_cuda.data_ptr<float>(),
-        nullptr   // stream
+        nullptr // stream
     );
 
     cudaDeviceSynchronize();
@@ -737,7 +730,7 @@ TEST_F(CUDAKernelGradientTest, SHDegree1_CUDA_vs_Autograd) {
 // =============================================================================
 TEST_F(CUDAKernelGradientTest, SHDegree2_CUDA_vs_Autograd) {
     const int N = 100;
-    const int K = 9;  // Degree 2 has 9 coefficients (1 + 3 + 5)
+    const int K = 9; // Degree 2 has 9 coefficients (1 + 3 + 5)
     const uint32_t degree = 2;
 
     auto sh_coeffs = torch::randn({N, K, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
@@ -761,11 +754,9 @@ TEST_F(CUDAKernelGradientTest, SHDegree2_CUDA_vs_Autograd) {
     auto color = SH_C0 * sh_ag.select(1, 0);
 
     // Degree 1
-    color = color + SH_C1 * (
-        -y.unsqueeze(1) * sh_ag.select(1, 1) +
-         z.unsqueeze(1) * sh_ag.select(1, 2) +
-        -x.unsqueeze(1) * sh_ag.select(1, 3)
-    );
+    color = color + SH_C1 * (-y.unsqueeze(1) * sh_ag.select(1, 1) +
+                             z.unsqueeze(1) * sh_ag.select(1, 2) +
+                             -x.unsqueeze(1) * sh_ag.select(1, 3));
 
     // Degree 2 (using constants from CUDA kernel)
     auto z2 = z * z;
@@ -780,10 +771,10 @@ TEST_F(CUDAKernelGradientTest, SHDegree2_CUDA_vs_Autograd) {
     auto pSH8 = 0.5462742152960395f * fC1;
 
     color = color + pSH4.unsqueeze(1) * sh_ag.select(1, 4) +
-                    pSH5.unsqueeze(1) * sh_ag.select(1, 5) +
-                    pSH6.unsqueeze(1) * sh_ag.select(1, 6) +
-                    pSH7.unsqueeze(1) * sh_ag.select(1, 7) +
-                    pSH8.unsqueeze(1) * sh_ag.select(1, 8);
+            pSH5.unsqueeze(1) * sh_ag.select(1, 5) +
+            pSH6.unsqueeze(1) * sh_ag.select(1, 6) +
+            pSH7.unsqueeze(1) * sh_ag.select(1, 7) +
+            pSH8.unsqueeze(1) * sh_ag.select(1, 8);
 
     color = color + SH_DC_OFFSET;
     color.backward(v_colors);
@@ -806,8 +797,7 @@ TEST_F(CUDAKernelGradientTest, SHDegree2_CUDA_vs_Autograd) {
         true,
         v_coeffs_cuda.data_ptr<float>(),
         v_dirs_cuda.data_ptr<float>(),
-        nullptr
-    );
+        nullptr);
 
     cudaDeviceSynchronize();
 
@@ -829,7 +819,7 @@ TEST_F(CUDAKernelGradientTest, SHDegree2_CUDA_vs_Autograd) {
 // =============================================================================
 TEST_F(CUDAKernelGradientTest, SHDegree3_CUDA_vs_Autograd) {
     const int N = 100;
-    const int K = 16;  // Degree 3 has 16 coefficients (1 + 3 + 5 + 7)
+    const int K = 16; // Degree 3 has 16 coefficients (1 + 3 + 5 + 7)
     const uint32_t degree = 3;
 
     auto sh_coeffs = torch::randn({N, K, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
@@ -853,11 +843,9 @@ TEST_F(CUDAKernelGradientTest, SHDegree3_CUDA_vs_Autograd) {
     auto color = SH_C0 * sh_ag.select(1, 0);
 
     // Degree 1
-    color = color + SH_C1 * (
-        -y.unsqueeze(1) * sh_ag.select(1, 1) +
-         z.unsqueeze(1) * sh_ag.select(1, 2) +
-        -x.unsqueeze(1) * sh_ag.select(1, 3)
-    );
+    color = color + SH_C1 * (-y.unsqueeze(1) * sh_ag.select(1, 1) +
+                             z.unsqueeze(1) * sh_ag.select(1, 2) +
+                             -x.unsqueeze(1) * sh_ag.select(1, 3));
 
     // Degree 2
     auto z2 = z * z;
@@ -872,10 +860,10 @@ TEST_F(CUDAKernelGradientTest, SHDegree3_CUDA_vs_Autograd) {
     auto pSH8 = 0.5462742152960395f * fC1;
 
     color = color + pSH4.unsqueeze(1) * sh_ag.select(1, 4) +
-                    pSH5.unsqueeze(1) * sh_ag.select(1, 5) +
-                    pSH6.unsqueeze(1) * sh_ag.select(1, 6) +
-                    pSH7.unsqueeze(1) * sh_ag.select(1, 7) +
-                    pSH8.unsqueeze(1) * sh_ag.select(1, 8);
+            pSH5.unsqueeze(1) * sh_ag.select(1, 5) +
+            pSH6.unsqueeze(1) * sh_ag.select(1, 6) +
+            pSH7.unsqueeze(1) * sh_ag.select(1, 7) +
+            pSH8.unsqueeze(1) * sh_ag.select(1, 8);
 
     // Degree 3 (using constants from CUDA kernel)
     auto fTmp0C = -2.285228997322329f * z2 + 0.4570457994644658f;
@@ -892,12 +880,12 @@ TEST_F(CUDAKernelGradientTest, SHDegree3_CUDA_vs_Autograd) {
     auto pSH15 = -0.5900435899266435f * fC2;
 
     color = color + pSH9.unsqueeze(1) * sh_ag.select(1, 9) +
-                    pSH10.unsqueeze(1) * sh_ag.select(1, 10) +
-                    pSH11.unsqueeze(1) * sh_ag.select(1, 11) +
-                    pSH12.unsqueeze(1) * sh_ag.select(1, 12) +
-                    pSH13.unsqueeze(1) * sh_ag.select(1, 13) +
-                    pSH14.unsqueeze(1) * sh_ag.select(1, 14) +
-                    pSH15.unsqueeze(1) * sh_ag.select(1, 15);
+            pSH10.unsqueeze(1) * sh_ag.select(1, 10) +
+            pSH11.unsqueeze(1) * sh_ag.select(1, 11) +
+            pSH12.unsqueeze(1) * sh_ag.select(1, 12) +
+            pSH13.unsqueeze(1) * sh_ag.select(1, 13) +
+            pSH14.unsqueeze(1) * sh_ag.select(1, 14) +
+            pSH15.unsqueeze(1) * sh_ag.select(1, 15);
 
     color = color + SH_DC_OFFSET;
     color.backward(v_colors);
@@ -920,8 +908,7 @@ TEST_F(CUDAKernelGradientTest, SHDegree3_CUDA_vs_Autograd) {
         true,
         v_coeffs_cuda.data_ptr<float>(),
         v_dirs_cuda.data_ptr<float>(),
-        nullptr
-    );
+        nullptr);
 
     cudaDeviceSynchronize();
 
@@ -962,8 +949,7 @@ TEST_F(CUDAKernelGradientTest, SH_ForwardBackward_RoundTrip) {
         N,
         K,
         colors_cuda.data_ptr<float>(),
-        nullptr
-    );
+        nullptr);
 
     cudaDeviceSynchronize();
 
@@ -975,11 +961,9 @@ TEST_F(CUDAKernelGradientTest, SH_ForwardBackward_RoundTrip) {
     auto color_torch = SH_C0 * sh_coeffs.select(1, 0);
 
     // Degree 1
-    color_torch = color_torch + SH_C1 * (
-        -y.unsqueeze(1) * sh_coeffs.select(1, 1) +
-         z.unsqueeze(1) * sh_coeffs.select(1, 2) +
-        -x.unsqueeze(1) * sh_coeffs.select(1, 3)
-    );
+    color_torch = color_torch + SH_C1 * (-y.unsqueeze(1) * sh_coeffs.select(1, 1) +
+                                         z.unsqueeze(1) * sh_coeffs.select(1, 2) +
+                                         -x.unsqueeze(1) * sh_coeffs.select(1, 3));
 
     // Degree 2
     auto z2 = z * z;
@@ -988,10 +972,10 @@ TEST_F(CUDAKernelGradientTest, SH_ForwardBackward_RoundTrip) {
     auto fTmp0B = -1.092548430592079f * z;
 
     color_torch = color_torch + 0.5462742152960395f * fS1.unsqueeze(1) * sh_coeffs.select(1, 4) +
-                    (fTmp0B * y).unsqueeze(1) * sh_coeffs.select(1, 5) +
-                    (0.9461746957575601f * z2 - 0.3153915652525201f).unsqueeze(1) * sh_coeffs.select(1, 6) +
-                    (fTmp0B * x).unsqueeze(1) * sh_coeffs.select(1, 7) +
-                    0.5462742152960395f * fC1.unsqueeze(1) * sh_coeffs.select(1, 8);
+                  (fTmp0B * y).unsqueeze(1) * sh_coeffs.select(1, 5) +
+                  (0.9461746957575601f * z2 - 0.3153915652525201f).unsqueeze(1) * sh_coeffs.select(1, 6) +
+                  (fTmp0B * x).unsqueeze(1) * sh_coeffs.select(1, 7) +
+                  0.5462742152960395f * fC1.unsqueeze(1) * sh_coeffs.select(1, 8);
 
     // Degree 3
     auto fTmp0C = -2.285228997322329f * z2 + 0.4570457994644658f;
@@ -1000,13 +984,13 @@ TEST_F(CUDAKernelGradientTest, SH_ForwardBackward_RoundTrip) {
     auto fS2 = x * fS1 + y * fC1;
 
     color_torch = color_torch +
-                    (-0.5900435899266435f * fS2).unsqueeze(1) * sh_coeffs.select(1, 9) +
-                    (fTmp1B * fS1).unsqueeze(1) * sh_coeffs.select(1, 10) +
-                    (fTmp0C * y).unsqueeze(1) * sh_coeffs.select(1, 11) +
-                    (z * (1.865881662950577f * z2 - 1.119528997770346f)).unsqueeze(1) * sh_coeffs.select(1, 12) +
-                    (fTmp0C * x).unsqueeze(1) * sh_coeffs.select(1, 13) +
-                    (fTmp1B * fC1).unsqueeze(1) * sh_coeffs.select(1, 14) +
-                    (-0.5900435899266435f * fC2).unsqueeze(1) * sh_coeffs.select(1, 15);
+                  (-0.5900435899266435f * fS2).unsqueeze(1) * sh_coeffs.select(1, 9) +
+                  (fTmp1B * fS1).unsqueeze(1) * sh_coeffs.select(1, 10) +
+                  (fTmp0C * y).unsqueeze(1) * sh_coeffs.select(1, 11) +
+                  (z * (1.865881662950577f * z2 - 1.119528997770346f)).unsqueeze(1) * sh_coeffs.select(1, 12) +
+                  (fTmp0C * x).unsqueeze(1) * sh_coeffs.select(1, 13) +
+                  (fTmp1B * fC1).unsqueeze(1) * sh_coeffs.select(1, 14) +
+                  (-0.5900435899266435f * fC2).unsqueeze(1) * sh_coeffs.select(1, 15);
 
     color_torch = color_torch + SH_DC_OFFSET;
 
@@ -1031,8 +1015,7 @@ TEST_F(CUDAKernelGradientTest, SH_ForwardBackward_RoundTrip) {
         true,
         v_coeffs_cuda.data_ptr<float>(),
         v_dirs_cuda.data_ptr<float>(),
-        nullptr
-    );
+        nullptr);
 
     cudaDeviceSynchronize();
 
@@ -1060,9 +1043,9 @@ TEST_F(AnalyticalGradientTest, Visual_ScaleGradient) {
     const int N = 3;
 
     auto raw_scale = torch::tensor({{-0.5f, 0.0f, 0.5f},
-                                     {0.1f, 0.2f, 0.3f},
-                                     {-0.1f, -0.2f, -0.3f}},
-                                    torch::dtype(torch::kFloat32).device(torch::kCUDA));
+                                    {0.1f, 0.2f, 0.3f},
+                                    {-0.1f, -0.2f, -0.3f}},
+                                   torch::dtype(torch::kFloat32).device(torch::kCUDA));
 
     auto raw_scale_ag = raw_scale.clone().set_requires_grad(true);
     auto variance = torch::exp(2.0f * raw_scale_ag);
@@ -1077,9 +1060,12 @@ TEST_F(AnalyticalGradientTest, Visual_ScaleGradient) {
     std::cout << "\n=== VISUAL: Scale Gradient ===" << std::endl;
     std::cout << "Formula: variance = exp(2 * raw_scale)" << std::endl;
     std::cout << "Gradient: d(variance)/d(raw_scale) = 2 * variance" << std::endl;
-    std::cout << "\nInput raw_scale:" << std::endl << raw_scale.cpu() << std::endl;
-    std::cout << "\nVariance = exp(2*s):" << std::endl << var.cpu() << std::endl;
-    std::cout << "\nGradient (2*var):" << std::endl << grad.cpu() << std::endl;
+    std::cout << "\nInput raw_scale:" << std::endl
+              << raw_scale.cpu() << std::endl;
+    std::cout << "\nVariance = exp(2*s):" << std::endl
+              << var.cpu() << std::endl;
+    std::cout << "\nGradient (2*var):" << std::endl
+              << grad.cpu() << std::endl;
 
     // Verify manually: grad should be 2*var for upstream=1
     auto expected = 2.0f * var;
@@ -1091,7 +1077,7 @@ TEST_F(AnalyticalGradientTest, Visual_Gaussian2DGradient) {
 
     // Simple conic (diagonal) and delta values
     auto conic_x = torch::tensor({1.0f, 2.0f, 0.5f}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
-    auto conic_y = torch::tensor({0.0f, 0.0f, 0.0f}, torch::dtype(torch::kFloat32).device(torch::kCUDA));  // No off-diagonal
+    auto conic_y = torch::tensor({0.0f, 0.0f, 0.0f}, torch::dtype(torch::kFloat32).device(torch::kCUDA)); // No off-diagonal
     auto conic_z = torch::tensor({1.0f, 0.5f, 2.0f}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
     auto delta_x = torch::tensor({0.5f, 1.0f, -0.5f}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
     auto delta_y = torch::tensor({0.5f, -1.0f, 0.5f}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
@@ -1118,11 +1104,16 @@ TEST_F(AnalyticalGradientTest, Visual_Gaussian2DGradient) {
     std::cout << "  conic_x: " << conic_x.cpu() << std::endl;
     std::cout << "  delta_x: " << delta_x.cpu() << std::endl;
     std::cout << "  delta_y: " << delta_y.cpu() << std::endl;
-    std::cout << "\nGaussian G:" << std::endl << G_val.cpu() << std::endl;
-    std::cout << "\nGrad w.r.t conic_x:" << std::endl << grad_cx.cpu() << std::endl;
-    std::cout << "Expected (-0.5 * dx^2 * G):" << std::endl << (-0.5f * delta_x * delta_x * G_val).cpu() << std::endl;
-    std::cout << "\nGrad w.r.t delta_x:" << std::endl << grad_dx.cpu() << std::endl;
-    std::cout << "Expected (-cx * dx * G):" << std::endl << (-conic_x * delta_x * G_val).cpu() << std::endl;
+    std::cout << "\nGaussian G:" << std::endl
+              << G_val.cpu() << std::endl;
+    std::cout << "\nGrad w.r.t conic_x:" << std::endl
+              << grad_cx.cpu() << std::endl;
+    std::cout << "Expected (-0.5 * dx^2 * G):" << std::endl
+              << (-0.5f * delta_x * delta_x * G_val).cpu() << std::endl;
+    std::cout << "\nGrad w.r.t delta_x:" << std::endl
+              << grad_dx.cpu() << std::endl;
+    std::cout << "Expected (-cx * dx * G):" << std::endl
+              << (-conic_x * delta_x * G_val).cpu() << std::endl;
 
     EXPECT_TRUE(tensors_close(grad_cx, -0.5f * delta_x * delta_x * G_val, 1e-5f, 1e-6f));
     EXPECT_TRUE(tensors_close(grad_dx, -conic_x * delta_x * G_val, 1e-5f, 1e-6f));
@@ -1130,7 +1121,7 @@ TEST_F(AnalyticalGradientTest, Visual_Gaussian2DGradient) {
 
 TEST_F(AnalyticalGradientTest, Visual_AlphaBlendingGradient) {
     // Single Gaussian blend
-    auto T = torch::tensor({1.0f}, torch::dtype(torch::kFloat32).device(torch::kCUDA));  // Transmittance
+    auto T = torch::tensor({1.0f}, torch::dtype(torch::kFloat32).device(torch::kCUDA)); // Transmittance
     auto alpha = torch::tensor({0.3f}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
     auto color = torch::tensor({1.0f, 0.5f, 0.25f}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
 
@@ -1156,7 +1147,8 @@ TEST_F(AnalyticalGradientTest, Visual_AlphaBlendingGradient) {
     std::cout << "  alpha: " << alpha.cpu() << std::endl;
     std::cout << "  color: " << color.cpu() << std::endl;
 
-    std::cout << "\nPixel = T * alpha * color:" << std::endl << pixel.detach().cpu() << std::endl;
+    std::cout << "\nPixel = T * alpha * color:" << std::endl
+              << pixel.detach().cpu() << std::endl;
 
     std::cout << "\nGradients (upstream = (1,1,1)):" << std::endl;
     std::cout << "  d/dT = sum(alpha * color * upstream) = " << T_ag.grad().cpu() << std::endl;
@@ -1173,9 +1165,9 @@ TEST_F(AnalyticalGradientTest, Visual_SHDegree1Gradient) {
     const float SH_C1_val = 0.4886025119029199f;
 
     // Fixed directions for easy interpretation
-    auto dir = torch::tensor({{1.0f, 0.0f, 0.0f},   // +X axis
-                               {0.0f, 1.0f, 0.0f}},  // +Y axis
-                              torch::dtype(torch::kFloat32).device(torch::kCUDA));
+    auto dir = torch::tensor({{1.0f, 0.0f, 0.0f},  // +X axis
+                              {0.0f, 1.0f, 0.0f}}, // +Y axis
+                             torch::dtype(torch::kFloat32).device(torch::kCUDA));
 
     // SH coefficients: [N, 4, 3] - 4 bases, 3 color channels
     auto sh_coeffs = torch::ones({N, 4, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
@@ -1189,11 +1181,9 @@ TEST_F(AnalyticalGradientTest, Visual_SHDegree1Gradient) {
 
     // SH degree 0 + 1
     auto color = SH_C0_val * sh_ag.select(1, 0);
-    color = color + SH_C1_val * (
-        -y.unsqueeze(1) * sh_ag.select(1, 1) +
-         z.unsqueeze(1) * sh_ag.select(1, 2) +
-        -x.unsqueeze(1) * sh_ag.select(1, 3)
-    );
+    color = color + SH_C1_val * (-y.unsqueeze(1) * sh_ag.select(1, 1) +
+                                 z.unsqueeze(1) * sh_ag.select(1, 2) +
+                                 -x.unsqueeze(1) * sh_ag.select(1, 3));
     color = color + 0.5f;
 
     // Upstream: just red channel
@@ -1211,7 +1201,8 @@ TEST_F(AnalyticalGradientTest, Visual_SHDegree1Gradient) {
 
     std::cout << "\nSH coefficients (all 1.0):" << std::endl;
 
-    std::cout << "\nColors:" << std::endl << color.detach().cpu() << std::endl;
+    std::cout << "\nColors:" << std::endl
+              << color.detach().cpu() << std::endl;
 
     std::cout << "\nGrad w.r.t sh[0] (d/d(sh0) = SH_C0 * upstream):" << std::endl;
     std::cout << sh_ag.grad().select(1, 0).cpu() << std::endl;
@@ -1219,14 +1210,17 @@ TEST_F(AnalyticalGradientTest, Visual_SHDegree1Gradient) {
     std::cout << "\nGrad w.r.t sh[1] (d/d(sh1) = -SH_C1 * y * upstream):" << std::endl;
     std::cout << "  d0: y=0, so grad should be 0" << std::endl;
     std::cout << "  d1: y=1, so grad should be -SH_C1 = " << -SH_C1_val << std::endl;
-    std::cout << "Actual:" << std::endl << sh_ag.grad().select(1, 1).cpu() << std::endl;
+    std::cout << "Actual:" << std::endl
+              << sh_ag.grad().select(1, 1).cpu() << std::endl;
 
     std::cout << "\nGrad w.r.t sh[3] (d/d(sh3) = -SH_C1 * x * upstream):" << std::endl;
     std::cout << "  d0: x=1, so grad should be -SH_C1 = " << -SH_C1_val << std::endl;
     std::cout << "  d1: x=0, so grad should be 0" << std::endl;
-    std::cout << "Actual:" << std::endl << sh_ag.grad().select(1, 3).cpu() << std::endl;
+    std::cout << "Actual:" << std::endl
+              << sh_ag.grad().select(1, 3).cpu() << std::endl;
 
-    std::cout << "\nGrad w.r.t direction:" << std::endl << dir_ag.grad().cpu() << std::endl;
+    std::cout << "\nGrad w.r.t direction:" << std::endl
+              << dir_ag.grad().cpu() << std::endl;
 }
 
 // =============================================================================
@@ -1392,7 +1386,7 @@ TEST_F(AnalyticalGradientTest, SHDegree1DirectionGradientAnalytical) {
     auto v_dn_y = -SH_C1 * sh_coeffs.select(1, 1).select(1, 0) * v_color;
     auto v_dn_z = SH_C1 * sh_coeffs.select(1, 2).select(1, 0) * v_color;
 
-    auto v_dn = torch::stack({v_dn_x, v_dn_y, v_dn_z}, 1);  // [N, 3]
+    auto v_dn = torch::stack({v_dn_x, v_dn_y, v_dn_z}, 1); // [N, 3]
 
     // Chain through normalization: v_d = (v_dn - (v_dn . d_n) * d_n) / n
     auto dot_prod = (v_dn * d_n).sum(-1, true);
@@ -1521,11 +1515,10 @@ TEST_F(AnalyticalGradientTest, QuaternionToRotationAnalytical) {
     auto R21 = qrx + qyz;
     auto R22 = 1.0f - (qxx + qyy);
 
-    auto R = torch::stack({
-        torch::stack({R00, R01, R02}, 1),
-        torch::stack({R10, R11, R12}, 1),
-        torch::stack({R20, R21, R22}, 1)
-    }, 1);  // [N, 3, 3]
+    auto R = torch::stack({torch::stack({R00, R01, R02}, 1),
+                           torch::stack({R10, R11, R12}, 1),
+                           torch::stack({R20, R21, R22}, 1)},
+                          1); // [N, 3, 3]
 
     // Upstream gradient
     auto v_R = torch::randn_like(R);
@@ -1558,7 +1551,7 @@ TEST_F(AnalyticalGradientTest, Mean3DProjectionGradient) {
 
     // 3D means (in front of camera)
     auto mean3d = torch::randn({N, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
-    mean3d.select(1, 2) = torch::abs(mean3d.select(1, 2)) + 1.0f;  // Ensure positive depth
+    mean3d.select(1, 2) = torch::abs(mean3d.select(1, 2)) + 1.0f; // Ensure positive depth
 
     // Identity world-to-camera for simplicity
     // In camera space: mean2d.x = fx * (x/z) + cx, mean2d.y = fy * (y/z) + cy
@@ -1594,8 +1587,7 @@ TEST_F(AnalyticalGradientTest, Mean3DProjectionGradient) {
 
     auto grad_x_analytical = fx / z_val * v_mean2d_x;
     auto grad_y_analytical = fy / z_val * v_mean2d_y;
-    auto grad_z_analytical = -fx * x_val / (z_val * z_val) * v_mean2d_x
-                           - fy * y_val / (z_val * z_val) * v_mean2d_y;
+    auto grad_z_analytical = -fx * x_val / (z_val * z_val) * v_mean2d_x - fy * y_val / (z_val * z_val) * v_mean2d_y;
 
     auto grad_mean3d_analytical = torch::stack({grad_x_analytical, grad_y_analytical, grad_z_analytical}, 1);
 
@@ -1649,18 +1641,17 @@ TEST_F(AnalyticalGradientTest, FullCov3DChain) {
     auto R21 = qrx + qyz;
     auto R22 = 1.0f - (qxx + qyy);
 
-    auto R = torch::stack({
-        torch::stack({R00, R01, R02}, 1),
-        torch::stack({R10, R11, R12}, 1),
-        torch::stack({R20, R21, R22}, 1)
-    }, 1);  // [N, 3, 3]
+    auto R = torch::stack({torch::stack({R00, R01, R02}, 1),
+                           torch::stack({R10, R11, R12}, 1),
+                           torch::stack({R20, R21, R22}, 1)},
+                          1); // [N, 3, 3]
 
     // Variance from raw scale
-    auto variance = torch::exp(2.0f * scale_ag);  // [N, 3]
+    auto variance = torch::exp(2.0f * scale_ag); // [N, 3]
 
     // 3D covariance: R * diag(var) * R^T
-    auto S = torch::diag_embed(variance);  // [N, 3, 3]
-    auto cov3d = torch::bmm(torch::bmm(R, S), R.transpose(1, 2));  // [N, 3, 3]
+    auto S = torch::diag_embed(variance);                         // [N, 3, 3]
+    auto cov3d = torch::bmm(torch::bmm(R, S), R.transpose(1, 2)); // [N, 3, 3]
 
     // Random upstream gradient for cov3d
     auto v_cov3d = torch::randn_like(cov3d);
@@ -1719,11 +1710,11 @@ TEST_F(AnalyticalGradientTest, EWASplattingGradient) {
 
     // Build Jacobian
     auto J = torch::zeros({N, 2, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
-    J.select(1, 0).select(1, 0) = fx / depth_ag;  // J[0,0] = fx/z
-    J.select(1, 1).select(1, 1) = fy / depth_ag;  // J[1,1] = fy/z
+    J.select(1, 0).select(1, 0) = fx / depth_ag; // J[0,0] = fx/z
+    J.select(1, 1).select(1, 1) = fy / depth_ag; // J[1,1] = fy/z
 
     // Cov2D = J * Cov3D * J^T
-    auto cov2d = torch::bmm(torch::bmm(J, cov3d_ag), J.transpose(1, 2));  // [N, 2, 2]
+    auto cov2d = torch::bmm(torch::bmm(J, cov3d_ag), J.transpose(1, 2)); // [N, 2, 2]
 
     // Add dilation for numerical stability
     cov2d = cov2d + 0.3f * torch::eye(2, torch::kCUDA).unsqueeze(0);
@@ -1751,7 +1742,7 @@ TEST_F(AnalyticalGradientTest, SHDegree2Analytical) {
     const int N = 100;
 
     auto dir = torch::randn({N, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
-    dir = dir / dir.norm(2, -1, true);  // normalized
+    dir = dir / dir.norm(2, -1, true); // normalized
 
     auto sh_coeffs = torch::randn({N, 9, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
 
@@ -1767,11 +1758,9 @@ TEST_F(AnalyticalGradientTest, SHDegree2Analytical) {
     auto color = SH_C0 * sh_ag.select(1, 0);
 
     // Degree 1
-    color = color + SH_C1 * (
-        -y.unsqueeze(1) * sh_ag.select(1, 1) +
-         z.unsqueeze(1) * sh_ag.select(1, 2) +
-        -x.unsqueeze(1) * sh_ag.select(1, 3)
-    );
+    color = color + SH_C1 * (-y.unsqueeze(1) * sh_ag.select(1, 1) +
+                             z.unsqueeze(1) * sh_ag.select(1, 2) +
+                             -x.unsqueeze(1) * sh_ag.select(1, 3));
 
     // Degree 2 - using constants from FastGS kernel_utils.cuh
     auto z2 = z * z;
@@ -1786,10 +1775,10 @@ TEST_F(AnalyticalGradientTest, SHDegree2Analytical) {
     auto pSH8 = 0.5462742152960395f * fC1;
 
     color = color + pSH4.unsqueeze(1) * sh_ag.select(1, 4) +
-                    pSH5.unsqueeze(1) * sh_ag.select(1, 5) +
-                    pSH6.unsqueeze(1) * sh_ag.select(1, 6) +
-                    pSH7.unsqueeze(1) * sh_ag.select(1, 7) +
-                    pSH8.unsqueeze(1) * sh_ag.select(1, 8);
+            pSH5.unsqueeze(1) * sh_ag.select(1, 5) +
+            pSH6.unsqueeze(1) * sh_ag.select(1, 6) +
+            pSH7.unsqueeze(1) * sh_ag.select(1, 7) +
+            pSH8.unsqueeze(1) * sh_ag.select(1, 8);
 
     color = color + SH_DC_OFFSET;
 
@@ -1846,11 +1835,9 @@ TEST_F(AnalyticalGradientTest, SHDegree3Analytical) {
     auto color = SH_C0 * sh_ag.select(1, 0);
 
     // Degree 1
-    color = color + SH_C1 * (
-        -y.unsqueeze(1) * sh_ag.select(1, 1) +
-         z.unsqueeze(1) * sh_ag.select(1, 2) +
-        -x.unsqueeze(1) * sh_ag.select(1, 3)
-    );
+    color = color + SH_C1 * (-y.unsqueeze(1) * sh_ag.select(1, 1) +
+                             z.unsqueeze(1) * sh_ag.select(1, 2) +
+                             -x.unsqueeze(1) * sh_ag.select(1, 3));
 
     // Degree 2
     auto z2 = z * z;
@@ -1859,10 +1846,10 @@ TEST_F(AnalyticalGradientTest, SHDegree3Analytical) {
     auto fTmp0B = -1.092548430592079f * z;
 
     color = color + (0.5462742152960395f * fS1).unsqueeze(1) * sh_ag.select(1, 4) +
-                    (fTmp0B * y).unsqueeze(1) * sh_ag.select(1, 5) +
-                    (0.9461746957575601f * z2 - 0.3153915652525201f).unsqueeze(1) * sh_ag.select(1, 6) +
-                    (fTmp0B * x).unsqueeze(1) * sh_ag.select(1, 7) +
-                    (0.5462742152960395f * fC1).unsqueeze(1) * sh_ag.select(1, 8);
+            (fTmp0B * y).unsqueeze(1) * sh_ag.select(1, 5) +
+            (0.9461746957575601f * z2 - 0.3153915652525201f).unsqueeze(1) * sh_ag.select(1, 6) +
+            (fTmp0B * x).unsqueeze(1) * sh_ag.select(1, 7) +
+            (0.5462742152960395f * fC1).unsqueeze(1) * sh_ag.select(1, 8);
 
     // Degree 3
     auto fTmp0C = -2.285228997322329f * z2 + 0.4570457994644658f;
@@ -1879,12 +1866,12 @@ TEST_F(AnalyticalGradientTest, SHDegree3Analytical) {
     auto pSH15 = -0.5900435899266435f * fC2;
 
     color = color + pSH9.unsqueeze(1) * sh_ag.select(1, 9) +
-                    pSH10.unsqueeze(1) * sh_ag.select(1, 10) +
-                    pSH11.unsqueeze(1) * sh_ag.select(1, 11) +
-                    pSH12.unsqueeze(1) * sh_ag.select(1, 12) +
-                    pSH13.unsqueeze(1) * sh_ag.select(1, 13) +
-                    pSH14.unsqueeze(1) * sh_ag.select(1, 14) +
-                    pSH15.unsqueeze(1) * sh_ag.select(1, 15);
+            pSH10.unsqueeze(1) * sh_ag.select(1, 10) +
+            pSH11.unsqueeze(1) * sh_ag.select(1, 11) +
+            pSH12.unsqueeze(1) * sh_ag.select(1, 12) +
+            pSH13.unsqueeze(1) * sh_ag.select(1, 13) +
+            pSH14.unsqueeze(1) * sh_ag.select(1, 14) +
+            pSH15.unsqueeze(1) * sh_ag.select(1, 15);
 
     color = color + SH_DC_OFFSET;
 
@@ -1931,7 +1918,7 @@ TEST_F(AnalyticalGradientTest, CompleteBackwardChain) {
 
     // All learnable parameters
     auto mean3d = torch::randn({N, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
-    mean3d.select(1, 2) = torch::abs(mean3d.select(1, 2)) + 2.0f;  // positive depth
+    mean3d.select(1, 2) = torch::abs(mean3d.select(1, 2)) + 2.0f; // positive depth
     auto raw_scale = torch::randn({N, 3}, torch::dtype(torch::kFloat32).device(torch::kCUDA)) * 0.3f;
     auto quat = torch::randn({N, 4}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
     auto raw_opacity = torch::randn({N}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
@@ -1966,11 +1953,10 @@ TEST_F(AnalyticalGradientTest, CompleteBackwardChain) {
     auto qry = 2.0f * qr * qy / q_norm_sq.squeeze();
     auto qrz = 2.0f * qr * qz / q_norm_sq.squeeze();
 
-    auto R = torch::stack({
-        torch::stack({1.0f - (qyy + qzz), qxy - qrz, qry + qxz}, 1),
-        torch::stack({qrz + qxy, 1.0f - (qxx + qzz), qyz - qrx}, 1),
-        torch::stack({qxz - qry, qrx + qyz, 1.0f - (qxx + qyy)}, 1)
-    }, 1);
+    auto R = torch::stack({torch::stack({1.0f - (qyy + qzz), qxy - qrz, qry + qxz}, 1),
+                           torch::stack({qrz + qxy, 1.0f - (qxx + qzz), qyz - qrx}, 1),
+                           torch::stack({qxz - qry, qrx + qyz, 1.0f - (qxx + qyy)}, 1)},
+                          1);
 
     // 2. Scale -> Variance -> 3D Covariance
     auto variance = torch::exp(2.0f * scale_ag);
@@ -1986,8 +1972,7 @@ TEST_F(AnalyticalGradientTest, CompleteBackwardChain) {
     cov2d = cov2d + 0.3f * torch::eye(2, torch::kCUDA).unsqueeze(0);
 
     // 4. Compute conic (inverse cov2d)
-    auto det = cov2d.select(1, 0).select(1, 0) * cov2d.select(1, 1).select(1, 1)
-             - cov2d.select(1, 0).select(1, 1) * cov2d.select(1, 0).select(1, 1);
+    auto det = cov2d.select(1, 0).select(1, 0) * cov2d.select(1, 1).select(1, 1) - cov2d.select(1, 0).select(1, 1) * cov2d.select(1, 0).select(1, 1);
     auto conic_x = cov2d.select(1, 1).select(1, 1) / det;
     auto conic_y = -cov2d.select(1, 0).select(1, 1) / det;
     auto conic_z = cov2d.select(1, 0).select(1, 0) / det;
@@ -2017,16 +2002,14 @@ TEST_F(AnalyticalGradientTest, CompleteBackwardChain) {
     auto z = dir.select(1, 2);
 
     auto color = SH_C0 * sh_ag.select(1, 0);
-    color = color + SH_C1 * (
-        -y.unsqueeze(1) * sh_ag.select(1, 1) +
-         z.unsqueeze(1) * sh_ag.select(1, 2) +
-        -x.unsqueeze(1) * sh_ag.select(1, 3)
-    );
+    color = color + SH_C1 * (-y.unsqueeze(1) * sh_ag.select(1, 1) +
+                             z.unsqueeze(1) * sh_ag.select(1, 2) +
+                             -x.unsqueeze(1) * sh_ag.select(1, 3));
     color = color + SH_DC_OFFSET;
     color = torch::clamp(color, 0.0f, 1.0f);
 
     // 9. Blend (simplified - single Gaussian, T=1)
-    auto pixel_color = (alpha.unsqueeze(1) * color).sum(0);  // Sum over all Gaussians
+    auto pixel_color = (alpha.unsqueeze(1) * color).sum(0); // Sum over all Gaussians
 
     // Loss
     auto target = torch::rand({3}, torch::dtype(torch::kFloat32).device(torch::kCUDA));
