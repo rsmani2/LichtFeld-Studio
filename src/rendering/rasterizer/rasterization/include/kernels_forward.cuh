@@ -319,11 +319,8 @@ namespace lfs::rendering::kernels::forward {
         // Compute bounds
         const float power_threshold = logf(output_opacity * config::min_alpha_threshold_rcp);
         const float power_threshold_factor = sqrtf(2.0f * power_threshold);
-        const float extent_x = fmaxf(power_threshold_factor * sqrtf(cov2d.x) - 0.5f, 0.0f);
-        const float extent_y = fmaxf(power_threshold_factor * sqrtf(cov2d.z) - 0.5f, 0.0f);
-        constexpr float MAX_EXTENT_FACTOR = 0.5f;
-        if (extent_x > w * MAX_EXTENT_FACTOR || extent_y > h * MAX_EXTENT_FACTOR)
-            active = false;
+        float extent_x = fmaxf(power_threshold_factor * sqrtf(cov2d.x) - 0.5f, 0.0f);
+        float extent_y = fmaxf(power_threshold_factor * sqrtf(cov2d.z) - 0.5f, 0.0f);
         const uint4 screen_bounds = make_uint4(
             min(grid_width, static_cast<uint>(max(0, __float2int_rd((mean2d.x - extent_x) / static_cast<float>(config::tile_width))))),   // x_min
             min(grid_width, static_cast<uint>(max(0, __float2int_ru((mean2d.x + extent_x) / static_cast<float>(config::tile_width))))),   // x_max
