@@ -1,4 +1,4 @@
-name: Ubuntu CUDA Build
+name: Ubuntu CUDA Build 2
 
 on:
   push:
@@ -6,16 +6,17 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+
   pull_request:
     branches: [ dev, master ]
     paths-ignore:
       - '**.md'
       - 'docs/**'
-  workflow_dispatch:
+
+  workflow_dispatch:   # makes the workflow runnable from the UI
 
 jobs:
   build-ubuntu:
-    if: github.repository == 'MrNeRF/LichtFeld-Studio' || github.event.pull_request.base.repo.full_name == 'MrNeRF/LichtFeld-Studio'
     runs-on: ubuntu-24.04
     container:
       image: nvidia/cuda:12.8.0-devel-ubuntu24.04
@@ -33,15 +34,18 @@ jobs:
 
     steps:
       - name: Checkout source
+
         uses: actions/checkout@v4
 
       - name: Free disk space
+
         run: |
           apt-get clean
           rm -rf /var/lib/apt/lists/*
           rm -rf /usr/share/dotnet /opt/ghc /opt/hostedtoolcache
 
       - name: Install build dependencies
+
         run: |
           apt-get update
           apt-get install -y ca-certificates gpg wget
@@ -59,6 +63,7 @@ jobs:
                               --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
       - name: Setup vcpkg
+
         run: |
           cd ..
           git clone https://github.com/microsoft/vcpkg.git
@@ -70,6 +75,7 @@ jobs:
           EOF
 
       - name: Cache ccache
+
         uses: actions/cache@v4
         with:
           path: /github/home/.cache/ccache
@@ -77,6 +83,7 @@ jobs:
           restore-keys: ccache-${{ runner.os }}-${{ matrix.build_type }}-
 
       - name: Cache vcpkg
+
         uses: actions/cache@v4
         with:
           path: /github/home/.cache/vcpkg/archives
@@ -84,10 +91,20 @@ jobs:
           restore-keys: vcpkg-${{ runner.os }}-
 
       - name: Configure
+
         run: |
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
             -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
 
       - name: Build
+
         run: cmake --build build -j 2
+
+      - name: Upload build artifacts
+
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.build_type }}
+          path: build
+          retention-days: 30
