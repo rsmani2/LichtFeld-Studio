@@ -105,7 +105,7 @@ namespace lfs::io {
         return image_path;
     }
 
-    std::tuple<std::vector<CameraData>, lfs::core::Tensor, std::optional<std::tuple<std::vector<std::string>, std::vector<std::string>>>> read_transforms_cameras_and_images(
+    std::tuple<std::vector<CameraData>, lfs::core::Tensor, float, std::optional<std::tuple<std::vector<std::string>, std::vector<std::string>>>> read_transforms_cameras_and_images(
         const std::filesystem::path& transPath) {
 
         LOG_TIMER_TRACE("Read transforms file");
@@ -339,16 +339,37 @@ namespace lfs::io {
             }
         }
 
-        auto center = lfs::core::Tensor::zeros({3}, Device::CPU, DataType::Float32);
+        float scene_scale = 0.f;
+        lfs::core::Tensor center;
+        if (!camerasdata.empty()) {
+            std::vector<float> cam_positions;
+            cam_positions.reserve(camerasdata.size() * 3);
+            for (const auto& cam : camerasdata) {
+                const auto R_cpu = cam._R.cpu();
+                const auto T_cpu = cam._T.cpu();
+                const float* R_ptr = R_cpu.ptr<float>();
+                const float* T_ptr = T_cpu.ptr<float>();
+                for (int r = 0; r < 3; ++r) {
+                    float v = 0.f;
+                    for (int c = 0; c < 3; ++c)
+                        v -= R_ptr[c * 3 + r] * T_ptr[c]; // -R^T * T
+                    cam_positions.push_back(v);
+                }
+            }
+            const Tensor pos_tensor = Tensor::from_vector(cam_positions, {camerasdata.size(), 3}, Device::CPU);
+            center = pos_tensor.mean({0}, false);
+            scene_scale = pos_tensor.sub(center).norm(2.0f, {1}, false).max().item();
+        } else {
+            center = lfs::core::Tensor::zeros({3}, Device::CPU, DataType::Float32);
+        }
 
-        // Check for aabb_scale (used in some NeRF datasets for scene scaling)
         float aabb_scale = 1.0f;
         if (transforms.contains("aabb_scale")) {
             aabb_scale = float(transforms["aabb_scale"]);
             LOG_DEBUG("Found aabb_scale: {}", aabb_scale);
         }
 
-        LOG_INFO("Loaded {} cameras from transforms file", camerasdata.size());
+        LOG_INFO("Loaded {} cameras, scene_scale={:.4f}", camerasdata.size(), scene_scale);
 
         if (std::filesystem::is_regular_file(dir_path / "train.txt") &&
             std::filesystem::is_regular_file(dir_path / "test.txt")) {
@@ -380,10 +401,10 @@ namespace lfs::io {
 
             LOG_INFO("Loaded {} training images and {} validation images", train_images.size(), val_images.size());
 
-            return {camerasdata, center, std::make_tuple(train_images, val_images)};
+            return {camerasdata, center, scene_scale, std::make_tuple(train_images, val_images)};
         }
 
-        return {camerasdata, center, std::nullopt};
+        return {camerasdata, center, scene_scale, std::nullopt};
     }
 
     PointCloud generate_random_point_cloud() {

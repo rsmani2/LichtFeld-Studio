@@ -638,7 +638,7 @@ namespace lfs::io {
         return {};
     }
 
-    Result<std::tuple<std::vector<std::shared_ptr<Camera>>, Tensor>>
+    Result<std::tuple<std::vector<std::shared_ptr<Camera>>, Tensor, float>>
     assemble_colmap_cameras(const std::filesystem::path& base_path,
                             const std::unordered_map<uint32_t, CameraDataIntermediate>& cam_map,
                             const std::vector<ImageData>& images,
@@ -859,13 +859,13 @@ namespace lfs::io {
             cameras.push_back(std::move(camera));
         }
 
-        // Compute scene center as mean of camera positions
-        Tensor scene_center_tensor = Tensor::from_vector(camera_positions, {images.size(), 3}, Device::CPU);
-        Tensor scene_center = scene_center_tensor.mean({0}, false);
+        const Tensor cam_pos_tensor = Tensor::from_vector(camera_positions, {images.size(), 3}, Device::CPU);
+        const Tensor scene_center = cam_pos_tensor.mean({0}, false);
+        const float scene_scale = cam_pos_tensor.sub(scene_center).norm(2.0f, {1}, false).max().item();
 
-        LOG_INFO("Training with {} images", cameras.size());
+        LOG_INFO("Loaded {} cameras, scene_scale={:.4f}", cameras.size(), scene_scale);
 
-        return std::make_tuple(std::move(cameras), scene_center);
+        return std::make_tuple(std::move(cameras), scene_center, scene_scale);
     }
 
     // -----------------------------------------------------------------------------
@@ -892,7 +892,7 @@ namespace lfs::io {
         return read_point3D_binary(points3d_file);
     }
 
-    Result<std::tuple<std::vector<std::shared_ptr<Camera>>, Tensor>>
+    Result<std::tuple<std::vector<std::shared_ptr<Camera>>, Tensor, float>>
     read_colmap_cameras_and_images(const std::filesystem::path& base,
                                    const std::string& images_folder) {
 
@@ -917,7 +917,7 @@ namespace lfs::io {
         return read_point3D_text(points3d_file);
     }
 
-    Result<std::tuple<std::vector<std::shared_ptr<Camera>>, Tensor>>
+    Result<std::tuple<std::vector<std::shared_ptr<Camera>>, Tensor, float>>
     read_colmap_cameras_and_images_text(const std::filesystem::path& base,
                                         const std::string& images_folder) {
 
